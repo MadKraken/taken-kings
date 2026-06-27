@@ -63,7 +63,7 @@ function loadSprites() {
   clonerImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_cloner"] = clonerImg;
   const upgraderImg = new Image();
-  upgraderImg.src = "sprites/item_upgrader.svg";
+  upgraderImg.src = "sprites/item_upgrader.svg?v=2";
   upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_upgrader"] = upgraderImg;
 }
