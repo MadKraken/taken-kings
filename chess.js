@@ -507,6 +507,7 @@ function teamLeap() {
     if (canMoveUp[i]) {
       const [x, y] = xy(i);
       const ni = idx(x, y - 1);
+      if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
       newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
     } else {
       newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i];
