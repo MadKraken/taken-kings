@@ -276,14 +276,15 @@ function pseudoMoves(x, y) {
     if (s === W) {
       // White pawns move and capture upward only (toward row 0)
       const dir = -1;
-      if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
+      const fwd = piece(x, y + dir);
+      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST)) {
         moves.push(idx(x, y + dir));
-        if (y === 6 && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
+        if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
       }
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
         if (inB(nx, ny)) {
-          if (side(nx, ny) === e) moves.push(idx(nx, ny));
+          if (side(nx, ny) === e || piece(nx, ny) === CHEST) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
       }
