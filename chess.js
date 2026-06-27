@@ -96,6 +96,18 @@ let clonerMode = false;
 let clonerSelected = -1;
 let upgraderMode = false;
 let shiftCountdown = 10;
+let itemSpaces = new Array(64).fill(ITEM_NONE);
+let nextItemSpaceCol = -1;
+let nextItemType = ITEM_NONE;
+
+const ITEM_SPRITE_KEYS = {
+  [ITEM_PROMOTER]: "item_promoter",
+  [ITEM_ANY_PROMOTER]: "item_any_promoter",
+  [ITEM_TELEPORTER]: "item_teleporter",
+  [ITEM_KING_PROMOTER]: "item_king_promoter",
+  [ITEM_CLONER]: "item_cloner",
+  [ITEM_UPGRADER]: "item_upgrader"
+};
 
 let wkMoved = false;
 let wraMoved = false, wrhMoved = false;
@@ -161,13 +173,24 @@ function generateWave(count) {
 }
 
 function generateChestCol(nextLeap, wave) {
-  if (nextLeap >= 2 && nextLeap % 2 === 0) {
+  if (nextLeap % 2 === 1) {
     const waveCols = wave.map(w => w.x);
     const open = [];
     for (let x = 0; x < 8; x++) { if (!waveCols.includes(x)) open.push(x); }
     return open.length > 0 ? open[randInt(open.length)] : -1;
   }
   return -1;
+}
+
+function generateItemSpace(nextLeap, wave) {
+  if (nextLeap % 2 !== 0) return { col: -1, item: ITEM_NONE };
+  const waveCols = wave.map(w => w.x);
+  const open = [];
+  for (let x = 0; x < 8; x++) { if (!waveCols.includes(x)) open.push(x); }
+  if (open.length === 0) return { col: -1, item: ITEM_NONE };
+  const col = open[randInt(open.length)];
+  const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+  return { col, item: items[randInt(items.length)] };
 }
 
 function placeWave(row, wave) {
@@ -199,12 +222,16 @@ function initBoard() {
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
   nextWave = generateWave(spawnCount + 1);
+  leapCount = 0;
   nextChestCol = generateChestCol(leapCount + 1, nextWave);
+  const initIS = generateItemSpace(leapCount + 1, nextWave);
+  nextItemSpaceCol = initIS.col; nextItemType = initIS.item;
   selected = -1; validMoves = []; turn = W;
-  gameOver = false; gameMsg = ""; score = 0; leapCount = 0;
+  gameOver = false; gameMsg = ""; score = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
   health.fill(1); shiftCountdown = 10;
+  itemSpaces.fill(ITEM_NONE);
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
 }
@@ -417,6 +444,7 @@ function makeMove(fromI, toI) {
 }
 
 function endWhiteTurn() {
+  checkAllItemSpaces();
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     pitchShift();
@@ -530,6 +558,19 @@ function pitchShift() {
   sides.splice(0, 64, ...newSides);
   health.splice(0, 64, ...newHealth);
 
+  // Scroll item spaces down
+  const newItemSpaces = new Array(64).fill(ITEM_NONE);
+  for (let i = 0; i < 64; i++) {
+    if (itemSpaces[i] === ITEM_NONE) continue;
+    const [x, y] = xy(i);
+    if (y === 7) continue;
+    newItemSpaces[idx(x, y + 1)] = itemSpaces[i];
+  }
+  if (nextItemSpaceCol >= 0) {
+    newItemSpaces[idx(nextItemSpaceCol, 0)] = nextItemType;
+  }
+  itemSpaces.splice(0, 64, ...newItemSpaces);
+
   spawnCount++;
   leapCount++;
   for (const w of nextWave) {
@@ -541,6 +582,8 @@ function pitchShift() {
 
   nextWave = generateWave(spawnCount + 1);
   nextChestCol = generateChestCol(leapCount + 1, nextWave);
+  const nextIS = generateItemSpace(leapCount + 1, nextWave);
+  nextItemSpaceCol = nextIS.col; nextItemType = nextIS.item;
 
   epTarget = -1;
   selected = -1;
@@ -826,6 +869,62 @@ function checkWhiteKingAlive() {
   }
 }
 
+function canItemAffectPiece(item, i) {
+  const p = board[i];
+  switch (item) {
+    case ITEM_UPGRADER: return true;
+    case ITEM_PROMOTER: return p === PAWN;
+    case ITEM_ANY_PROMOTER: return p !== KING;
+    case ITEM_KING_PROMOTER: return p === PAWN;
+    case ITEM_TELEPORTER: return true;
+    case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
+    default: return false;
+  }
+}
+
+function applyItemToPiece(item, i) {
+  switch (item) {
+    case ITEM_UPGRADER:
+      health[i]++;
+      break;
+    case ITEM_PROMOTER:
+    case ITEM_ANY_PROMOTER:
+      board[i] = QUEEN;
+      break;
+    case ITEM_KING_PROMOTER:
+      board[i] = KING;
+      break;
+    case ITEM_TELEPORTER: {
+      const empty = [];
+      for (let d = 0; d < 64; d++) { if (board[d] === NONE) empty.push(d); }
+      if (empty.length > 0) {
+        const dest = empty[randInt(empty.length)];
+        board[dest] = board[i]; sides[dest] = W; health[dest] = health[i];
+        board[i] = NONE; sides[i] = 0; health[i] = 1;
+      }
+      break;
+    }
+    case ITEM_CLONER: {
+      const dests = adjacentClonerDests(i);
+      if (dests.length > 0) {
+        const dest = dests[randInt(dests.length)];
+        board[dest] = board[i]; sides[dest] = W; health[dest] = 1;
+      }
+      break;
+    }
+  }
+}
+
+function checkAllItemSpaces() {
+  for (let i = 0; i < 64; i++) {
+    const item = itemSpaces[i];
+    if (item === ITEM_NONE || sides[i] !== W) continue;
+    if (!canItemAffectPiece(item, i)) continue;
+    applyItemToPiece(item, i);
+    itemSpaces[i] = ITEM_NONE;
+  }
+}
+
 // --- Leap button geometry ---
 const BOARD_Y = PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 72;
@@ -868,6 +967,19 @@ function draw() {
       ctx.drawImage(cimg, MARGIN + nextChestCol * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
     }
   }
+  if (nextItemSpaceCol >= 0) {
+    const ikey = ITEM_SPRITE_KEYS[nextItemType];
+    const iimg = spriteImages[ikey];
+    if (iimg && iimg.complete) {
+      const px = MARGIN + nextItemSpaceCol * TILE;
+      const py = BOARD_Y + MARGIN - TILE;
+      ctx.fillStyle = "rgba(255,220,80,0.22)";
+      ctx.fillRect(px, py, TILE, TILE);
+      const sz = (TILE - previewPad * 2) * 0.44;
+      const off = (TILE - sz) / 2;
+      ctx.drawImage(iimg, px + off, py + off, sz, sz);
+    }
+  }
   ctx.globalAlpha = 1.0;
 
   ctx.save();
@@ -902,6 +1014,26 @@ function draw() {
     const [mx, my] = xy(m);
     ctx.fillStyle = MOVE_COLOR;
     ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
+  }
+
+  // Item spaces (rendered before pieces so pieces show on top)
+  for (let i = 0; i < 64; i++) {
+    if (itemSpaces[i] === ITEM_NONE) continue;
+    const [x, y] = xy(i);
+    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+    ctx.fillStyle = "rgba(255,220,80,0.22)";
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.strokeStyle = "rgba(255,200,50,0.55)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
+    const key = ITEM_SPRITE_KEYS[itemSpaces[i]];
+    const img = spriteImages[key];
+    if (img && img.complete) {
+      const sz = TILE * 0.44;
+      ctx.globalAlpha = 0.8;
+      ctx.drawImage(img, px + (TILE - sz) / 2, py + (TILE - sz) / 2, sz, sz);
+      ctx.globalAlpha = 1.0;
+    }
   }
 
   // Pieces and chests
