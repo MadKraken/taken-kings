@@ -130,6 +130,9 @@ const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROO
 const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0 };
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
+const ANIM_MS = 180;
+let anim = null; // {pieces:[{toIdx,fromCX,fromCY,toCX,toCY,piece,side,hlth}], boardDy, startMs, onDone}
+
 function idx(x, y) { return y * 8 + x; }
 function xy(i) { return [i % 8, Math.floor(i / 8)]; }
 function inB(x, y) { return x >= 0 && x < 8 && y >= 0 && y < 8; }
@@ -139,6 +142,25 @@ function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
+
+function easeOut(t) { return 1 - (1 - t) * (1 - t); }
+
+function startAnim(pieces, boardDy, onDone) {
+  anim = { pieces, boardDy, startMs: performance.now(), onDone };
+  requestAnimationFrame(_animTick);
+}
+
+function _animTick() {
+  if (!anim) return;
+  draw();
+  if ((performance.now() - anim.startMs) < ANIM_MS) {
+    requestAnimationFrame(_animTick);
+  } else {
+    const done = anim.onDone;
+    anim = null;
+    if (done) done();
+  }
+}
 
 function addToInventory(item) {
   for (let i = 0; i < inventory.length; i++) {
@@ -467,7 +489,7 @@ function canTeamLeap() {
 }
 
 function teamLeap() {
-  if (gameOver || turn !== W || aiThinking) return;
+  if (gameOver || turn !== W || aiThinking || anim) return;
 
   // Per-column blocking: a white piece can't move if the row above is occupied
   // by an enemy, or by a white piece that itself can't move.
@@ -486,6 +508,19 @@ function teamLeap() {
         occupied.add(y - 1); // destination claimed
       }
     }
+  }
+
+  // Capture animation info before board update
+  const leapAnimPieces = [];
+  for (let i = 0; i < 64; i++) {
+    if (!canMoveUp[i]) continue;
+    const [ax, ay] = xy(i);
+    leapAnimPieces.push({
+      toIdx: idx(ax, ay - 1),
+      fromCX: MARGIN + ax * TILE, fromCY: BOARD_Y + MARGIN + ay * TILE,
+      toCX: MARGIN + ax * TILE, toCY: BOARD_Y + MARGIN + (ay - 1) * TILE,
+      piece: board[i], side: sides[i], hlth: health[i]
+    });
   }
 
   const newBoard = new Array(64).fill(NONE);
@@ -524,7 +559,7 @@ function teamLeap() {
   wkMoved = true; wraMoved = true; wrhMoved = true;
   firstMoveMade = true;
   recordPosition();
-  applySpacesAfterAdvance();
+  startAnim(leapAnimPieces, 0, () => { applySpacesAfterAdvance(); });
 }
 
 function canPitchShift() {
@@ -541,7 +576,7 @@ function canManualPitchShift() {
 }
 
 function pitchShift() {
-  if (!canPitchShift()) return;
+  if (!canPitchShift() || anim) return;
 
   // Everything shifts down one row; row 7 is destroyed (including white pieces).
   const newBoard = new Array(64).fill(NONE);
@@ -597,9 +632,6 @@ function pitchShift() {
     if (b.type === 'chest') set(b.col, 0, CHEST, 0);
   }
 
-  nextWave = generateWave(spawnCount + 1);
-  nextBonuses = generateRowBonuses(nextWave);
-
   epTarget = -1;
   selected = -1;
   validMoves = [];
@@ -607,9 +639,15 @@ function pitchShift() {
   shiftCountdown = 10;
   recordPosition();
 
-  turn = B;
-  draw();
-  if (!gameOver) aiPlay();
+  // Defer nextWave/nextBonuses update until after animation so the fog keeps showing
+  // the incoming row during the slide, rather than instantly flipping to the next preview.
+  nextWave = generateWave(spawnCount + 1);
+  nextBonuses = generateRowBonuses(nextWave);
+  startAnim([], -TILE, () => {
+    turn = B;
+    draw();
+    if (!gameOver) aiPlay();
+  });
 }
 
 // --- AI ---
@@ -838,20 +876,41 @@ function aiPlay() {
   setTimeout(() => {
     const move = aiBestMove();
     if (move) {
+      const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
+      const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
+      const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
       makeMove(move[0], move[1]);
       applySpecialSpace(move[1]);
       recordPosition();
+      const aiAnimPieces = [{
+        toIdx: move[1],
+        fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
+        piece: board[move[1]], side: sides[move[1]], hlth: health[move[1]]
+      }];
+      startAnim(aiAnimPieces, 0, () => {
+        if (countKings(W) === 0) {
+          gameOver = true;
+          gameMsg = `Game Over! Score: ${score}`;
+        } else if (isCheckmated(W)) {
+          gameOver = true;
+          gameMsg = `Checkmate! Score: ${score}`;
+        }
+        if (!gameOver) turn = W;
+        aiThinking = false;
+        draw();
+      });
+    } else {
+      if (countKings(W) === 0) {
+        gameOver = true;
+        gameMsg = `Game Over! Score: ${score}`;
+      } else if (isCheckmated(W)) {
+        gameOver = true;
+        gameMsg = `Checkmate! Score: ${score}`;
+      }
+      if (!gameOver) turn = W;
+      aiThinking = false;
+      draw();
     }
-    if (countKings(W) === 0) {
-      gameOver = true;
-      gameMsg = `Game Over! Score: ${score}`;
-    } else if (isCheckmated(W)) {
-      gameOver = true;
-      gameMsg = `Checkmate! Score: ${score}`;
-    }
-    if (!gameOver) turn = W;
-    aiThinking = false;
-    draw();
   }, 50);
 }
 
@@ -1024,6 +1083,9 @@ const RESIGN_BTN = { x: MARGIN + BOARD_PX - 100, y: BTN_Y, w: 100, h: 36 };
 // --- Draw ---
 
 function draw() {
+  const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / ANIM_MS)) : 1;
+  const _animToSet = (anim && anim.pieces && _animT < 1) ? new Set(anim.pieces.map(p => p.toIdx)) : new Set();
+  const _fieldAnim = anim && anim.boardDy !== 0 && _animT < 1;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1038,57 +1100,6 @@ function draw() {
     ctx.drawImage(logoEl, logoCx - lw / 2, (LOGO_H - lh) / 2, lw, lh);
   }
 
-  // Preview row (ghosted board tile + pieces above the board)
-  const previewRowNum = 8 + leapCount + 1;
-  ctx.globalAlpha = 0.3;
-  for (let x = 0; x < 8; x++) {
-    ctx.fillStyle = (x + 1) % 2 === 0 ? LIGHT : DARK;
-    ctx.fillRect(MARGIN + x * TILE, BOARD_Y + MARGIN - TILE, TILE, TILE);
-  }
-  ctx.font = "14px sans-serif";
-  ctx.fillStyle = "#aaa";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(previewRowNum, MARGIN - 16, BOARD_Y + MARGIN - TILE + TILE / 2);
-  const previewPad = 6;
-  for (const w of nextWave) {
-    const key = `${B}_${w.piece}`;
-    const img = spriteImages[key];
-    if (img && img.complete) {
-      ctx.drawImage(img, MARGIN + w.x * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
-    }
-  }
-  for (const b of nextBonuses) {
-    const px = MARGIN + b.col * TILE, py = BOARD_Y + MARGIN - TILE;
-    if (b.type === 'chest') {
-      const cimg = spriteImages["chest"];
-      if (cimg && cimg.complete)
-        ctx.drawImage(cimg, px + previewPad, py + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
-    } else if (b.type === 'item') {
-      const iimg = spriteImages[ITEM_SPRITE_KEYS[b.item]];
-      if (iimg && iimg.complete) {
-        ctx.fillStyle = "rgba(255,220,80,0.22)";
-        ctx.fillRect(px, py, TILE, TILE);
-        const sz = (TILE - previewPad * 2) * 0.44, off = (TILE - sz) / 2;
-        ctx.drawImage(iimg, px + off, py + off, sz, sz);
-      }
-    } else if (b.type === 'obstacle') {
-      ctx.fillStyle = "rgba(80,200,255,0.18)";
-      ctx.fillRect(px, py, TILE, TILE);
-      const cx2 = px + TILE / 2, cy2 = py + TILE / 2;
-      const angle2 = Math.atan2(b.dy, b.dx), len2 = TILE * 0.32;
-      const tx3 = cx2 + Math.cos(angle2) * len2, ty3 = cy2 + Math.sin(angle2) * len2;
-      const bx3 = cx2 - Math.cos(angle2) * len2 * 0.55, by3 = cy2 - Math.sin(angle2) * len2 * 0.55;
-      ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(bx3, by3); ctx.lineTo(tx3, ty3); ctx.stroke();
-      ctx.fillStyle = "rgba(120,230,255,0.9)";
-      ctx.save(); ctx.translate(tx3, ty3); ctx.rotate(angle2);
-      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
-      ctx.restore();
-    }
-  }
-  ctx.globalAlpha = 1.0;
-
   ctx.save();
   ctx.translate(0, BOARD_Y);
 
@@ -1102,11 +1113,65 @@ function draw() {
     ctx.fillText(8 + leapCount - i, MARGIN - 16, MARGIN + i * TILE + TILE / 2);
   }
 
-  // Board squares
+  // During Field Advance animation: clip to the fog row and below so content above the fog
+  // stays invisible (darkness), while the incoming row slides through the fog into the board.
+  if (_fieldAnim) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-MARGIN, MARGIN - TILE, canvas.width + MARGIN * 2, BOARD_PX + TILE + MARGIN);
+    ctx.clip();
+    ctx.translate(0, anim.boardDy * (1 - _animT));
+  }
+
+  // Board squares (live rows 0-7)
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
     const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
     ctx.fillStyle = (x + y) % 2 === 0 ? LIGHT : DARK;
     ctx.fillRect(px, py, TILE, TILE);
+  }
+
+  // Preview row — always drawn one row above the live board, scrolls with the board.
+  // In normal play: shows nextWave (the upcoming row) underneath the fog overlay.
+  // During Field Advance: nextWave is already updated to wave B, so wave B sits here;
+  // the -TILE shift places it above the clip boundary at t=0 and slides it into the
+  // fog position by t=1, while wave A (board row 0) slides out of fog into the live board.
+  for (let x = 0; x < 8; x++) {
+    ctx.fillStyle = (x + 1) % 2 === 0 ? LIGHT : DARK;
+    ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE);
+  }
+  const prevPad = 6;
+  for (const w of nextWave) {
+    const wimg = spriteImages[`${B}_${w.piece}`];
+    if (wimg && wimg.complete)
+      ctx.drawImage(wimg, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+  }
+  for (const b of nextBonuses) {
+    const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
+    if (b.type === 'chest') {
+      const bimg = spriteImages["chest"];
+      if (bimg && bimg.complete) ctx.drawImage(bimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+    } else if (b.type === 'item') {
+      const iimg = spriteImages[ITEM_SPRITE_KEYS[b.item]];
+      if (iimg && iimg.complete) {
+        ctx.fillStyle = "rgba(255,220,80,0.22)";
+        ctx.fillRect(bpx, bpy, TILE, TILE);
+        const sz2 = (TILE - prevPad * 2) * 0.44, off2 = (TILE - sz2) / 2;
+        ctx.drawImage(iimg, bpx + off2, bpy + off2, sz2, sz2);
+      }
+    } else if (b.type === 'obstacle') {
+      ctx.fillStyle = "rgba(80,200,255,0.18)";
+      ctx.fillRect(bpx, bpy, TILE, TILE);
+      const pocx = bpx + TILE / 2, pocy = bpy + TILE / 2;
+      const pAngle = Math.atan2(b.dy, b.dx), pLen = TILE * 0.32;
+      const ptx = pocx + Math.cos(pAngle) * pLen, pty = pocy + Math.sin(pAngle) * pLen;
+      const pbx = pocx - Math.cos(pAngle) * pLen * 0.55, pby = pocy - Math.sin(pAngle) * pLen * 0.55;
+      ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(pbx, pby); ctx.lineTo(ptx, pty); ctx.stroke();
+      ctx.fillStyle = "rgba(120,230,255,0.9)";
+      ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
   }
 
   // Selected
@@ -1169,6 +1234,7 @@ function draw() {
   const pad = 6;
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
+    if (_animToSet.has(i)) continue; // drawn by animation overlay at interpolated position
     const [x, y] = xy(i);
     if (board[i] === CHEST) {
       const img = spriteImages["chest"];
@@ -1282,7 +1348,51 @@ function draw() {
     }
   }
 
-  ctx.restore();
+  if (_fieldAnim) ctx.restore(); // remove clip + field-advance shift
+  ctx.restore(); // remove board translate
+
+  // Animation overlay: draw moving pieces at interpolated canvas positions
+  if (anim && anim.pieces && _animT < 1) {
+    const apad = 6;
+    for (const ap of anim.pieces) {
+      const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
+      const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT;
+      if (ap.piece === CHEST) {
+        const img = spriteImages["chest"];
+        if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+      } else {
+        const key = `${ap.side}_${ap.piece}`;
+        const img = spriteImages[key];
+        if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+      }
+      if (ap.side === W && ap.hlth > 1) {
+        const shields = ap.hlth - 1;
+        const bx = acx + TILE - 22, by = acy + 2, sz = 20;
+        const shieldImg = spriteImages["item_upgrader"];
+        if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.lineWidth = 2.5;
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
+        ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
+      }
+    }
+  }
+
+  // Static fog window — completely independent of the board. Always at the same canvas
+  // position. Board content (including the preview row) scrolls underneath it.
+  const previewRowNum = 8 + leapCount + 1;
+  ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
+  ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
+  ctx.globalAlpha = 0.7;
+  ctx.font = "14px sans-serif";
+  ctx.fillStyle = "#aaa";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(previewRowNum, MARGIN - 16, BOARD_Y + MARGIN - TILE + TILE / 2);
+  ctx.globalAlpha = 1.0;
 
   // Inventory panel
   const invY = BOARD_Y + MARGIN;
@@ -1483,6 +1593,7 @@ function draw() {
 
 canvas.addEventListener("click", (e) => {
   if (gameOver) return;
+  if (anim) return;
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
@@ -1822,28 +1933,39 @@ canvas.addEventListener("click", (e) => {
     }
   } else {
     if (validMoves.includes(clicked)) {
-      const target = board[clicked];
-      const targetSide = sides[clicked];
+      const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
+      const pFromCX = MARGIN + pfx * TILE, pFromCY = BOARD_Y + MARGIN + pfy * TILE;
+      const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
+      const isCKS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 6 && !wkMoved;
+      const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
+      const clickedDest = clicked;
       firstMoveMade = true;
       makeMove(selected, clicked);
       recordPosition();
+      const wAnimPieces = [{
+        toIdx: clickedDest,
+        fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
+        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest]
+      }];
+      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
+      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
-      checkWhiteKingAlive();
-      if (!gameOver) {
-        const movedTo = applySpecialSpace(clicked);
+      startAnim(wAnimPieces, 0, () => {
         checkWhiteKingAlive();
         if (!gameOver) {
-          const item = itemSpaces[movedTo];
-          if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
-            const done = activateItemSpace(item, movedTo);
-            if (done) endWhiteTurn();
-          } else {
-            endWhiteTurn();
-          }
+          const movedTo = applySpecialSpace(clickedDest);
+          checkWhiteKingAlive();
+          if (!gameOver) {
+            const item = itemSpaces[movedTo];
+            if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
+              const done = activateItemSpace(item, movedTo);
+              if (done) endWhiteTurn();
+            } else {
+              endWhiteTurn();
+            }
+          } else { draw(); }
         } else { draw(); }
-      } else {
-        draw();
-      }
+      });
       return;
     } else if (sides[clicked] === W) {
       selected = clicked;
