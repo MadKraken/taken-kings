@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- Back copy (offset, slightly faded) -->
+  <circle cx="30" cy="18" r="6" fill="#aad4ff" stroke="#3080c0" stroke-width="1.2"/>
+  <path d="M23 26 Q30 22 37 26 L38.5 32 Q30 30.5 21.5 32 Z" fill="#aad4ff" stroke="#3080c0" stroke-width="1.2"/>
+  <rect x="21" y="32" width="18" height="3" rx="1" fill="#aad4ff" stroke="#3080c0" stroke-width="1.2"/>
+  <!-- Front copy -->
+  <circle cx="22" cy="24" r="6" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <path d="M15 32 Q22 28 29 32 L30.5 38 Q22 36.5 13.5 38 Z" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <rect x="13" y="38" width="18" height="3" rx="1" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <!-- Arrow indicating copy -->
+  <path d="M29,14 L35,10 L33,16" fill="#3080c0" stroke="#3080c0" stroke-width="0.5"/>
+</svg>

@@ -28,7 +28,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 14;
+  const total = 20;
   for (const s of [W, B]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
@@ -46,10 +46,35 @@ function loadSprites() {
   promImg.src = "sprites/item_promoter.svg";
   promImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_promoter"] = promImg;
+  const fierceImg = new Image();
+  fierceImg.src = "sprites/item_fierce_leap.svg";
+  fierceImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_fierce_leap"] = fierceImg;
+  const anyPromImg = new Image();
+  anyPromImg.src = "sprites/item_any_promoter.svg";
+  anyPromImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_any_promoter"] = anyPromImg;
+  const teleImg = new Image();
+  teleImg.src = "sprites/item_teleporter.svg";
+  teleImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_teleporter"] = teleImg;
+  const kingPromImg = new Image();
+  kingPromImg.src = "sprites/item_king_promoter.svg";
+  kingPromImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_king_promoter"] = kingPromImg;
+  const clonerImg = new Image();
+  clonerImg.src = "sprites/item_cloner.svg";
+  clonerImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_cloner"] = clonerImg;
+  const upgraderImg = new Image();
+  upgraderImg.src = "sprites/item_upgrader.svg";
+  upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_upgrader"] = upgraderImg;
 }
 
 let board = new Array(64).fill(NONE);
 let sides = new Array(64).fill(0);
+let health = new Array(64).fill(1);
 let selected = -1;
 let validMoves = [];
 let turn = W;
@@ -61,11 +86,19 @@ let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
 let nextChestCol = -1; // column for next chest, -1 if none
 let positionHistory = []; // track board states to detect repetition
-const ITEM_NONE = 0, ITEM_PROMOTER = 1;
-const ITEM_NAMES = { [ITEM_PROMOTER]: "Promoter" };
+const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_FIERCE_LEAP = 2, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
+const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_FIERCE_LEAP]: "Fierce Leap", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let promotingMode = false;
 let promotingPawnIdx = -1;
+let anyPromotingMode = false;
+let anyPromotingPieceIdx = -1;
+let teleporterMode = false;
+let teleporterSelected = -1;
+let kingPromotingMode = false;
+let clonerMode = false;
+let clonerSelected = -1;
+let upgraderMode = false;
 
 let wkMoved = false;
 let wraMoved = false, wrhMoved = false;
@@ -148,6 +181,7 @@ function placeWave(row, wave) {
 
 let firstMoveMade = false;
 let resignConfirm = false;
+let testMode = false;
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -171,8 +205,9 @@ function initBoard() {
   nextChestCol = generateChestCol(leapCount + 1, nextWave);
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; leapCount = 0;
-  firstMoveMade = false; positionHistory = [];
-  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1;
+  firstMoveMade = false; positionHistory = []; testMode = false;
+  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
+  health.fill(1);
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
 }
@@ -284,6 +319,8 @@ function isAttacked(tx, ty, bySide) {
 function isMoveLegal(fromI, toI, s) {
   // Enemy (black) has multiple kings — no check constraint for them
   if (s === B) return true;
+  // White with multiple kings: extra kings are lives, no check constraint needed
+  if (countKings(W) > 1) return true;
 
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const savBoard = [...board], savSides = [...sides];
@@ -315,16 +352,42 @@ function legalMoves(x, y) {
   return pseudoMoves(x, y).filter(m => isMoveLegal(idx(x, y), m, s));
 }
 
+function calcBouncePos(fromI, toI, p) {
+  if (p === ROOK || p === BISHOP || p === QUEEN) {
+    const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
+    const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
+    let lastEmpty = fromI;
+    let cx = fx + dx, cy = fy + dy;
+    while (cx !== tx || cy !== ty) {
+      if (board[idx(cx, cy)] === NONE) lastEmpty = idx(cx, cy);
+      cx += dx; cy += dy;
+    }
+    return lastEmpty;
+  }
+  return fromI;
+}
+
 function makeMove(fromI, toI) {
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
 
+  // Bounce: black piece attacks white piece with health > 1 — damage but no capture
+  if (s === B && sides[toI] === W && health[toI] > 1) {
+    health[toI]--;
+    const bounceI = calcBouncePos(fromI, toI, p);
+    if (bounceI !== fromI) {
+      board[bounceI] = p; sides[bounceI] = B;
+      board[fromI] = NONE; sides[fromI] = 0;
+    }
+    return;
+  }
+
   if (captured === KING && sides[toI] !== s) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
-    addToInventory(ITEM_PROMOTER);
+    addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(7)]);
   }
 
   if (p === KING && s === W) {
@@ -350,8 +413,9 @@ function makeMove(fromI, toI) {
     epTarget = idx(fx, (fy + ty) / 2);
   }
 
-  board[toI] = p; sides[toI] = s;
-  board[fromI] = NONE; sides[fromI] = 0;
+  const movedHealth = health[fromI];
+  board[toI] = p; sides[toI] = s; health[toI] = movedHealth;
+  board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1;
 
 }
 
@@ -379,12 +443,16 @@ function canTeamLeap() {
   return true;
 }
 
-function teamLeap() {
-  if (!canTeamLeap()) return;
+function teamLeap(fierce = false) {
+  if (fierce) {
+    if (gameOver || turn !== W || aiThinking) return;
+    // Fierce Leap bypasses ALL normal restrictions — white pieces on row 0 are overwritten by the wave
+  } else {
+    if (!canTeamLeap()) return;
+  }
 
   // Board scrolls down: enemy pieces shift y += 1, white stays put.
-  // Enemies on row 0 move to row 1, etc. Enemies that collide with
-  // white pieces on the way down are captured by white.
+  // In fierce mode, enemies on bottom row or colliding with white are trampled/destroyed.
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
 
@@ -396,27 +464,31 @@ function teamLeap() {
     }
   }
 
-  // Shift enemy pieces and chests down one
+  // Shift enemy pieces and chests down one; fierce mode destroys enemies that collide with white
   for (let i = 0; i < 64; i++) {
     if (sides[i] === W || board[i] === NONE) continue;
     const [x, y] = xy(i);
     const ny = y + 1;
-    if (ny > 7) continue;
+    if (ny > 7) continue; // bottom-row enemies fall off
     const ni = idx(x, ny);
     if (newSides[ni] !== W) {
       newBoard[ni] = board[i];
       newSides[ni] = sides[i];
     }
+    // fierce: enemies that would land on white are simply destroyed (not placed)
   }
 
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
 
   // Place the pre-generated wave and chest
+  // In fierce mode, white pieces on row 0 trample incoming enemies (skip that column)
   spawnCount++;
   leapCount++;
-  placeWave(0, nextWave);
-  if (nextChestCol >= 0) {
+  for (const w of nextWave) {
+    if (!fierce || side(w.x, 0) !== W) set(w.x, 0, w.piece, B);
+  }
+  if (nextChestCol >= 0 && (!fierce || side(nextChestCol, 0) !== W)) {
     set(nextChestCol, 0, CHEST, 0);
   }
 
@@ -441,7 +513,8 @@ function saveState() {
     board: [...board], sides: [...sides], epTarget,
     wkMoved, wraMoved, wrhMoved, score, inventory: [...inventory],
     spawnCount, nextChestCol, nextWave: nextWave.map(w => ({...w})),
-    histLen: positionHistory.length
+    histLen: positionHistory.length,
+    health: [...health]
   };
 }
 
@@ -455,6 +528,7 @@ function restoreState(st) {
   spawnCount = st.spawnCount; nextChestCol = st.nextChestCol;
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
+  health.splice(0, 64, ...st.health);
 }
 
 function canSimulateLeap() {
@@ -583,7 +657,13 @@ function minimax(depth, alpha, beta, maximizing) {
 }
 
 function aiBestMove() {
-  const moves = allLegalMovesForSide(B);
+  // Only protect the last white king from direct capture (extra kings are fair game)
+  let protectedIdx = -1;
+  if (countKings(W) === 1) {
+    const [wkx, wky] = findKing(W);
+    if (wkx >= 0) protectedIdx = idx(wkx, wky);
+  }
+  const moves = allLegalMovesForSide(B).filter(([, to]) => to !== protectedIdx);
   if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
@@ -645,6 +725,8 @@ function showHint() {
 }
 
 function isCheckmated(s) {
+  // With multiple white kings, can't be checkmated — game ends only when last king is captured
+  if (s === W && countKings(W) > 1) return false;
   const [kx, ky] = findKing(s);
   if (kx < 0) return true;
   if (!isAttacked(kx, ky, s)) return false;
@@ -661,7 +743,10 @@ function aiPlay() {
       makeMove(move[0], move[1]);
       recordPosition();
     }
-    if (isCheckmated(W)) {
+    if (countKings(W) === 0) {
+      gameOver = true;
+      gameMsg = `Game Over! Score: ${score}`;
+    } else if (isCheckmated(W)) {
       gameOver = true;
       gameMsg = `Checkmate! Score: ${score}`;
     }
@@ -674,6 +759,22 @@ function aiPlay() {
 function findKing(s) {
   for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === s) return xy(i);
   return [-1, -1];
+}
+
+function adjacentClonerDests(i) {
+  const [x, y] = xy(i);
+  const dests = [];
+  for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+    const nx = x + dx, ny = y + dy;
+    if (inB(nx, ny) && (board[idx(nx, ny)] === NONE || board[idx(nx, ny)] === CHEST)) dests.push(idx(nx, ny));
+  }
+  return dests;
+}
+
+function countKings(s) {
+  let n = 0;
+  for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === s) n++;
+  return n;
 }
 
 function checkWhiteKingAlive() {
@@ -694,8 +795,10 @@ const HINT_BTN = {
   x: MARGIN + 163, y: BOARD_Y + MARGIN + BOARD_PX + 72,
   w: 120, h: 36
 };
-
-
+const TEST_BTN = {
+  x: MARGIN + 291, y: BOARD_Y + MARGIN + BOARD_PX + 72,
+  w: 100, h: 36
+};
 const RESIGN_BTN = {
   x: MARGIN + BOARD_PX - 100, y: BOARD_Y + MARGIN + BOARD_PX + 72,
   w: 100, h: 36
@@ -787,15 +890,97 @@ function draw() {
         ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
       }
     }
+    // Health badge for upgraded white pieces
+    if (sides[i] === W && health[i] > 1) {
+      const bx = MARGIN + x * TILE + TILE - 18, by = MARGIN + y * TILE + 4;
+      ctx.fillStyle = "#22cc44";
+      ctx.beginPath(); ctx.arc(bx + 7, by + 7, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(health[i], bx + 7, by + 8);
+    }
   }
 
-  // Promoting mode highlight
-  if (promotingMode) {
+  // King Promoter highlight — highlight white pawns
+  if (kingPromotingMode) {
     for (let i = 0; i < 64; i++) {
       if (board[i] === PAWN && sides[i] === W) {
         const [px, py] = xy(i);
+        ctx.fillStyle = "rgba(180,80,255,0.5)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
+    }
+  }
+
+  // Cloner highlight
+  if (clonerMode) {
+    for (let i = 0; i < 64; i++) {
+      if (sides[i] !== W) continue;
+      const [px, py] = xy(i);
+      if (clonerSelected < 0) {
+        if (adjacentClonerDests(i).length > 0) {
+          ctx.fillStyle = "rgba(50,220,120,0.45)";
+          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+        }
+      } else if (i === clonerSelected) {
+        ctx.fillStyle = "rgba(50,220,120,0.7)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
+    }
+    if (clonerSelected >= 0) {
+      for (const di of adjacentClonerDests(clonerSelected)) {
+        const [px, py] = xy(di);
+        ctx.fillStyle = "rgba(50,220,120,0.4)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
+    }
+  }
+
+  // Upgrader highlight — all white pieces selectable
+  if (upgraderMode) {
+    for (let i = 0; i < 64; i++) {
+      if (sides[i] !== W) continue;
+      const [px, py] = xy(i);
+      ctx.fillStyle = "rgba(255,200,50,0.5)";
+      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+    }
+  }
+
+  // Promoting mode highlight
+  if (promotingMode || anyPromotingMode) {
+    for (let i = 0; i < 64; i++) {
+      const eligible = anyPromotingMode
+        ? (sides[i] === W && board[i] !== NONE && board[i] !== KING)
+        : (board[i] === PAWN && sides[i] === W);
+      if (eligible) {
+        const [px, py] = xy(i);
         ctx.fillStyle = "rgba(200,150,50,0.5)";
         ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
+    }
+  }
+
+  // Teleporter highlight
+  if (teleporterMode) {
+    for (let i = 0; i < 64; i++) {
+      const [px, py] = xy(i);
+      if (teleporterSelected < 0) {
+        // Highlight selectable white pieces
+        if (sides[i] === W) {
+          ctx.fillStyle = "rgba(80,180,255,0.45)";
+          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+        }
+      } else {
+        // Highlight selected piece
+        if (i === teleporterSelected) {
+          ctx.fillStyle = "rgba(80,180,255,0.7)";
+          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+        } else if (board[i] === NONE || board[i] === CHEST) {
+          // Highlight valid destinations
+          ctx.fillStyle = "rgba(80,255,180,0.4)";
+          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+        }
       }
     }
   }
@@ -818,7 +1003,7 @@ function draw() {
       const slotIdx = r * INV_COLS + c;
       const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
       const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-      const isActive = promotingMode && inventory._activeSlot === slotIdx;
+      const isActive = (promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
       ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
       ctx.beginPath();
       ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
@@ -830,6 +1015,36 @@ function draw() {
       }
       if (inventory[slotIdx] === ITEM_PROMOTER) {
         const img = spriteImages["item_promoter"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_FIERCE_LEAP) {
+        const img = spriteImages["item_fierce_leap"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
+        const img = spriteImages["item_any_promoter"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_TELEPORTER) {
+        const img = spriteImages["item_teleporter"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
+        const img = spriteImages["item_king_promoter"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_CLONER) {
+        const img = spriteImages["item_cloner"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      } else if (inventory[slotIdx] === ITEM_UPGRADER) {
+        const img = spriteImages["item_upgrader"];
         if (img && img.complete) {
           ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
         }
@@ -866,13 +1081,24 @@ function draw() {
     ctx.fillStyle = canLeap ? "#fff" : "#999";
     ctx.fillText("⬆ TEAM LEAP", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
-    // Hint
-    ctx.fillStyle = (turn === W && !aiThinking) ? "#8855aa" : LEAP_BTN_DISABLED;
+    // Hint (only shown in test mode)
+    if (testMode) {
+      const hintActive = turn === W && !aiThinking;
+      ctx.fillStyle = hintActive ? "#8855aa" : LEAP_BTN_DISABLED;
+      ctx.beginPath();
+      ctx.roundRect(HINT_BTN.x, HINT_BTN.y, HINT_BTN.w, HINT_BTN.h, 6);
+      ctx.fill();
+      ctx.fillStyle = hintActive ? "#fff" : "#999";
+      ctx.fillText("💡 HINT", HINT_BTN.x + HINT_BTN.w / 2, HINT_BTN.y + HINT_BTN.h / 2);
+    }
+
+    // Test
+    ctx.fillStyle = "#336633";
     ctx.beginPath();
-    ctx.roundRect(HINT_BTN.x, HINT_BTN.y, HINT_BTN.w, HINT_BTN.h, 6);
+    ctx.roundRect(TEST_BTN.x, TEST_BTN.y, TEST_BTN.w, TEST_BTN.h, 6);
     ctx.fill();
-    ctx.fillStyle = (turn === W && !aiThinking) ? "#fff" : "#999";
-    ctx.fillText("💡 HINT", HINT_BTN.x + HINT_BTN.w / 2, HINT_BTN.y + HINT_BTN.h / 2);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("🧪 TEST", TEST_BTN.x + TEST_BTN.w / 2, TEST_BTN.y + TEST_BTN.h / 2);
 
     // Resign
     ctx.fillStyle = "#993333";
@@ -887,14 +1113,14 @@ function draw() {
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#ddd";
   ctx.textAlign = "center";
-  const status = gameOver ? gameMsg : (promotingMode ? "Select a Pawn to promote" : (aiThinking ? "AI Thinking..." : "Your Turn"));
+  const status = gameOver ? gameMsg : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : (aiThinking ? "AI Thinking..." : "Your Turn")))))));
   ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#aaa";
   ctx.fillText(`Kings Taken: ${score}`, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 52);
 
   // Promoter piece chooser overlay
-  if (promotingPawnIdx >= 0) {
+  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#2a2a4e";
@@ -931,8 +1157,9 @@ canvas.addEventListener("click", (e) => {
   const cx = (e.clientX - rect.left) * scaleX;
   const cy = (e.clientY - rect.top) * scaleY;
 
-  // Piece chooser dialog
-  if (promotingPawnIdx >= 0) {
+  // Piece chooser dialog (shared by Pawn Promoter and Any Promoter)
+  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
+    const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
     const dlgW = 340, dlgH = 100;
     const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
@@ -942,25 +1169,25 @@ canvas.addEventListener("click", (e) => {
       const bx = startX + i * (csize + cpad);
       const by = dlgY + 36;
       if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
-        board[promotingPawnIdx] = choices[i];
+        board[targetIdx] = choices[i];
         if (inventory._activeSlot !== undefined) {
           removeFromInventory(inventory._activeSlot);
           delete inventory._activeSlot;
         }
-        promotingPawnIdx = -1;
-        promotingMode = false;
+        promotingPawnIdx = -1; promotingMode = false;
+        anyPromotingPieceIdx = -1; anyPromotingMode = false;
         draw();
         return;
       }
     }
     // Click outside cancels
-    promotingPawnIdx = -1;
-    promotingMode = false;
+    promotingPawnIdx = -1; promotingMode = false;
+    anyPromotingPieceIdx = -1; anyPromotingMode = false;
     draw();
     return;
   }
 
-  // Pawn selection for promotion
+  // Pawn selection for Pawn Promoter
   if (promotingMode) {
     const mx = cx - MARGIN;
     const my = cy - BOARD_Y - MARGIN;
@@ -972,6 +1199,140 @@ canvas.addEventListener("click", (e) => {
     }
     // Click elsewhere cancels
     promotingMode = false;
+    draw();
+    return;
+  }
+
+  // Any piece selection for Any Promoter
+  if (anyPromotingMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy) && sides[idx(gx, gy)] === W && board[idx(gx, gy)] !== NONE && board[idx(gx, gy)] !== KING) {
+      anyPromotingPieceIdx = idx(gx, gy);
+      draw();
+      return;
+    }
+    // Click elsewhere cancels
+    anyPromotingMode = false;
+    draw();
+    return;
+  }
+
+  // Upgrader
+  if (upgraderMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
+      const i = idx(gx, gy);
+      health[i] = Math.max(health[i], 1) + 1;
+      if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+      upgraderMode = false;
+      draw();
+      return;
+    }
+    upgraderMode = false;
+    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+    draw();
+    return;
+  }
+
+  // Cloner
+  if (clonerMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy)) {
+      const i = idx(gx, gy);
+      if (clonerSelected < 0) {
+        if (sides[i] === W && adjacentClonerDests(i).length > 0) {
+          clonerSelected = i;
+          draw();
+          return;
+        }
+      } else {
+        const dests = adjacentClonerDests(clonerSelected);
+        if (dests.includes(i)) {
+          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER][randInt(6)]);
+          board[i] = board[clonerSelected];
+          sides[i] = W;
+          if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+          clonerMode = false; clonerSelected = -1;
+          firstMoveMade = true;
+          recordPosition();
+          turn = B; draw(); aiPlay();
+          return;
+        } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
+          clonerSelected = i;
+          draw();
+          return;
+        }
+      }
+    }
+    clonerMode = false; clonerSelected = -1;
+    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+    draw();
+    return;
+  }
+
+  // King Promoter — select a white pawn, convert to King
+  if (kingPromotingMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
+      board[idx(gx, gy)] = KING;
+      if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+      kingPromotingMode = false;
+      draw();
+      return;
+    }
+    kingPromotingMode = false;
+    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+    draw();
+    return;
+  }
+
+  // Teleporter
+  if (teleporterMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy)) {
+      const i = idx(gx, gy);
+      if (teleporterSelected < 0) {
+        // Select a white piece
+        if (sides[i] === W) {
+          teleporterSelected = i;
+          draw();
+          return;
+        }
+      } else {
+        // Move to vacant square or chest
+        if (board[i] === NONE || board[i] === CHEST) {
+          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER][randInt(4)]);
+          board[i] = board[teleporterSelected];
+          sides[i] = W; health[i] = health[teleporterSelected];
+          board[teleporterSelected] = NONE;
+          sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
+          if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+          teleporterMode = false; teleporterSelected = -1;
+          firstMoveMade = true;
+          recordPosition();
+          turn = B; draw(); aiPlay();
+          return;
+        } else if (sides[i] === W) {
+          // Re-select a different white piece
+          teleporterSelected = i;
+          draw();
+          return;
+        }
+      }
+    }
+    // Click outside board or invalid target cancels
+    teleporterMode = false; teleporterSelected = -1;
+    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
     draw();
     return;
   }
@@ -1013,7 +1374,49 @@ canvas.addEventListener("click", (e) => {
           if (inventory[slotIdx] === ITEM_PROMOTER) {
             promotingMode = true;
             selected = -1; validMoves = [];
-            // Store which slot is being used
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
+            anyPromotingMode = true;
+            selected = -1; validMoves = [];
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_TELEPORTER) {
+            teleporterMode = true;
+            teleporterSelected = -1;
+            selected = -1; validMoves = [];
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_CLONER) {
+            clonerMode = true;
+            clonerSelected = -1;
+            selected = -1; validMoves = [];
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
+            kingPromotingMode = true;
+            selected = -1; validMoves = [];
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_FIERCE_LEAP) {
+            removeFromInventory(slotIdx);
+            firstMoveMade = true;
+            teamLeap(true);
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_UPGRADER) {
+            upgraderMode = true;
+            selected = -1; validMoves = [];
             inventory._activeSlot = slotIdx;
             draw();
             return;
@@ -1023,10 +1426,25 @@ canvas.addEventListener("click", (e) => {
     }
   }
 
-  // Check hint button
-  if (cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
+  // Check hint button (test mode only)
+  if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
       cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) {
     showHint();
+    return;
+  }
+
+  // Check test button
+  if (cx >= TEST_BTN.x && cx <= TEST_BTN.x + TEST_BTN.w &&
+      cy >= TEST_BTN.y && cy <= TEST_BTN.y + TEST_BTN.h) {
+    testMode = true;
+    addToInventory(ITEM_PROMOTER);
+    addToInventory(ITEM_FIERCE_LEAP);
+    addToInventory(ITEM_ANY_PROMOTER);
+    addToInventory(ITEM_TELEPORTER);
+    addToInventory(ITEM_KING_PROMOTER);
+    addToInventory(ITEM_CLONER);
+    addToInventory(ITEM_UPGRADER);
+    draw();
     return;
   }
 
