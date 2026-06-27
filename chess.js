@@ -419,26 +419,24 @@ function makeMove(fromI, toI) {
 
 }
 
-// --- Team Leap ---
+// --- Team Leap & Pitch Shift ---
 
 function canTeamLeap() {
   if (gameOver || turn !== W || aiThinking) return false;
-  // Can't leap if in check
-  const [kx, ky] = findKing(W);
-  if (kx >= 0 && isAttacked(kx, ky, W)) return false;
-  // Can't leap if non-white piece on bottom row (nowhere to shift)
-  for (let x = 0; x < 8; x++) {
-    if (piece(x, 7) !== NONE && side(x, 7) !== W) return false;
+  // Can't leap if in check (single-king)
+  if (countKings(W) === 1) {
+    const [kx, ky] = findKing(W);
+    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
   }
-  // Can't leap if white piece on top row (would be overwritten by new wave)
-  for (let x = 0; x < 8; x++) {
-    if (side(x, 0) === W) return false;
-  }
-  // Can't leap if any non-white piece would shift onto a white piece
+  // Can't leap if any white piece is on row 0 (would leave board)
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W || board[i] === NONE) continue;
+    if (sides[i] === W && xy(i)[1] === 0) return false;
+  }
+  // Can't leap if any white piece would land on an enemy
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== W) continue;
     const [x, y] = xy(i);
-    if (y + 1 <= 7 && side(x, y + 1) === W) return false;
+    if (sides[idx(x, y - 1)] === B) return false;
   }
   return true;
 }
@@ -446,49 +444,92 @@ function canTeamLeap() {
 function teamLeap(fierce = false) {
   if (fierce) {
     if (gameOver || turn !== W || aiThinking) return;
-    // Fierce Leap bypasses ALL normal restrictions — white pieces on row 0 are overwritten by the wave
   } else {
     if (!canTeamLeap()) return;
   }
 
-  // Board scrolls down: enemy pieces shift y += 1, white stays put.
-  // In fierce mode, enemies on bottom row or colliding with white are trampled/destroyed.
+  // All white pieces advance up one row (y-1); enemies stay in place.
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
+  const newHealth = new Array(64).fill(1);
 
-  // Keep white pieces where they are
+  // Enemies stay
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W) {
+    if (sides[i] !== W) {
       newBoard[i] = board[i];
-      newSides[i] = W;
+      newSides[i] = sides[i];
+      newHealth[i] = health[i];
     }
   }
 
-  // Shift enemy pieces and chests down one; fierce mode destroys enemies that collide with white
+  // Advance white pieces up
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W || board[i] === NONE) continue;
+    if (sides[i] !== W) continue;
     const [x, y] = xy(i);
-    const ny = y + 1;
-    if (ny > 7) continue; // bottom-row enemies fall off
+    const ny = y - 1;
+    if (ny < 0) continue;
     const ni = idx(x, ny);
-    if (newSides[ni] !== W) {
-      newBoard[ni] = board[i];
-      newSides[ni] = sides[i];
+    if (fierce && newSides[ni] === B) {
+      if (newBoard[ni] === KING) score += 1;
+      newBoard[ni] = NONE; newSides[ni] = 0; newHealth[ni] = 1;
     }
-    // fierce: enemies that would land on white are simply destroyed (not placed)
+    if (newSides[ni] !== B) {
+      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
+    }
   }
 
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
+  health.splice(0, 64, ...newHealth);
 
-  // Place the pre-generated wave and chest
-  // In fierce mode, white pieces on row 0 trample incoming enemies (skip that column)
+  epTarget = -1;
+  selected = -1;
+  validMoves = [];
+  firstMoveMade = true;
+  recordPosition();
+
+  turn = B;
+  draw();
+  if (!gameOver) aiPlay();
+}
+
+function canPitchShift() {
+  if (gameOver || turn !== W || aiThinking) return false;
+  if (countKings(W) === 1) {
+    const [kx, ky] = findKing(W);
+    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
+  }
+  return true;
+}
+
+function pitchShift() {
+  if (!canPitchShift()) return;
+
+  // Everything shifts down one row; row 7 is destroyed (including white pieces).
+  const newBoard = new Array(64).fill(NONE);
+  const newSides = new Array(64).fill(0);
+  const newHealth = new Array(64).fill(1);
+
+  for (let i = 0; i < 64; i++) {
+    if (board[i] === NONE) continue;
+    const [x, y] = xy(i);
+    if (y === 7) continue; // destroyed
+    const ni = idx(x, y + 1);
+    newBoard[ni] = board[i];
+    newSides[ni] = sides[i];
+    newHealth[ni] = health[i];
+  }
+
+  board.splice(0, 64, ...newBoard);
+  sides.splice(0, 64, ...newSides);
+  health.splice(0, 64, ...newHealth);
+
   spawnCount++;
   leapCount++;
   for (const w of nextWave) {
-    if (!fierce || side(w.x, 0) !== W) set(w.x, 0, w.piece, B);
+    set(w.x, 0, w.piece, B);
   }
-  if (nextChestCol >= 0 && (!fierce || side(nextChestCol, 0) !== W)) {
+  if (nextChestCol >= 0) {
     set(nextChestCol, 0, CHEST, 0);
   }
 
@@ -498,9 +539,9 @@ function teamLeap(fierce = false) {
   epTarget = -1;
   selected = -1;
   validMoves = [];
+  firstMoveMade = true;
   recordPosition();
 
-  // End turn
   turn = B;
   draw();
   if (!gameOver) aiPlay();
@@ -532,33 +573,25 @@ function restoreState(st) {
 }
 
 function canSimulateLeap() {
-  for (let x = 0; x < 8; x++) {
-    if (piece(x, 7) !== NONE && side(x, 7) !== W) return false;
-  }
-  for (let x = 0; x < 8; x++) {
-    if (side(x, 0) === W) return false;
-  }
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] === W || board[i] === NONE) continue;
-    const [x, y] = xy(i);
-    if (y + 1 <= 7 && side(x, y + 1) === W) return false;
+  // Simulate pitch shift — available unless in check
+  if (countKings(W) === 1) {
+    const [kx, ky] = findKing(W);
+    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
   }
   return true;
 }
 
 function simulateLeap() {
+  // Simulates pitchShift for AI lookahead: everything shifts down, row 7 destroyed
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W) { newBoard[i] = board[i]; newSides[i] = W; }
-  }
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] !== B) continue;
+    if (board[i] === NONE) continue;
     const [x, y] = xy(i);
-    if (y + 1 > 7) continue;
+    if (y === 7) continue;
     const ni = idx(x, y + 1);
     newBoard[ni] = board[i];
-    newSides[ni] = B;
+    newSides[ni] = sides[i];
   }
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
@@ -787,22 +820,12 @@ function checkWhiteKingAlive() {
 
 // --- Leap button geometry ---
 const BOARD_Y = PREVIEW_H;
-const LEAP_BTN = {
-  x: MARGIN, y: BOARD_Y + MARGIN + BOARD_PX + 72,
-  w: 155, h: 36
-};
-const HINT_BTN = {
-  x: MARGIN + 163, y: BOARD_Y + MARGIN + BOARD_PX + 72,
-  w: 120, h: 36
-};
-const TEST_BTN = {
-  x: MARGIN + 291, y: BOARD_Y + MARGIN + BOARD_PX + 72,
-  w: 100, h: 36
-};
-const RESIGN_BTN = {
-  x: MARGIN + BOARD_PX - 100, y: BOARD_Y + MARGIN + BOARD_PX + 72,
-  w: 100, h: 36
-};
+const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 72;
+const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
+const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
+const HINT_BTN = { x: MARGIN + 276, y: BTN_Y, w: 90, h: 36 };
+const TEST_BTN = { x: MARGIN + 374, y: BTN_Y, w: 90, h: 36 };
+const RESIGN_BTN = { x: MARGIN + BOARD_PX - 100, y: BTN_Y, w: 100, h: 36 };
 
 // --- Draw ---
 
@@ -1073,13 +1096,22 @@ function draw() {
   } else if (!gameOver) {
     // Team Leap
     const canLeap = canTeamLeap();
-    const leapHighlight = hintMove === "leap";
-    ctx.fillStyle = leapHighlight ? "#e8a735" : (canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED);
+    ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
     ctx.beginPath();
     ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canLeap ? "#fff" : "#999";
     ctx.fillText("⬆ TEAM LEAP", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+
+    // Pitch Shift
+    const canShift = canPitchShift();
+    const shiftHighlight = hintMove === "leap";
+    ctx.fillStyle = shiftHighlight ? "#e8a735" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED);
+    ctx.beginPath();
+    ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
+    ctx.fill();
+    ctx.fillStyle = canShift ? "#fff" : "#999";
+    ctx.fillText("⬇ PITCH SHIFT", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
 
     // Hint (only shown in test mode)
     if (testMode) {
@@ -1452,8 +1484,15 @@ canvas.addEventListener("click", (e) => {
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
       cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) {
     hintMove = null;
-    firstMoveMade = true;
     teamLeap();
+    return;
+  }
+
+  // Check pitch shift button
+  if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
+      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) {
+    hintMove = null;
+    pitchShift();
     return;
   }
 
