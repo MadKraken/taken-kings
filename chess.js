@@ -463,7 +463,7 @@ function canTeamLeap() {
   return !(gameOver || turn !== W || aiThinking);
 }
 
-function teamLeap(fierce = false) {
+function teamLeap() {
   if (gameOver || turn !== W || aiThinking) return;
 
   // Per-column blocking: a white piece can't move if the row above is occupied
@@ -504,11 +504,6 @@ function teamLeap(fierce = false) {
     if (canMoveUp[i]) {
       const [x, y] = xy(i);
       const ni = idx(x, y - 1);
-      if (fierce && newSides[ni] === B) {
-        if (newBoard[ni] === KING) score += 1;
-        gold += GOLD_VALUE[newBoard[ni]] ?? 0;
-        newBoard[ni] = NONE; newSides[ni] = 0; newHealth[ni] = 1;
-      }
       newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
     } else {
       newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i];
