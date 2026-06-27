@@ -1455,8 +1455,11 @@ canvas.addEventListener("click", (e) => {
           const clonerFromSpace = activeItemSpaceIdx >= 0;
           activeItemSpaceIdx = -1;
           clonerMode = false; clonerSelected = -1;
-          if (!clonerFromSpace) { firstMoveMade = true; recordPosition(); }
-          endWhiteTurn();
+          if (clonerFromSpace) {
+            endWhiteTurn();
+          } else {
+            firstMoveMade = true; recordPosition(); draw();
+          }
           return;
         } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
           clonerSelected = i;
@@ -1517,8 +1520,11 @@ canvas.addEventListener("click", (e) => {
           const fromSpace = activeItemSpaceIdx >= 0;
           activeItemSpaceIdx = -1;
           teleporterMode = false; teleporterSelected = -1;
-          if (!fromSpace) { firstMoveMade = true; recordPosition(); }
-          endWhiteTurn();
+          if (fromSpace) {
+            endWhiteTurn();
+          } else {
+            firstMoveMade = true; recordPosition(); draw();
+          }
           return;
         } else if (sides[i] === W) {
           // Re-select a different white piece
