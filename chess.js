@@ -32,8 +32,21 @@ function loadSprites() {
   const total = 20;
   const logoImg = new Image();
   logoImg.src = "taken_kings_logo.png";
-  logoImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["logo"] = logoImg;
+  logoImg.onload = () => {
+    // Strip white background: make near-white pixels transparent
+    const oc = document.createElement('canvas');
+    oc.width = logoImg.naturalWidth; oc.height = logoImg.naturalHeight;
+    const octx = oc.getContext('2d');
+    octx.drawImage(logoImg, 0, 0);
+    const imgData = octx.getImageData(0, 0, oc.width, oc.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) d[i+3] = 0;
+    }
+    octx.putImageData(imgData, 0, 0);
+    spriteImages["logo"] = oc;
+    count++; if (count === total) { spritesLoaded = true; draw(); }
+  };
   for (const s of [W, B]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
@@ -936,12 +949,12 @@ function draw() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // Logo
-  const logoImg = spriteImages["logo"];
-  if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
+  const logoEl = spriteImages["logo"];
+  if (logoEl && logoEl.width > 0) {
     const maxW = canvas.width - MARGIN * 2;
-    const scale = Math.min(maxW / logoImg.naturalWidth, (LOGO_H - 8) / logoImg.naturalHeight);
-    const lw = logoImg.naturalWidth * scale, lh = logoImg.naturalHeight * scale;
-    ctx.drawImage(logoImg, (canvas.width - lw) / 2, (LOGO_H - lh) / 2, lw, lh);
+    const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
+    const lw = logoEl.width * scale, lh = logoEl.height * scale;
+    ctx.drawImage(logoEl, (canvas.width - lw) / 2, (LOGO_H - lh) / 2, lw, lh);
   }
 
   // Preview row (ghosted board tile + pieces above the board)
