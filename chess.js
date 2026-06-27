@@ -533,6 +533,11 @@ function canPitchShift() {
     const [kx, ky] = findKing(W);
     if (kx >= 0 && isAttacked(kx, ky, W)) return false;
   }
+  return true;
+}
+
+function canManualPitchShift() {
+  if (!canPitchShift()) return false;
   for (let x = 0; x < 8; x++) {
     if (sides[idx(x, 7)] === W) return false;
   }
@@ -1242,7 +1247,7 @@ function draw() {
     ctx.fillText("⬆ TEAM LEAP", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
     // Pitch Shift
-    const canShift = canPitchShift();
+    const canShift = canManualPitchShift();
     const shiftHighlight = hintMove === "leap";
     const shiftUrgent = shiftCountdown <= 3;
     ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
@@ -1628,7 +1633,7 @@ canvas.addEventListener("click", (e) => {
   if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
       cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) {
     hintMove = null;
-    pitchShift();
+    if (canManualPitchShift()) pitchShift();
     return;
   }
 
