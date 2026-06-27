@@ -317,10 +317,10 @@ function pseudoMoves(x, y) {
       if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST)) moves.push(idx(nx, ny));
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
-      if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
-        moves.push(idx(6, 7));
-      if (!wraMoved && piece(3,7)===NONE && piece(2,7)===NONE && piece(1,7)===NONE && !isAttacked(3,7,s) && !isAttacked(2,7,s))
-        moves.push(idx(2, 7));
+      if (!wrhMoved && piece(7,y)===ROOK && side(7,y)===W && piece(5,y)===NONE && piece(6,y)===NONE && !isAttacked(5,y,s) && !isAttacked(6,y,s))
+        moves.push(idx(6, y));
+      if (!wraMoved && piece(0,y)===ROOK && side(0,y)===W && piece(3,y)===NONE && piece(2,y)===NONE && piece(1,y)===NONE && !isAttacked(3,y,s) && !isAttacked(2,y,s))
+        moves.push(idx(2, y));
     }
   }
   return moves;
@@ -423,8 +423,8 @@ function makeMove(fromI, toI) {
     }
   }
   if (p === ROOK && s === W) {
-    if (fromI === idx(0,7)) wraMoved = true;
-    if (fromI === idx(7,7)) wrhMoved = true;
+    if (fx === 0) wraMoved = true;
+    if (fx === 7) wrhMoved = true;
   }
 
   if (p === PAWN && toI === epTarget) {
@@ -522,7 +522,6 @@ function teamLeap(fierce = false) {
   epTarget = -1;
   selected = -1;
   validMoves = [];
-  wkMoved = true; wraMoved = true; wrhMoved = true; // castling invalid after a leap
   firstMoveMade = true;
   recordPosition();
   applyAutoItemSpaces();
