@@ -1049,7 +1049,7 @@ function draw() {
       const sz = 20;
       const shieldImg = spriteImages["item_upgrader"];
       if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-      ctx.fillStyle = "#ff2222";
+      ctx.fillStyle = "#ffffff";
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
       ctx.lineWidth = 2.5;
       ctx.font = "bold 11px sans-serif";
