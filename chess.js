@@ -28,7 +28,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 20;
+  const total = 19;
   for (const s of [W, B]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
@@ -46,10 +46,6 @@ function loadSprites() {
   promImg.src = "sprites/item_promoter.svg";
   promImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_promoter"] = promImg;
-  const fierceImg = new Image();
-  fierceImg.src = "sprites/item_fierce_leap.svg";
-  fierceImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["item_fierce_leap"] = fierceImg;
   const anyPromImg = new Image();
   anyPromImg.src = "sprites/item_any_promoter.svg";
   anyPromImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
@@ -86,8 +82,8 @@ let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
 let nextChestCol = -1; // column for next chest, -1 if none
 let positionHistory = []; // track board states to detect repetition
-const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_FIERCE_LEAP = 2, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
-const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_FIERCE_LEAP]: "Fierce Leap", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
+const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
+const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let promotingMode = false;
 let promotingPawnIdx = -1;
@@ -99,6 +95,7 @@ let kingPromotingMode = false;
 let clonerMode = false;
 let clonerSelected = -1;
 let upgraderMode = false;
+let shiftCountdown = 10;
 
 let wkMoved = false;
 let wraMoved = false, wrhMoved = false;
@@ -207,7 +204,7 @@ function initBoard() {
   gameOver = false; gameMsg = ""; score = 0; leapCount = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
-  health.fill(1);
+  health.fill(1); shiftCountdown = 10;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
 }
@@ -232,25 +229,25 @@ function pseudoMoves(x, y) {
   const p = piece(x, y), s = side(x, y), e = enemy(s);
   if (p === PAWN) {
     if (s === W) {
-      // White pawns move and capture in both directions
-      for (const dir of [-1, 1]) {
-        if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
-          moves.push(idx(x, y + dir));
-          if (dir === -1 && y === 6 && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
-        }
-        for (const dx of [-1, 1]) {
-          const nx = x + dx, ny = y + dir;
-          if (inB(nx, ny)) {
-            if (side(nx, ny) === e) moves.push(idx(nx, ny));
-            else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
-          }
+      // White pawns move and capture upward only (toward row 0)
+      const dir = -1;
+      if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
+        moves.push(idx(x, y + dir));
+        if (y === 6 && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
+      }
+      for (const dx of [-1, 1]) {
+        const nx = x + dx, ny = y + dir;
+        if (inB(nx, ny)) {
+          if (side(nx, ny) === e) moves.push(idx(nx, ny));
+          else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
       }
     } else {
-      // Black pawns move down only
+      // Black pawns move down; can move two squares from row 0 (first turn after entering)
       const dir = 1;
       if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
         moves.push(idx(x, y + dir));
+        if (y === 0 && piece(x, y + 2) === NONE) moves.push(idx(x, y + 2));
       }
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
@@ -387,7 +384,7 @@ function makeMove(fromI, toI) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
-    addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(7)]);
+    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
   }
 
   if (p === KING && s === W) {
@@ -417,6 +414,17 @@ function makeMove(fromI, toI) {
   board[toI] = p; sides[toI] = s; health[toI] = movedHealth;
   board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1;
 
+}
+
+function endWhiteTurn() {
+  shiftCountdown--;
+  if (shiftCountdown <= 0) {
+    pitchShift();
+  } else {
+    turn = B;
+    draw();
+    if (!gameOver) aiPlay();
+  }
 }
 
 // --- Team Leap & Pitch Shift ---
@@ -488,9 +496,7 @@ function teamLeap(fierce = false) {
   firstMoveMade = true;
   recordPosition();
 
-  turn = B;
-  draw();
-  if (!gameOver) aiPlay();
+  if (!gameOver) endWhiteTurn(); else draw();
 }
 
 function canPitchShift() {
@@ -540,6 +546,7 @@ function pitchShift() {
   selected = -1;
   validMoves = [];
   firstMoveMade = true;
+  shiftCountdown = 10;
   recordPosition();
 
   turn = B;
@@ -555,7 +562,7 @@ function saveState() {
     wkMoved, wraMoved, wrhMoved, score, inventory: [...inventory],
     spawnCount, nextChestCol, nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length,
-    health: [...health]
+    health: [...health], shiftCountdown
   };
 }
 
@@ -570,6 +577,7 @@ function restoreState(st) {
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
   health.splice(0, 64, ...st.health);
+  shiftCountdown = st.shiftCountdown;
 }
 
 function canSimulateLeap() {
@@ -1041,11 +1049,6 @@ function draw() {
         if (img && img.complete) {
           ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
         }
-      } else if (inventory[slotIdx] === ITEM_FIERCE_LEAP) {
-        const img = spriteImages["item_fierce_leap"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
       } else if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
         const img = spriteImages["item_any_promoter"];
         if (img && img.complete) {
@@ -1106,12 +1109,17 @@ function draw() {
     // Pitch Shift
     const canShift = canPitchShift();
     const shiftHighlight = hintMove === "leap";
-    ctx.fillStyle = shiftHighlight ? "#e8a735" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED);
+    const shiftUrgent = shiftCountdown <= 3;
+    ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
     ctx.beginPath();
     ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canShift ? "#fff" : "#999";
-    ctx.fillText("⬇ PITCH SHIFT", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+    ctx.fillText(`⬇ PITCH SHIFT`, PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2 - 4);
+    ctx.font = "11px sans-serif";
+    ctx.fillStyle = shiftUrgent ? "#ffaaaa" : "#aaccff";
+    ctx.fillText(`auto in ${shiftCountdown}`, PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2 + 10);
+    ctx.font = "bold 16px sans-serif";
 
     // Hint (only shown in test mode)
     if (testMode) {
@@ -1286,14 +1294,14 @@ canvas.addEventListener("click", (e) => {
       } else {
         const dests = adjacentClonerDests(clonerSelected);
         if (dests.includes(i)) {
-          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER][randInt(6)]);
+          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
           board[i] = board[clonerSelected];
           sides[i] = W;
           if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
           clonerMode = false; clonerSelected = -1;
           firstMoveMade = true;
           recordPosition();
-          turn = B; draw(); aiPlay();
+          endWhiteTurn();
           return;
         } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
           clonerSelected = i;
@@ -1343,7 +1351,7 @@ canvas.addEventListener("click", (e) => {
       } else {
         // Move to vacant square or chest
         if (board[i] === NONE || board[i] === CHEST) {
-          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_FIERCE_LEAP, ITEM_ANY_PROMOTER, ITEM_TELEPORTER][randInt(4)]);
+          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_UPGRADER][randInt(4)]);
           board[i] = board[teleporterSelected];
           sides[i] = W; health[i] = health[teleporterSelected];
           board[teleporterSelected] = NONE;
@@ -1352,7 +1360,7 @@ canvas.addEventListener("click", (e) => {
           teleporterMode = false; teleporterSelected = -1;
           firstMoveMade = true;
           recordPosition();
-          turn = B; draw(); aiPlay();
+          endWhiteTurn();
           return;
         } else if (sides[i] === W) {
           // Re-select a different white piece
@@ -1440,12 +1448,6 @@ canvas.addEventListener("click", (e) => {
             draw();
             return;
           }
-          if (inventory[slotIdx] === ITEM_FIERCE_LEAP) {
-            removeFromInventory(slotIdx);
-            firstMoveMade = true;
-            teamLeap(true);
-            return;
-          }
           if (inventory[slotIdx] === ITEM_UPGRADER) {
             upgraderMode = true;
             selected = -1; validMoves = [];
@@ -1470,7 +1472,6 @@ canvas.addEventListener("click", (e) => {
       cy >= TEST_BTN.y && cy <= TEST_BTN.y + TEST_BTN.h) {
     testMode = true;
     addToInventory(ITEM_PROMOTER);
-    addToInventory(ITEM_FIERCE_LEAP);
     addToInventory(ITEM_ANY_PROMOTER);
     addToInventory(ITEM_TELEPORTER);
     addToInventory(ITEM_KING_PROMOTER);
@@ -1519,13 +1520,7 @@ canvas.addEventListener("click", (e) => {
       recordPosition();
       selected = -1; validMoves = [];
       checkWhiteKingAlive();
-      if (!gameOver) {
-        turn = B;
-        draw();
-        aiPlay();
-      } else {
-        draw();
-      }
+      if (!gameOver) endWhiteTurn(); else draw();
       return;
     } else if (sides[clicked] === W) {
       selected = clicked;
