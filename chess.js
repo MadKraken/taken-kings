@@ -145,8 +145,8 @@ function randInt(n) { return Math.floor(Math.random() * n); }
 
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 
-function startAnim(pieces, boardDy, onDone) {
-  anim = { pieces, boardDy, startMs: performance.now(), onDone };
+function startAnim(pieces, boardDy, onDone, exitRow) {
+  anim = { pieces, boardDy, startMs: performance.now(), onDone, exitRow: exitRow || null };
   requestAnimationFrame(_animTick);
 }
 
@@ -578,6 +578,13 @@ function canManualPitchShift() {
 function pitchShift() {
   if (!canPitchShift() || anim) return;
 
+  // Capture the bottom row before it's destroyed so animation can slide it out.
+  const exitRow = [];
+  for (let x = 0; x < 8; x++) {
+    const i = idx(x, 7);
+    exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i] });
+  }
+
   // Everything shifts down one row; row 7 is destroyed (including white pieces).
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
@@ -647,7 +654,7 @@ function pitchShift() {
     turn = B;
     draw();
     if (!gameOver) aiPlay();
-  });
+  }, exitRow);
 }
 
 // --- AI ---
@@ -1118,7 +1125,7 @@ function draw() {
   if (_fieldAnim) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(-MARGIN, MARGIN - TILE, canvas.width + MARGIN * 2, BOARD_PX + TILE + MARGIN);
+    ctx.rect(-MARGIN, MARGIN - TILE, canvas.width + MARGIN * 2, BOARD_PX + TILE);
     ctx.clip();
     ctx.translate(0, anim.boardDy * (1 - _animT));
   }
@@ -1171,6 +1178,32 @@ function draw() {
       ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
       ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
       ctx.restore();
+    }
+  }
+
+  // Exit row — only during Field Advance animation. Drawn at y=8 (one below the live board)
+  // so it starts at its original position and slides down behind the bottom border.
+  if (_fieldAnim && anim.exitRow) {
+    const erPad = 6;
+    for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = (x + 8) % 2 === 0 ? LIGHT : DARK;
+      ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE);
+    }
+    for (const ep of anim.exitRow) {
+      if (ep.piece === NONE) continue;
+      const ekey = ep.piece === CHEST ? "chest" : `${ep.side}_${ep.piece}`;
+      const eimg = spriteImages[ekey];
+      if (eimg && eimg.complete)
+        ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
+      if (ep.side === W && ep.hlth > 1) {
+        const bx = MARGIN + ep.x * TILE + TILE - 22, by = MARGIN + BOARD_PX + 2, sz = 20;
+        const shieldImg = spriteImages["item_upgrader"];
+        if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
+        ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
+        ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+        ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+      }
     }
   }
 
