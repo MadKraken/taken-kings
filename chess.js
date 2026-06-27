@@ -620,7 +620,7 @@ function pitchShift() {
 function saveState() {
   return {
     board: [...board], sides: [...sides], epTarget,
-    wkMoved, wraMoved, wrhMoved, score, inventory: [...inventory],
+    wkMoved, wraMoved, wrhMoved, score, gold, inventory: [...inventory],
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length,
     health: [...health], shiftCountdown
@@ -633,7 +633,7 @@ function restoreState(st) {
   epTarget = st.epTarget;
   wkMoved = st.wkMoved;
   wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
-  score = st.score; inventory.splice(0, inventory.length, ...st.inventory);
+  score = st.score; gold = st.gold; inventory.splice(0, inventory.length, ...st.inventory);
   spawnCount = st.spawnCount; nextBonuses = st.nextBonuses.map(b => ({...b}));
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
