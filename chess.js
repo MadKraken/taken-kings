@@ -1034,7 +1034,6 @@ function draw() {
       ctx.drawImage(img, MARGIN + w.x * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
     }
   }
-  ctx.globalAlpha = 1.0;
   for (const b of nextBonuses) {
     const px = MARGIN + b.col * TILE, py = BOARD_Y + MARGIN - TILE;
     if (b.type === 'chest') {
