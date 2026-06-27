@@ -342,40 +342,20 @@ function isAttacked(tx, ty, bySide) {
   return false;
 }
 
-function isMoveLegal(fromI, toI, s) {
-  // Enemy (black) has multiple kings — no check constraint for them
-  if (s === B) return true;
-  // White with multiple kings: extra kings are lives, no check constraint needed
-  if (countKings(W) > 1) return true;
-
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
-  const savBoard = [...board], savSides = [...sides];
-
-  if (board[fromI] === PAWN && toI === epTarget) {
-    const capY = ty + (s === W ? 1 : -1);
-    set(tx, capY, NONE, 0);
-  }
-
-  board[toI] = board[fromI]; sides[toI] = sides[fromI];
-  board[fromI] = NONE; sides[fromI] = 0;
-
-  let kingI = -1;
-  for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === W) { kingI = i; break; }
-
-  let inCheck = false;
-  if (kingI >= 0) {
-    const [kx, ky] = xy(kingI);
-    inCheck = isAttacked(kx, ky, W);
-  }
-
-  board.splice(0, 64, ...savBoard);
-  sides.splice(0, 64, ...savSides);
-  return !inCheck;
-}
-
 function legalMoves(x, y) {
+  // White has no check restriction — all pseudo-legal moves are legal.
+  // Black still can't move into check (keeps AI from hanging its own king).
   const s = side(x, y);
-  return pseudoMoves(x, y).filter(m => isMoveLegal(idx(x, y), m, s));
+  if (s === W) return pseudoMoves(x, y);
+  return pseudoMoves(x, y).filter(m => {
+    const savBoard = [...board], savSides = [...sides];
+    board[m] = board[idx(x,y)]; sides[m] = sides[idx(x,y)];
+    board[idx(x,y)] = NONE; sides[idx(x,y)] = 0;
+    const [kx, ky] = findKing(B);
+    const inCheck = kx >= 0 && isAttacked(kx, ky, B);
+    board.splice(0,64,...savBoard); sides.splice(0,64,...savSides);
+    return !inCheck;
+  });
 }
 
 function calcBouncePos(fromI, toI, p) {
@@ -460,11 +440,6 @@ function endWhiteTurn() {
 
 function canTeamLeap() {
   if (gameOver || turn !== W || aiThinking) return false;
-  // Can't leap if in check (single-king)
-  if (countKings(W) === 1) {
-    const [kx, ky] = findKing(W);
-    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
-  }
   // Can't leap if any white piece is on row 0 (would leave board)
   for (let i = 0; i < 64; i++) {
     if (sides[i] === W && xy(i)[1] === 0) return false;
@@ -531,10 +506,6 @@ function teamLeap(fierce = false) {
 
 function canPitchShift() {
   if (gameOver || turn !== W || aiThinking) return false;
-  if (countKings(W) === 1) {
-    const [kx, ky] = findKing(W);
-    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
-  }
   return true;
 }
 
@@ -634,11 +605,6 @@ function restoreState(st) {
 }
 
 function canSimulateLeap() {
-  // Simulate pitch shift — available unless in check
-  if (countKings(W) === 1) {
-    const [kx, ky] = findKing(W);
-    if (kx >= 0 && isAttacked(kx, ky, W)) return false;
-  }
   return true;
 }
 
@@ -705,11 +671,10 @@ function minimax(depth, alpha, beta, maximizing) {
 
   if (moves.length === 0) {
     if (s === W) {
-      const [kx, ky] = findKing(W);
-      if (kx >= 0 && isAttacked(kx, ky, W)) return -99999;
-      return 0; // stalemate
+      if (isCheckmated(W)) return -99999;
+      return 0;
     }
-    return evaluate(); // black has no moves, just evaluate material
+    return evaluate();
   }
 
   if (maximizing) {
@@ -751,13 +716,7 @@ function minimax(depth, alpha, beta, maximizing) {
 }
 
 function aiBestMove() {
-  // Only protect the last white king from direct capture (extra kings are fair game)
-  let protectedIdx = -1;
-  if (countKings(W) === 1) {
-    const [wkx, wky] = findKing(W);
-    if (wkx >= 0) protectedIdx = idx(wkx, wky);
-  }
-  const moves = allLegalMovesForSide(B).filter(([, to]) => to !== protectedIdx);
+  const moves = allLegalMovesForSide(B);
   if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
@@ -819,8 +778,15 @@ function showHint() {
 }
 
 function isCheckmated(s) {
-  // With multiple white kings, can't be checkmated — game ends only when last king is captured
-  if (s === W && countKings(W) > 1) return false;
+  if (s === W) {
+    if (countKings(W) !== 1) return false;
+    const [kx, ky] = findKing(W);
+    if (kx < 0) return false;
+    // Only instant game over when last king is health 1 and can't escape check
+    if (health[idx(kx, ky)] > 1) return false;
+    if (!isAttacked(kx, ky, W)) return false;
+    return allLegalMovesForSide(W).length === 0;
+  }
   const [kx, ky] = findKing(s);
   if (kx < 0) return true;
   if (!isAttacked(kx, ky, s)) return false;
