@@ -1432,17 +1432,42 @@ function draw() {
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const targetIdx2 = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
+    const [ptx, pty] = xy(targetIdx2);
+    const pawnSX = MARGIN + ptx * TILE + TILE / 2;
+    const pawnSY = BOARD_Y + MARGIN + pty * TILE + TILE / 2;
+
+    const dlgW = 340, dlgH = 100, dlgGap = 18;
+    const dlgX = (canvas.width - dlgW) / 2;
+    // Place dialogue above pawn if pawn is in lower half, below if in upper half
+    const placeAbove = pty >= 4;
+    const dlgY = placeAbove
+      ? Math.max(LOGO_H, pawnSY - TILE / 2 - dlgGap - dlgH)
+      : Math.min(canvas.height - dlgH - 10, pawnSY + TILE / 2 + dlgGap);
+
+    // Arrow between dialogue and pawn
+    const arrowX = Math.max(dlgX + 20, Math.min(dlgX + dlgW - 20, pawnSX));
+    const arrowTailY = placeAbove ? dlgY + dlgH : dlgY;
+    const arrowTipY  = placeAbove ? pawnSY - TILE / 2 - 4 : pawnSY + TILE / 2 + 4;
+    const arrowDir   = placeAbove ? 1 : -1; // +1 = tip points down, -1 = tip points up
+    ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(arrowX, arrowTailY); ctx.lineTo(arrowX, arrowTipY); ctx.stroke();
+    ctx.fillStyle = "#aaa";
+    ctx.beginPath();
+    ctx.moveTo(arrowX, arrowTipY);
+    ctx.lineTo(arrowX - 8, arrowTipY - arrowDir * 14);
+    ctx.lineTo(arrowX + 8, arrowTipY - arrowDir * 14);
+    ctx.closePath(); ctx.fill();
+
     ctx.fillStyle = "#2a2a4e";
-    const dlgW = 340, dlgH = 100;
-    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
     ctx.fillStyle = "#ddd";
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 24);
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const cpad = 8;
-    const csize = 60;
+    const cpad = 8, csize = 60;
     const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
     for (let i = 0; i < choices.length; i++) {
       const cx = startX + i * (csize + cpad);
@@ -1450,9 +1475,7 @@ function draw() {
       ctx.fillStyle = "#3a3a5e";
       ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 6); ctx.fill();
       const img = spriteImages[`${W}_${choices[i]}`];
-      if (img && img.complete) {
-        ctx.drawImage(img, cx + 6, cy + 6, csize - 12, csize - 12);
-      }
+      if (img && img.complete) ctx.drawImage(img, cx + 6, cy + 6, csize - 12, csize - 12);
     }
   }
 
