@@ -718,6 +718,10 @@ function minimax(depth, alpha, beta, maximizing) {
 function aiBestMove() {
   const moves = allLegalMovesForSide(B);
   if (moves.length === 0) return null;
+  // Compelled: any move that directly attacks a white King (kill or damage) must be taken
+  const kingAttacks = moves.filter(([, to]) => board[to] === KING && sides[to] === W);
+  if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
+  if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
