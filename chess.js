@@ -99,6 +99,7 @@ let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
 let nextItemSpaceCol = -1;
 let nextItemType = ITEM_NONE;
+let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_PROMOTER]: "item_promoter",
@@ -444,7 +445,6 @@ function makeMove(fromI, toI) {
 }
 
 function endWhiteTurn() {
-  checkAllItemSpaces();
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     pitchShift();
@@ -523,6 +523,7 @@ function teamLeap(fierce = false) {
   validMoves = [];
   firstMoveMade = true;
   recordPosition();
+  applyAutoItemSpaces();
 
   if (!gameOver) endWhiteTurn(); else draw();
 }
@@ -890,46 +891,55 @@ function canItemAffectPiece(item, i) {
   }
 }
 
-function applyItemToPiece(item, i) {
+// Activate an item space on square i. Auto-items apply immediately and return true (done).
+// Interactive items enter the appropriate mode with piece pre-selected and return false (pending).
+// Caller must call endWhiteTurn() only when this returns true.
+function activateItemSpace(item, i) {
+  activeItemSpaceIdx = i;
+  itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_UPGRADER:
       health[i]++;
-      break;
-    case ITEM_PROMOTER:
-    case ITEM_ANY_PROMOTER:
-      board[i] = QUEEN;
-      break;
+      activeItemSpaceIdx = -1;
+      return true;
     case ITEM_KING_PROMOTER:
       board[i] = KING;
-      break;
-    case ITEM_TELEPORTER: {
-      const empty = [];
-      for (let d = 0; d < 64; d++) { if (board[d] === NONE) empty.push(d); }
-      if (empty.length > 0) {
-        const dest = empty[randInt(empty.length)];
-        board[dest] = board[i]; sides[dest] = W; health[dest] = health[i];
-        board[i] = NONE; sides[i] = 0; health[i] = 1;
-      }
-      break;
-    }
-    case ITEM_CLONER: {
-      const dests = adjacentClonerDests(i);
-      if (dests.length > 0) {
-        const dest = dests[randInt(dests.length)];
-        board[dest] = board[i]; sides[dest] = W; health[dest] = 1;
-      }
-      break;
-    }
+      activeItemSpaceIdx = -1;
+      return true;
+    case ITEM_PROMOTER:
+      // Skip pawn selection — piece is already known. Jump straight to chooser.
+      promotingPawnIdx = i;
+      draw();
+      return false;
+    case ITEM_ANY_PROMOTER:
+      anyPromotingPieceIdx = i;
+      draw();
+      return false;
+    case ITEM_TELEPORTER:
+      // Piece pre-selected; player chooses destination.
+      teleporterSelected = i;
+      teleporterMode = true;
+      draw();
+      return false;
+    case ITEM_CLONER:
+      // Piece pre-selected; player chooses adjacent destination.
+      clonerSelected = i;
+      clonerMode = true;
+      draw();
+      return false;
   }
+  activeItemSpaceIdx = -1;
+  return true;
 }
 
-function checkAllItemSpaces() {
+// Only auto-applies instant items (Upgrader/KingPromoter) during Team Leap.
+// Interactive items are left on the board until a regular move triggers them.
+function applyAutoItemSpaces() {
   for (let i = 0; i < 64; i++) {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W) continue;
-    if (!canItemAffectPiece(item, i)) continue;
-    applyItemToPiece(item, i);
-    itemSpaces[i] = ITEM_NONE;
+    if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
+    else if (item === ITEM_KING_PROMOTER && board[i] === PAWN) { board[i] = KING; itemSpaces[i] = ITEM_NONE; }
   }
 }
 
@@ -1354,16 +1364,20 @@ canvas.addEventListener("click", (e) => {
           removeFromInventory(inventory._activeSlot);
           delete inventory._activeSlot;
         }
+        const fromSpace = activeItemSpaceIdx >= 0;
+        activeItemSpaceIdx = -1;
         promotingPawnIdx = -1; promotingMode = false;
         anyPromotingPieceIdx = -1; anyPromotingMode = false;
-        draw();
+        if (fromSpace) { endWhiteTurn(); } else { draw(); }
         return;
       }
     }
     // Click outside cancels
+    const fromSpaceCancel = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1;
     promotingPawnIdx = -1; promotingMode = false;
     anyPromotingPieceIdx = -1; anyPromotingMode = false;
-    draw();
+    if (fromSpaceCancel) { endWhiteTurn(); } else { draw(); }
     return;
   }
 
@@ -1438,9 +1452,10 @@ canvas.addEventListener("click", (e) => {
           board[i] = board[clonerSelected];
           sides[i] = W;
           if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+          const clonerFromSpace = activeItemSpaceIdx >= 0;
+          activeItemSpaceIdx = -1;
           clonerMode = false; clonerSelected = -1;
-          firstMoveMade = true;
-          recordPosition();
+          if (!clonerFromSpace) { firstMoveMade = true; recordPosition(); }
           endWhiteTurn();
           return;
         } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
@@ -1450,9 +1465,11 @@ canvas.addEventListener("click", (e) => {
         }
       }
     }
+    const clonerCancelSpace = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1;
     clonerMode = false; clonerSelected = -1;
     if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    draw();
+    if (clonerCancelSpace) { endWhiteTurn(); } else { draw(); }
     return;
   }
 
@@ -1497,9 +1514,10 @@ canvas.addEventListener("click", (e) => {
           board[teleporterSelected] = NONE;
           sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
           if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+          const fromSpace = activeItemSpaceIdx >= 0;
+          activeItemSpaceIdx = -1;
           teleporterMode = false; teleporterSelected = -1;
-          firstMoveMade = true;
-          recordPosition();
+          if (!fromSpace) { firstMoveMade = true; recordPosition(); }
           endWhiteTurn();
           return;
         } else if (sides[i] === W) {
@@ -1511,9 +1529,11 @@ canvas.addEventListener("click", (e) => {
       }
     }
     // Click outside board or invalid target cancels
+    const teleFromSpace = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1;
     teleporterMode = false; teleporterSelected = -1;
     if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    draw();
+    if (teleFromSpace) { endWhiteTurn(); } else { draw(); }
     return;
   }
 
@@ -1660,7 +1680,18 @@ canvas.addEventListener("click", (e) => {
       recordPosition();
       selected = -1; validMoves = [];
       checkWhiteKingAlive();
-      if (!gameOver) endWhiteTurn(); else draw();
+      if (!gameOver) {
+        const item = itemSpaces[clicked];
+        if (item !== ITEM_NONE && sides[clicked] === W && canItemAffectPiece(item, clicked)) {
+          const done = activateItemSpace(item, clicked);
+          if (done) endWhiteTurn();
+          // else: interactive mode active — endWhiteTurn deferred until player resolves
+        } else {
+          endWhiteTurn();
+        }
+      } else {
+        draw();
+      }
       return;
     } else if (sides[clicked] === W) {
       selected = clicked;
