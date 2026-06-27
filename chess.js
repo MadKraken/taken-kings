@@ -160,7 +160,8 @@ function countPosition(hash) {
 }
 
 function generateWave(count) {
-  const n = Math.min(count, 8);
+  // count=1 → 1 piece (opening row); count≥2 → starts at 2, +1 every 5 rows, max 7
+  const n = count === 1 ? 1 : Math.min(2 + Math.floor((count - 2) / 5), 7);
   const cols = [];
   while (cols.length < n) {
     const c = randInt(8);
