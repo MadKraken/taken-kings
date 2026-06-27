@@ -107,6 +107,7 @@ let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
+let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
 let specialSpaces = new Array(64).fill(null); // {type:'obstacle', dx, dy}
 
 const ITEM_SPRITE_KEYS = {
@@ -249,6 +250,7 @@ function initBoard() {
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
+  pendingItemQueue = [];
   specialSpaces.fill(null);
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
@@ -521,9 +523,7 @@ function teamLeap() {
   wkMoved = true; wraMoved = true; wrhMoved = true;
   firstMoveMade = true;
   recordPosition();
-  applyAutoItemSpaces();
-
-  if (!gameOver) endWhiteTurn(); else draw();
+  applySpacesAfterAdvance();
 }
 
 function canPitchShift() {
@@ -939,13 +939,40 @@ function activateItemSpace(item, i) {
 
 // Only auto-applies instant items (Upgrader/KingPromoter) during Team Leap.
 // Interactive items are left on the board until a regular move triggers them.
-function applyAutoItemSpaces() {
+// Called after item/obstacle interaction completes; drains queue or ends turn.
+function processNextQueuedItem() {
+  activeItemSpaceIdx = -1;
+  if (pendingItemQueue.length === 0) { endWhiteTurn(); return; }
+  const { item, i } = pendingItemQueue.shift();
+  const done = activateItemSpace(item, i);
+  if (done) processNextQueuedItem();
+}
+
+// After a Team Advance, apply obstacle spaces then item spaces left→right, front→back.
+function applySpacesAfterAdvance() {
+  // Pass 1: obstacles. Collect starters first so pieces that land mid-chain aren't re-triggered.
+  const obstacleStarters = [];
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] === W && specialSpaces[i] && specialSpaces[i].type === 'obstacle') {
+      obstacleStarters.push(i);
+    }
+  }
+  for (const i of obstacleStarters) {
+    if (sides[i] === W) applySpecialSpace(i); // piece may chain-move away
+  }
+  checkWhiteKingAlive();
+  if (gameOver) { draw(); return; }
+
+  // Pass 2: item spaces — instant items applied now, interactive items queued.
+  pendingItemQueue = [];
   for (let i = 0; i < 64; i++) {
     const item = itemSpaces[i];
-    if (item === ITEM_NONE || sides[i] !== W) continue;
+    if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
     if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
-    else if (item === ITEM_KING_PROMOTER && board[i] === PAWN) { board[i] = KING; itemSpaces[i] = ITEM_NONE; }
+    else if (item === ITEM_KING_PROMOTER) { board[i] = KING; itemSpaces[i] = ITEM_NONE; }
+    else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
+  processNextQueuedItem();
 }
 
 // Applies obstacle (arrow) spaces with chaining. Any piece — white or black —
@@ -1459,7 +1486,7 @@ canvas.addEventListener("click", (e) => {
         activeItemSpaceIdx = -1;
         promotingPawnIdx = -1; promotingMode = false;
         anyPromotingPieceIdx = -1; anyPromotingMode = false;
-        if (fromSpace) { endWhiteTurn(); } else { draw(); }
+        if (fromSpace) { processNextQueuedItem(); } else { draw(); }
         return;
       }
     }
@@ -1468,7 +1495,7 @@ canvas.addEventListener("click", (e) => {
     activeItemSpaceIdx = -1;
     promotingPawnIdx = -1; promotingMode = false;
     anyPromotingPieceIdx = -1; anyPromotingMode = false;
-    if (fromSpaceCancel) { endWhiteTurn(); } else { draw(); }
+    if (fromSpaceCancel) { processNextQueuedItem(); } else { draw(); }
     return;
   }
 
@@ -1548,7 +1575,7 @@ canvas.addEventListener("click", (e) => {
           activeItemSpaceIdx = -1;
           clonerMode = false; clonerSelected = -1;
           if (clonerFromSpace) {
-            endWhiteTurn();
+            processNextQueuedItem();
           } else {
             firstMoveMade = true; recordPosition(); draw();
           }
@@ -1564,7 +1591,7 @@ canvas.addEventListener("click", (e) => {
     activeItemSpaceIdx = -1;
     clonerMode = false; clonerSelected = -1;
     if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    if (clonerCancelSpace) { endWhiteTurn(); } else { draw(); }
+    if (clonerCancelSpace) { processNextQueuedItem(); } else { draw(); }
     return;
   }
 
@@ -1613,7 +1640,7 @@ canvas.addEventListener("click", (e) => {
           activeItemSpaceIdx = -1;
           teleporterMode = false; teleporterSelected = -1;
           if (fromSpace) {
-            endWhiteTurn();
+            processNextQueuedItem();
           } else {
             firstMoveMade = true; recordPosition(); draw();
           }
@@ -1631,7 +1658,7 @@ canvas.addEventListener("click", (e) => {
     activeItemSpaceIdx = -1;
     teleporterMode = false; teleporterSelected = -1;
     if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    if (teleFromSpace) { endWhiteTurn(); } else { draw(); }
+    if (teleFromSpace) { processNextQueuedItem(); } else { draw(); }
     return;
   }
 
