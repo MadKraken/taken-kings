@@ -533,6 +533,9 @@ function canPitchShift() {
     const [kx, ky] = findKing(W);
     if (kx >= 0 && isAttacked(kx, ky, W)) return false;
   }
+  for (let x = 0; x < 8; x++) {
+    if (sides[idx(x, 7)] === W) return false;
+  }
   return true;
 }
 
