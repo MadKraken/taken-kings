@@ -84,6 +84,7 @@ let turn = W;
 let gameOver = false;
 let gameMsg = "";
 let score = 0;
+let gold = 0;
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
@@ -125,6 +126,7 @@ let aiThinking = false;
 const AI_DEPTH = 3;
 const HINT_DEPTH = 4;
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0 };
+const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0 };
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 function idx(x, y) { return y * 8 + x; }
@@ -242,7 +244,7 @@ function initBoard() {
   leapCount = 0;
   nextBonuses = generateRowBonuses(nextWave);
   selected = -1; validMoves = []; turn = W;
-  gameOver = false; gameMsg = ""; score = 0;
+  gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
   health.fill(1); shiftCountdown = 10;
@@ -403,6 +405,9 @@ function makeMove(fromI, toI) {
     return;
   }
 
+  if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
+    gold += GOLD_VALUE[captured] ?? 0;
+  }
   if (captured === KING && sides[toI] !== s) {
     score += 1;
   }
@@ -424,7 +429,9 @@ function makeMove(fromI, toI) {
 
   if (p === PAWN && toI === epTarget) {
     const capY = ty + (s === W ? 1 : -1);
-    if (piece(tx, capY) === KING) score += 1;
+    const epPiece = piece(tx, capY);
+    if (epPiece === KING) score += 1;
+    if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
     set(tx, capY, NONE, 0);
   }
 
@@ -499,6 +506,7 @@ function teamLeap(fierce = false) {
       const ni = idx(x, y - 1);
       if (fierce && newSides[ni] === B) {
         if (newBoard[ni] === KING) score += 1;
+        gold += GOLD_VALUE[newBoard[ni]] ?? 0;
         newBoard[ni] = NONE; newSides[ni] = 0; newHealth[ni] = 1;
       }
       newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
@@ -968,6 +976,7 @@ function applySpecialSpace(startI) {
     }
     if (destSide !== 0 && destSide !== moverSide) {
       if (board[destI] === KING) score++;
+      if (moverSide === W) gold += GOLD_VALUE[board[destI]] ?? 0;
     }
     if (board[destI] === CHEST && moverSide === W) {
       addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
@@ -1391,7 +1400,7 @@ function draw() {
   ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#aaa";
-  ctx.fillText(`Kings Taken: ${score}`, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 52);
+  ctx.fillText(`Kings Taken: ${score}   Gold: ${gold}`, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 52);
 
   // Promoter piece chooser overlay
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
