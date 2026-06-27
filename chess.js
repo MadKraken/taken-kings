@@ -118,6 +118,8 @@ let itemSpaces = new Array(64).fill(ITEM_NONE);
 let nextItemSpaceCol = -1;
 let nextItemType = ITEM_NONE;
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
+let specialSpaces = new Array(64).fill(null); // {type:'arrow', dx, dy}
+let nextSpecialSpace = null; // {col, dx, dy} for next incoming row
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_PROMOTER]: "item_promoter",
@@ -213,6 +215,27 @@ function generateItemSpace(nextLeap, wave) {
   return { col, item: items[randInt(items.length)] };
 }
 
+function generateArrowSpace(wave, chestCol, itemSpaceCol) {
+  const used = new Set(wave.map(w => w.x));
+  if (chestCol >= 0) used.add(chestCol);
+  if (itemSpaceCol >= 0) used.add(itemSpaceCol);
+  const open = [];
+  for (let x = 0; x < 8; x++) { if (!used.has(x)) open.push(x); }
+  if (open.length === 0) return null;
+  const col = open[randInt(open.length)];
+  // Build valid directions: horizontal destination must stay on board; dy=-1 (upward) excluded at spawn row 0
+  const dirs = [];
+  for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
+    if (dx === 0 && dy === 0) continue;
+    if (col + dx < 0 || col + dx > 7) continue;
+    if (dy === -1) continue; // never point upward at spawn
+    dirs.push({ dx, dy });
+  }
+  if (dirs.length === 0) return null;
+  const d = dirs[randInt(dirs.length)];
+  return { col, dx: d.dx, dy: d.dy };
+}
+
 function placeWave(row, wave) {
   for (const w of wave) {
     set(w.x, row, w.piece, B);
@@ -246,12 +269,14 @@ function initBoard() {
   nextChestCol = generateChestCol(leapCount + 1, nextWave);
   const initIS = generateItemSpace(leapCount + 1, nextWave);
   nextItemSpaceCol = initIS.col; nextItemType = initIS.item;
+  nextSpecialSpace = generateArrowSpace(nextWave, nextChestCol, nextItemSpaceCol);
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
+  specialSpaces.fill(null);
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
 }
@@ -557,6 +582,19 @@ function pitchShift() {
   sides.splice(0, 64, ...newSides);
   health.splice(0, 64, ...newHealth);
 
+  // Scroll special spaces down
+  const newSpecialSpaces = new Array(64).fill(null);
+  for (let i = 0; i < 64; i++) {
+    if (!specialSpaces[i]) continue;
+    const [x, y] = xy(i);
+    if (y === 7) continue;
+    newSpecialSpaces[idx(x, y + 1)] = specialSpaces[i];
+  }
+  if (nextSpecialSpace) {
+    newSpecialSpaces[idx(nextSpecialSpace.col, 0)] = { type: 'arrow', dx: nextSpecialSpace.dx, dy: nextSpecialSpace.dy };
+  }
+  specialSpaces.splice(0, 64, ...newSpecialSpaces);
+
   // Scroll item spaces down
   const newItemSpaces = new Array(64).fill(ITEM_NONE);
   for (let i = 0; i < 64; i++) {
@@ -583,6 +621,7 @@ function pitchShift() {
   nextChestCol = generateChestCol(leapCount + 1, nextWave);
   const nextIS = generateItemSpace(leapCount + 1, nextWave);
   nextItemSpaceCol = nextIS.col; nextItemType = nextIS.item;
+  nextSpecialSpace = generateArrowSpace(nextWave, nextChestCol, nextItemSpaceCol);
 
   epTarget = -1;
   selected = -1;
@@ -823,6 +862,7 @@ function aiPlay() {
     const move = aiBestMove();
     if (move) {
       makeMove(move[0], move[1]);
+      applySpecialSpace(move[1]);
       recordPosition();
     }
     if (countKings(W) === 0) {
@@ -932,6 +972,34 @@ function applyAutoItemSpaces() {
   }
 }
 
+// Returns the index where the piece ended up (may differ if arrow redirected it).
+function applySpecialSpace(toI) {
+  const sp = specialSpaces[toI];
+  if (!sp || sp.type !== 'arrow') return toI;
+  const [x, y] = xy(toI);
+  const nx = x + sp.dx, ny = y + sp.dy;
+  if (!inB(nx, ny)) return toI;
+  const destI = idx(nx, ny);
+  const moverSide = sides[toI];
+  const destSide = sides[destI];
+  if (destSide !== 0 && destSide === moverSide) return toI; // friendly piece blocks
+  // Bounce for black attacking shielded white
+  if (moverSide === B && destSide === W && health[destI] > 1) {
+    health[destI]--;
+    return toI;
+  }
+  // Capture
+  if (destSide !== 0 && destSide !== moverSide) {
+    if (board[destI] === KING) score++;
+  }
+  if (board[destI] === CHEST && moverSide === W) {
+    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+  }
+  board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI];
+  board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
+  return destI;
+}
+
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 72;
@@ -996,6 +1064,24 @@ function draw() {
       ctx.drawImage(iimg, px + off, py + off, sz, sz);
     }
   }
+  if (nextSpecialSpace) {
+    const px = MARGIN + nextSpecialSpace.col * TILE;
+    const py = BOARD_Y + MARGIN - TILE;
+    ctx.fillStyle = "rgba(80,200,255,0.18)";
+    ctx.fillRect(px, py, TILE, TILE);
+    const cx2 = px + TILE / 2, cy2 = py + TILE / 2;
+    const angle2 = Math.atan2(nextSpecialSpace.dy, nextSpecialSpace.dx);
+    const len2 = TILE * 0.32;
+    const tx3 = cx2 + Math.cos(angle2) * len2, ty3 = cy2 + Math.sin(angle2) * len2;
+    const bx3 = cx2 - Math.cos(angle2) * len2 * 0.55, by3 = cy2 - Math.sin(angle2) * len2 * 0.55;
+    ctx.strokeStyle = "rgba(120,230,255,0.9)";
+    ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(bx3, by3); ctx.lineTo(tx3, ty3); ctx.stroke();
+    ctx.fillStyle = "rgba(120,230,255,0.9)";
+    ctx.save(); ctx.translate(tx3, ty3); ctx.rotate(angle2);
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
   ctx.globalAlpha = 1.0;
 
   ctx.save();
@@ -1050,6 +1136,28 @@ function draw() {
       ctx.drawImage(img, px + (TILE - sz) / 2, py + (TILE - sz) / 2, sz, sz);
       ctx.globalAlpha = 1.0;
     }
+  }
+
+  // Arrow spaces
+  for (let i = 0; i < 64; i++) {
+    const sp = specialSpaces[i];
+    if (!sp || sp.type !== 'arrow') continue;
+    const [x, y] = xy(i);
+    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+    const cx = px + TILE / 2, cy = py + TILE / 2;
+    ctx.fillStyle = "rgba(80,200,255,0.18)";
+    ctx.fillRect(px, py, TILE, TILE);
+    const angle = Math.atan2(sp.dy, sp.dx);
+    const len = TILE * 0.32;
+    const tx2 = cx + Math.cos(angle) * len, ty2 = cy + Math.sin(angle) * len;
+    const bx2 = cx - Math.cos(angle) * len * 0.55, by2 = cy - Math.sin(angle) * len * 0.55;
+    ctx.strokeStyle = "rgba(120,230,255,0.9)";
+    ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(tx2, ty2); ctx.stroke();
+    ctx.fillStyle = "rgba(120,230,255,0.9)";
+    ctx.save(); ctx.translate(tx2, ty2); ctx.rotate(angle);
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
+    ctx.restore();
   }
 
   // Pieces and chests
@@ -1691,14 +1799,17 @@ canvas.addEventListener("click", (e) => {
       selected = -1; validMoves = [];
       checkWhiteKingAlive();
       if (!gameOver) {
-        const item = itemSpaces[clicked];
-        if (item !== ITEM_NONE && sides[clicked] === W && canItemAffectPiece(item, clicked)) {
-          const done = activateItemSpace(item, clicked);
-          if (done) endWhiteTurn();
-          // else: interactive mode active — endWhiteTurn deferred until player resolves
-        } else {
-          endWhiteTurn();
-        }
+        const movedTo = applySpecialSpace(clicked);
+        checkWhiteKingAlive();
+        if (!gameOver) {
+          const item = itemSpaces[movedTo];
+          if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
+            const done = activateItemSpace(item, movedTo);
+            if (done) endWhiteTurn();
+          } else {
+            endWhiteTurn();
+          }
+        } else { draw(); }
       } else {
         draw();
       }
