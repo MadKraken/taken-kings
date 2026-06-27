@@ -1360,6 +1360,7 @@ function draw() {
     ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canShift ? "#fff" : "#999";
+    ctx.font = "bold 13px sans-serif";
     ctx.fillText(`FIELD ADVANCE`, PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2 - 4);
     ctx.font = "11px sans-serif";
     ctx.fillStyle = shiftUrgent ? "#ffaaaa" : "#aaccff";
