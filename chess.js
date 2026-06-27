@@ -944,32 +944,39 @@ function applyAutoItemSpaces() {
   }
 }
 
-// Returns the index where the piece ended up (may differ if arrow redirected it).
-function applySpecialSpace(toI) {
-  const sp = specialSpaces[toI];
-  if (!sp || sp.type !== 'obstacle') return toI;
-  const [x, y] = xy(toI);
-  const nx = x + sp.dx, ny = y + sp.dy;
-  if (!inB(nx, ny)) return toI;
-  const destI = idx(nx, ny);
-  const moverSide = sides[toI];
-  const destSide = sides[destI];
-  if (destSide !== 0 && destSide === moverSide) return toI; // friendly piece blocks
-  // Bounce for black attacking shielded white
-  if (moverSide === B && destSide === W && health[destI] > 1) {
-    health[destI]--;
-    return toI;
+// Applies obstacle (arrow) spaces with chaining. Any piece — white or black —
+// landing on an obstacle is redirected; if the destination is also an obstacle
+// the chain continues. Visited set prevents infinite loops.
+function applySpecialSpace(startI) {
+  const visited = new Set();
+  let toI = startI;
+  while (true) {
+    if (visited.has(toI)) break; // cycle detected — piece stays where it is
+    const sp = specialSpaces[toI];
+    if (!sp || sp.type !== 'obstacle') break;
+    visited.add(toI);
+    const [x, y] = xy(toI);
+    const nx = x + sp.dx, ny = y + sp.dy;
+    if (!inB(nx, ny)) break;
+    const destI = idx(nx, ny);
+    const moverSide = sides[toI];
+    const destSide = sides[destI];
+    if (destSide !== 0 && destSide === moverSide) break; // friendly blocks
+    // Bounce: black piece hitting shielded white
+    if (moverSide === B && destSide === W && health[destI] > 1) {
+      health[destI]--; break;
+    }
+    if (destSide !== 0 && destSide !== moverSide) {
+      if (board[destI] === KING) score++;
+    }
+    if (board[destI] === CHEST && moverSide === W) {
+      addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+    }
+    board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI];
+    board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
+    toI = destI;
   }
-  // Capture
-  if (destSide !== 0 && destSide !== moverSide) {
-    if (board[destI] === KING) score++;
-  }
-  if (board[destI] === CHEST && moverSide === W) {
-    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
-  }
-  board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI];
-  board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
-  return destI;
+  return toI;
 }
 
 // --- Leap button geometry ---
