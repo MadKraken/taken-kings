@@ -1418,6 +1418,7 @@ canvas.addEventListener("click", (e) => {
           if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
           board[i] = board[clonerSelected];
           sides[i] = W;
+          health[i] = health[clonerSelected];
           if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
           const clonerFromSpace = activeItemSpaceIdx >= 0;
           activeItemSpaceIdx = -1;
