@@ -5,7 +5,10 @@ const TILE = 80;
 const MARGIN = 32;
 const PREVIEW_H = 60;
 const BOARD_PX = TILE * 8;
-canvas.width = BOARD_PX + MARGIN * 2;
+const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
+const INV_W = INV_COLS * (INV_SLOT + INV_PAD) + INV_PAD;
+const INV_X = BOARD_PX + MARGIN * 2 + 10;
+canvas.width = INV_X + INV_W + 10;
 canvas.height = PREVIEW_H + BOARD_PX + MARGIN * 2 + 130;
 
 const LIGHT = "#edcea0";
@@ -15,7 +18,7 @@ const MOVE_COLOR = "rgba(100,180,60,0.55)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
 
-const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6;
+const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7;
 const W = 1, B = 2;
 
 const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king" };
@@ -25,7 +28,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 12;
+  const total = 14;
   for (const s of [W, B]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
@@ -35,6 +38,14 @@ function loadSprites() {
       spriteImages[key] = img;
     }
   }
+  const chestImg = new Image();
+  chestImg.src = "sprites/chest.svg";
+  chestImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["chest"] = chestImg;
+  const promImg = new Image();
+  promImg.src = "sprites/item_promoter.svg";
+  promImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_promoter"] = promImg;
 }
 
 let board = new Array(64).fill(NONE);
@@ -48,7 +59,13 @@ let score = 0;
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
+let nextChestCol = -1; // column for next chest, -1 if none
 let positionHistory = []; // track board states to detect repetition
+const ITEM_NONE = 0, ITEM_PROMOTER = 1;
+const ITEM_NAMES = { [ITEM_PROMOTER]: "Promoter" };
+let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
+let promotingMode = false;
+let promotingPawnIdx = -1;
 
 let wkMoved = false;
 let wraMoved = false, wrhMoved = false;
@@ -56,7 +73,8 @@ let epTarget = -1;
 let aiThinking = false;
 
 const AI_DEPTH = 3;
-const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000 };
+const HINT_DEPTH = 4;
+const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0 };
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 function idx(x, y) { return y * 8 + x; }
@@ -68,6 +86,19 @@ function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
+
+function addToInventory(item) {
+  for (let i = 0; i < inventory.length; i++) {
+    if (inventory[i] === ITEM_NONE) { inventory[i] = item; return true; }
+  }
+  return false; // full
+}
+
+function removeFromInventory(slot) {
+  const item = inventory[slot];
+  inventory[slot] = ITEM_NONE;
+  return item;
+}
 
 function boardHash() {
   let h = "";
@@ -99,6 +130,16 @@ function generateWave(count) {
   return wave;
 }
 
+function generateChestCol(nextLeap, wave) {
+  if (nextLeap >= 2 && nextLeap % 2 === 0) {
+    const waveCols = wave.map(w => w.x);
+    const open = [];
+    for (let x = 0; x < 8; x++) { if (!waveCols.includes(x)) open.push(x); }
+    return open.length > 0 ? open[randInt(open.length)] : -1;
+  }
+  return -1;
+}
+
 function placeWave(row, wave) {
   for (const w of wave) {
     set(w.x, row, w.piece, B);
@@ -127,9 +168,11 @@ function initBoard() {
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
   nextWave = generateWave(spawnCount + 1);
+  nextChestCol = generateChestCol(leapCount + 1, nextWave);
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; leapCount = 0;
   firstMoveMade = false; positionHistory = [];
+  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
 }
@@ -141,6 +184,7 @@ function slidingMoves(moves, x, y, dirs, s) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
+      if (s === B && piece(nx, ny) === CHEST) break;
       moves.push(idx(nx, ny));
       if (piece(nx, ny) !== NONE) break;
       nx += dx; ny += dy;
@@ -152,23 +196,36 @@ function pseudoMoves(x, y) {
   const moves = [];
   const p = piece(x, y), s = side(x, y), e = enemy(s);
   if (p === PAWN) {
-    const dir = s === W ? -1 : 1;
-    const start = s === W ? 6 : 1;
-    if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
-      moves.push(idx(x, y + dir));
-      if (y === start && piece(x, y + 2 * dir) === NONE) moves.push(idx(x, y + 2 * dir));
-    }
-    for (const dx of [-1, 1]) {
-      const nx = x + dx, ny = y + dir;
-      if (inB(nx, ny)) {
-        if (side(nx, ny) === e) moves.push(idx(nx, ny));
-        else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
+    if (s === W) {
+      // White pawns move and capture in both directions
+      for (const dir of [-1, 1]) {
+        if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
+          moves.push(idx(x, y + dir));
+          if (dir === -1 && y === 6 && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
+        }
+        for (const dx of [-1, 1]) {
+          const nx = x + dx, ny = y + dir;
+          if (inB(nx, ny)) {
+            if (side(nx, ny) === e) moves.push(idx(nx, ny));
+            else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
+          }
+        }
+      }
+    } else {
+      // Black pawns move down only
+      const dir = 1;
+      if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
+        moves.push(idx(x, y + dir));
+      }
+      for (const dx of [-1, 1]) {
+        const nx = x + dx, ny = y + dir;
+        if (inB(nx, ny) && side(nx, ny) === e && piece(nx, ny) !== CHEST) moves.push(idx(nx, ny));
       }
     }
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST)) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     slidingMoves(moves, x, y, [[1,1],[1,-1],[-1,1],[-1,-1]], s);
@@ -180,7 +237,7 @@ function pseudoMoves(x, y) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST)) moves.push(idx(nx, ny));
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
       if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
@@ -266,6 +323,9 @@ function makeMove(fromI, toI) {
   if (captured === KING && sides[toI] !== s) {
     score += 1;
   }
+  if (captured === CHEST && s === W) {
+    addToInventory(ITEM_PROMOTER);
+  }
 
   if (p === KING && s === W) {
     wkMoved = true;
@@ -299,17 +359,20 @@ function makeMove(fromI, toI) {
 
 function canTeamLeap() {
   if (gameOver || turn !== W || aiThinking) return false;
-  // Can't leap if enemy on bottom row (nowhere to shift)
+  // Can't leap if in check
+  const [kx, ky] = findKing(W);
+  if (kx >= 0 && isAttacked(kx, ky, W)) return false;
+  // Can't leap if non-white piece on bottom row (nowhere to shift)
   for (let x = 0; x < 8; x++) {
-    if (side(x, 7) === B) return false;
+    if (piece(x, 7) !== NONE && side(x, 7) !== W) return false;
   }
   // Can't leap if white piece on top row (would be overwritten by new wave)
   for (let x = 0; x < 8; x++) {
     if (side(x, 0) === W) return false;
   }
-  // Can't leap if any enemy would shift onto a white piece
+  // Can't leap if any non-white piece would shift onto a white piece
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== B) continue;
+    if (sides[i] === W || board[i] === NONE) continue;
     const [x, y] = xy(i);
     if (y + 1 <= 7 && side(x, y + 1) === W) return false;
   }
@@ -333,25 +396,32 @@ function teamLeap() {
     }
   }
 
-  // Shift enemy pieces down one
+  // Shift enemy pieces and chests down one
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== B) continue;
+    if (sides[i] === W || board[i] === NONE) continue;
     const [x, y] = xy(i);
     const ny = y + 1;
-    if (ny > 7) continue; // shouldn't happen due to canTeamLeap check
+    if (ny > 7) continue;
     const ni = idx(x, ny);
-    newBoard[ni] = board[i];
-    newSides[ni] = B;
+    if (newSides[ni] !== W) {
+      newBoard[ni] = board[i];
+      newSides[ni] = sides[i];
+    }
   }
 
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
 
-  // Place the pre-generated wave and prepare the next one
+  // Place the pre-generated wave and chest
   spawnCount++;
   leapCount++;
   placeWave(0, nextWave);
+  if (nextChestCol >= 0) {
+    set(nextChestCol, 0, CHEST, 0);
+  }
+
   nextWave = generateWave(spawnCount + 1);
+  nextChestCol = generateChestCol(leapCount + 1, nextWave);
 
   epTarget = -1;
   selected = -1;
@@ -369,8 +439,8 @@ function teamLeap() {
 function saveState() {
   return {
     board: [...board], sides: [...sides], epTarget,
-    wkMoved, wraMoved, wrhMoved, score,
-    spawnCount, nextWave: nextWave.map(w => ({...w})),
+    wkMoved, wraMoved, wrhMoved, score, inventory: [...inventory],
+    spawnCount, nextChestCol, nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length
   };
 }
@@ -381,21 +451,21 @@ function restoreState(st) {
   epTarget = st.epTarget;
   wkMoved = st.wkMoved;
   wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
-  score = st.score;
-  spawnCount = st.spawnCount;
+  score = st.score; inventory.splice(0, inventory.length, ...st.inventory);
+  spawnCount = st.spawnCount; nextChestCol = st.nextChestCol;
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
 }
 
 function canSimulateLeap() {
   for (let x = 0; x < 8; x++) {
-    if (side(x, 7) === B) return false;
+    if (piece(x, 7) !== NONE && side(x, 7) !== W) return false;
   }
   for (let x = 0; x < 8; x++) {
     if (side(x, 0) === W) return false;
   }
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== B) continue;
+    if (sides[i] === W || board[i] === NONE) continue;
     const [x, y] = xy(i);
     if (y + 1 <= 7 && side(x, y + 1) === W) return false;
   }
@@ -420,7 +490,9 @@ function simulateLeap() {
   sides.splice(0, 64, ...newSides);
   spawnCount++;
   placeWave(0, nextWave);
+  if (nextChestCol >= 0) set(nextChestCol, 0, CHEST, 0);
   nextWave = generateWave(spawnCount + 1);
+  nextChestCol = generateChestCol(leapCount + 1, nextWave);
   epTarget = -1;
 }
 
@@ -514,7 +586,7 @@ function aiBestMove() {
   const moves = allLegalMovesForSide(B);
   if (moves.length === 0) return null;
   let bestScore = Infinity;
-  let bestMove = moves[0];
+  let bestMoves = [];
   for (const [from, to] of moves) {
     const st = saveState();
     makeMove(from, to);
@@ -523,10 +595,12 @@ function aiBestMove() {
     restoreState(st);
     if (val < bestScore) {
       bestScore = val;
-      bestMove = [from, to];
+      bestMoves = [[from, to]];
+    } else if (val === bestScore) {
+      bestMoves.push([from, to]);
     }
   }
-  return bestMove;
+  return bestMoves[randInt(bestMoves.length)];
 }
 
 let hintMove = null; // {from, to} or "leap"
@@ -534,31 +608,21 @@ let hintMove = null; // {from, to} or "leap"
 function playerBestMove() {
   const moves = allLegalMovesForSide(W);
   let bestScore = -Infinity;
-  let bestMove = moves.length > 0 ? moves[0] : null;
+  let bestMoves = [];
   for (const [from, to] of moves) {
     const st = saveState();
     makeMove(from, to);
     recordPosition();
-    const val = minimax(AI_DEPTH - 1, -Infinity, Infinity, false);
+    const val = minimax(HINT_DEPTH - 1, -Infinity, Infinity, false);
     restoreState(st);
     if (val > bestScore) {
       bestScore = val;
-      bestMove = [from, to];
+      bestMoves = [[from, to]];
+    } else if (val === bestScore) {
+      bestMoves.push([from, to]);
     }
   }
-  // Also consider team leap
-  if (canSimulateLeap()) {
-    const st = saveState();
-    simulateLeap();
-    recordPosition();
-    const val = minimax(AI_DEPTH - 1, -Infinity, Infinity, false);
-    restoreState(st);
-    if (val > bestScore) {
-      bestScore = val;
-      bestMove = "leap";
-    }
-  }
-  return bestMove;
+  return bestMoves.length > 0 ? bestMoves[randInt(bestMoves.length)] : null;
 }
 
 function showHint() {
@@ -631,6 +695,7 @@ const HINT_BTN = {
   w: 120, h: 36
 };
 
+
 const RESIGN_BTN = {
   x: MARGIN + BOARD_PX - 100, y: BOARD_Y + MARGIN + BOARD_PX + 72,
   w: 100, h: 36
@@ -661,6 +726,12 @@ function draw() {
     const img = spriteImages[key];
     if (img && img.complete) {
       ctx.drawImage(img, MARGIN + w.x * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
+    }
+  }
+  if (nextChestCol >= 0) {
+    const cimg = spriteImages["chest"];
+    if (cimg && cimg.complete) {
+      ctx.drawImage(cimg, MARGIN + nextChestCol * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
     }
   }
   ctx.globalAlpha = 1.0;
@@ -699,19 +770,72 @@ function draw() {
     ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
   }
 
-  // Pieces
+  // Pieces and chests
   const pad = 6;
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
-    const key = `${sides[i]}_${board[i]}`;
-    const img = spriteImages[key];
-    if (img && img.complete) {
-      ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+    if (board[i] === CHEST) {
+      const img = spriteImages["chest"];
+      if (img && img.complete) {
+        ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+      }
+    } else {
+      const key = `${sides[i]}_${board[i]}`;
+      const img = spriteImages[key];
+      if (img && img.complete) {
+        ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+      }
+    }
+  }
+
+  // Promoting mode highlight
+  if (promotingMode) {
+    for (let i = 0; i < 64; i++) {
+      if (board[i] === PAWN && sides[i] === W) {
+        const [px, py] = xy(i);
+        ctx.fillStyle = "rgba(200,150,50,0.5)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
     }
   }
 
   ctx.restore();
+
+  // Inventory panel
+  const invY = BOARD_Y + MARGIN;
+  ctx.fillStyle = "#2a2a4e";
+  ctx.beginPath();
+  ctx.roundRect(INV_X, invY - 24, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28, 8);
+  ctx.fill();
+  ctx.fillStyle = "#aaa";
+  ctx.font = "bold 12px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("ITEMS", INV_X + INV_W / 2, invY - 10);
+  for (let r = 0; r < INV_ROWS; r++) {
+    for (let c = 0; c < INV_COLS; c++) {
+      const slotIdx = r * INV_COLS + c;
+      const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+      const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+      const isActive = promotingMode && inventory._activeSlot === slotIdx;
+      ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
+      ctx.beginPath();
+      ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
+      ctx.fill();
+      if (isActive) {
+        ctx.strokeStyle = "#e8a735";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (inventory[slotIdx] === ITEM_PROMOTER) {
+        const img = spriteImages["item_promoter"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
+      }
+    }
+  }
 
   // Buttons
   ctx.font = "bold 16px sans-serif";
@@ -763,11 +887,40 @@ function draw() {
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#ddd";
   ctx.textAlign = "center";
-  const status = gameOver ? gameMsg : (aiThinking ? "AI Thinking..." : "Your Turn");
+  const status = gameOver ? gameMsg : (promotingMode ? "Select a Pawn to promote" : (aiThinking ? "AI Thinking..." : "Your Turn"));
   ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#aaa";
   ctx.fillText(`Kings Taken: ${score}`, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 52);
+
+  // Promoter piece chooser overlay
+  if (promotingPawnIdx >= 0) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#2a2a4e";
+    const dlgW = 340, dlgH = 100;
+    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
+    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
+    ctx.fillStyle = "#ddd";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 24);
+    const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
+    const cpad = 8;
+    const csize = 60;
+    const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
+    for (let i = 0; i < choices.length; i++) {
+      const cx = startX + i * (csize + cpad);
+      const cy = dlgY + 36;
+      ctx.fillStyle = "#3a3a5e";
+      ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 6); ctx.fill();
+      const img = spriteImages[`${W}_${choices[i]}`];
+      if (img && img.complete) {
+        ctx.drawImage(img, cx + 6, cy + 6, csize - 12, csize - 12);
+      }
+    }
+  }
+
 }
 
 canvas.addEventListener("click", (e) => {
@@ -777,6 +930,51 @@ canvas.addEventListener("click", (e) => {
   const scaleY = canvas.height / rect.height;
   const cx = (e.clientX - rect.left) * scaleX;
   const cy = (e.clientY - rect.top) * scaleY;
+
+  // Piece chooser dialog
+  if (promotingPawnIdx >= 0) {
+    const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
+    const dlgW = 340, dlgH = 100;
+    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
+    const cpad = 8, csize = 60;
+    const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
+    for (let i = 0; i < choices.length; i++) {
+      const bx = startX + i * (csize + cpad);
+      const by = dlgY + 36;
+      if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
+        board[promotingPawnIdx] = choices[i];
+        if (inventory._activeSlot !== undefined) {
+          removeFromInventory(inventory._activeSlot);
+          delete inventory._activeSlot;
+        }
+        promotingPawnIdx = -1;
+        promotingMode = false;
+        draw();
+        return;
+      }
+    }
+    // Click outside cancels
+    promotingPawnIdx = -1;
+    promotingMode = false;
+    draw();
+    return;
+  }
+
+  // Pawn selection for promotion
+  if (promotingMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
+      promotingPawnIdx = idx(gx, gy);
+      draw();
+      return;
+    }
+    // Click elsewhere cancels
+    promotingMode = false;
+    draw();
+    return;
+  }
 
   // Resign confirm dialog
   if (resignConfirm) {
@@ -801,6 +999,28 @@ canvas.addEventListener("click", (e) => {
     resignConfirm = true;
     draw();
     return;
+  }
+
+  // Check inventory click
+  if (turn === W && !aiThinking) {
+    const invY = BOARD_Y + MARGIN;
+    for (let r = 0; r < INV_ROWS; r++) {
+      for (let c = 0; c < INV_COLS; c++) {
+        const slotIdx = r * INV_COLS + c;
+        const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+        const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+        if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT) {
+          if (inventory[slotIdx] === ITEM_PROMOTER) {
+            promotingMode = true;
+            selected = -1; validMoves = [];
+            // Store which slot is being used
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+        }
+      }
+    }
   }
 
   // Check hint button
