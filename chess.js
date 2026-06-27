@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 
 const TILE = 80;
 const MARGIN = 32;
-const LOGO_H = 90;
+const LOGO_H = 135;
 const PREVIEW_H = 60;
 const BOARD_PX = TILE * 8;
 const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
@@ -31,20 +31,9 @@ function loadSprites() {
   let count = 0;
   const total = 20;
   const logoImg = new Image();
-  logoImg.src = "taken_kings_logo.png";
+  logoImg.src = "taken_kings_logo.png?v=2";
   logoImg.onload = () => {
-    // Strip white background: make near-white pixels transparent
-    const oc = document.createElement('canvas');
-    oc.width = logoImg.naturalWidth; oc.height = logoImg.naturalHeight;
-    const octx = oc.getContext('2d');
-    octx.drawImage(logoImg, 0, 0);
-    const imgData = octx.getImageData(0, 0, oc.width, oc.height);
-    const d = imgData.data;
-    for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) d[i+3] = 0;
-    }
-    octx.putImageData(imgData, 0, 0);
-    spriteImages["logo"] = oc;
+    spriteImages["logo"] = logoImg;
     count++; if (count === total) { spritesLoaded = true; draw(); }
   };
   for (const s of [W, B]) {
@@ -194,46 +183,35 @@ function generateWave(count) {
   return wave;
 }
 
-function generateChestCol(nextLeap, wave) {
-  if (nextLeap % 2 === 1) {
-    const waveCols = wave.map(w => w.x);
-    const open = [];
-    for (let x = 0; x < 8; x++) { if (!waveCols.includes(x)) open.push(x); }
-    return open.length > 0 ? open[randInt(open.length)] : -1;
-  }
-  return -1;
-}
-
-function generateItemSpace(nextLeap, wave) {
-  if (nextLeap % 2 !== 0) return { col: -1, item: ITEM_NONE };
-  const waveCols = wave.map(w => w.x);
+// Returns exactly one bonus for the incoming wave row.
+// nextLeap===1 (row 9) is always a chest; all others pick randomly.
+function generateRowBonus(nextLeap, wave) {
+  const waveCols = new Set(wave.map(w => w.x));
   const open = [];
-  for (let x = 0; x < 8; x++) { if (!waveCols.includes(x)) open.push(x); }
-  if (open.length === 0) return { col: -1, item: ITEM_NONE };
-  const col = open[randInt(open.length)];
-  const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
-  return { col, item: items[randInt(items.length)] };
-}
+  for (let x = 0; x < 8; x++) { if (!waveCols.has(x)) open.push(x); }
+  const none = { chestCol: -1, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: null };
+  if (open.length === 0) return none;
 
-function generateArrowSpace(wave, chestCol, itemSpaceCol) {
-  const used = new Set(wave.map(w => w.x));
-  if (chestCol >= 0) used.add(chestCol);
-  if (itemSpaceCol >= 0) used.add(itemSpaceCol);
-  const open = [];
-  for (let x = 0; x < 8; x++) { if (!used.has(x)) open.push(x); }
-  if (open.length === 0) return null;
+  const type = nextLeap === 1 ? 'chest' : ['chest', 'item', 'arrow'][randInt(3)];
   const col = open[randInt(open.length)];
-  // Build valid directions: horizontal destination must stay on board; dy=-1 (upward) excluded at spawn row 0
-  const dirs = [];
-  for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
-    if (dx === 0 && dy === 0) continue;
-    if (col + dx < 0 || col + dx > 7) continue;
-    if (dy === -1) continue; // never point upward at spawn
-    dirs.push({ dx, dy });
+
+  if (type === 'chest') {
+    return { chestCol: col, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: null };
+  } else if (type === 'item') {
+    const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+    return { chestCol: -1, itemSpaceCol: col, itemType: items[randInt(items.length)], specialSpace: null };
+  } else {
+    const dirs = [];
+    for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
+      if (dx === 0 && dy === 0) continue;
+      if (col + dx < 0 || col + dx > 7) continue;
+      if (dy === -1) continue;
+      dirs.push({ dx, dy });
+    }
+    if (dirs.length === 0) return none;
+    const d = dirs[randInt(dirs.length)];
+    return { chestCol: -1, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: { col, dx: d.dx, dy: d.dy } };
   }
-  if (dirs.length === 0) return null;
-  const d = dirs[randInt(dirs.length)];
-  return { col, dx: d.dx, dy: d.dy };
 }
 
 function placeWave(row, wave) {
@@ -266,10 +244,9 @@ function initBoard() {
   placeWave(0, firstWave);
   nextWave = generateWave(spawnCount + 1);
   leapCount = 0;
-  nextChestCol = generateChestCol(leapCount + 1, nextWave);
-  const initIS = generateItemSpace(leapCount + 1, nextWave);
-  nextItemSpaceCol = initIS.col; nextItemType = initIS.item;
-  nextSpecialSpace = generateArrowSpace(nextWave, nextChestCol, nextItemSpaceCol);
+  const initBonus = generateRowBonus(leapCount + 1, nextWave);
+  nextChestCol = initBonus.chestCol; nextItemSpaceCol = initBonus.itemSpaceCol;
+  nextItemType = initBonus.itemType; nextSpecialSpace = initBonus.specialSpace;
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
@@ -619,10 +596,9 @@ function pitchShift() {
   }
 
   nextWave = generateWave(spawnCount + 1);
-  nextChestCol = generateChestCol(leapCount + 1, nextWave);
-  const nextIS = generateItemSpace(leapCount + 1, nextWave);
-  nextItemSpaceCol = nextIS.col; nextItemType = nextIS.item;
-  nextSpecialSpace = generateArrowSpace(nextWave, nextChestCol, nextItemSpaceCol);
+  const nextBonus = generateRowBonus(leapCount + 1, nextWave);
+  nextChestCol = nextBonus.chestCol; nextItemSpaceCol = nextBonus.itemSpaceCol;
+  nextItemType = nextBonus.itemType; nextSpecialSpace = nextBonus.specialSpace;
 
   epTarget = -1;
   selected = -1;
@@ -1023,7 +999,8 @@ function draw() {
     const maxW = canvas.width - MARGIN * 2;
     const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
     const lw = logoEl.width * scale, lh = logoEl.height * scale;
-    ctx.drawImage(logoEl, (canvas.width - lw) / 2, (LOGO_H - lh) / 2, lw, lh);
+    const logoCx = MARGIN + 4 * TILE; // d/e column boundary
+    ctx.drawImage(logoEl, logoCx - lw / 2, (LOGO_H - lh) / 2, lw, lh);
   }
 
   // Preview row (ghosted board tile + pieces above the board)
