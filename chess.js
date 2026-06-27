@@ -1042,15 +1042,20 @@ function draw() {
         ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
       }
     }
-    // Health badge for upgraded white pieces
+    // Shield badge: shows number of shields (health - 1) using the shield sprite
     if (sides[i] === W && health[i] > 1) {
-      const bx = MARGIN + x * TILE + TILE - 18, by = MARGIN + y * TILE + 4;
-      ctx.fillStyle = "#22cc44";
-      ctx.beginPath(); ctx.arc(bx + 7, by + 7, 9, 0, Math.PI * 2); ctx.fill();
+      const shields = health[i] - 1;
+      const bx = MARGIN + x * TILE + TILE - 22, by = MARGIN + y * TILE + 2;
+      const sz = 20;
+      const shieldImg = spriteImages["item_upgrader"];
+      if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 13px sans-serif";
+      ctx.strokeStyle = "rgba(0,0,0,0.6)";
+      ctx.lineWidth = 2;
+      ctx.font = "bold 11px sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(health[i], bx + 7, by + 8);
+      ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
+      ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
     }
   }
 
