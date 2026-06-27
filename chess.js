@@ -1347,7 +1347,7 @@ function draw() {
     ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canLeap ? "#fff" : "#999";
-    ctx.fillText("⬆ TEAM LEAP", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+    ctx.fillText("⬆ TEAM ADVANCE", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
     // Pitch Shift
     const canShift = canManualPitchShift();
