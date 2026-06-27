@@ -453,28 +453,31 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function canTeamLeap() {
-  if (gameOver || turn !== W || aiThinking) return false;
-  // Can't leap if any white piece is on row 0 (would leave board)
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] === W && xy(i)[1] === 0) return false;
-  }
-  // Can't leap if any white piece would land on an enemy
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) continue;
-    const [x, y] = xy(i);
-    if (sides[idx(x, y - 1)] === B) return false;
-  }
-  return true;
+  return !(gameOver || turn !== W || aiThinking);
 }
 
 function teamLeap(fierce = false) {
-  if (fierce) {
-    if (gameOver || turn !== W || aiThinking) return;
-  } else {
-    if (!canTeamLeap()) return;
+  if (gameOver || turn !== W || aiThinking) return;
+
+  // Per-column blocking: a white piece can't move if the row above is occupied
+  // by an enemy, or by a white piece that itself can't move.
+  const canMoveUp = new Array(64).fill(false);
+  for (let x = 0; x < 8; x++) {
+    const occupied = new Set();
+    for (let y = 0; y < 8; y++) {
+      if (sides[idx(x, y)] === B) occupied.add(y);
+    }
+    for (let y = 0; y < 8; y++) {
+      if (sides[idx(x, y)] !== W) continue;
+      if (y === 0 || occupied.has(y - 1)) {
+        occupied.add(y); // stays, blocks pieces below
+      } else {
+        canMoveUp[idx(x, y)] = true;
+        occupied.add(y - 1); // destination claimed
+      }
+    }
   }
 
-  // All white pieces advance up one row (y-1); enemies stay in place.
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
   const newHealth = new Array(64).fill(1);
@@ -488,19 +491,19 @@ function teamLeap(fierce = false) {
     }
   }
 
-  // Advance white pieces up
+  // Move white pieces that can, leave the rest in place
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
-    const [x, y] = xy(i);
-    const ny = y - 1;
-    if (ny < 0) continue;
-    const ni = idx(x, ny);
-    if (fierce && newSides[ni] === B) {
-      if (newBoard[ni] === KING) score += 1;
-      newBoard[ni] = NONE; newSides[ni] = 0; newHealth[ni] = 1;
-    }
-    if (newSides[ni] !== B) {
+    if (canMoveUp[i]) {
+      const [x, y] = xy(i);
+      const ni = idx(x, y - 1);
+      if (fierce && newSides[ni] === B) {
+        if (newBoard[ni] === KING) score += 1;
+        newBoard[ni] = NONE; newSides[ni] = 0; newHealth[ni] = 1;
+      }
       newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
+    } else {
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i];
     }
   }
 
@@ -1015,6 +1018,7 @@ function draw() {
       ctx.drawImage(img, MARGIN + w.x * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
     }
   }
+  ctx.globalAlpha = 1.0;
   for (const b of nextBonuses) {
     const px = MARGIN + b.col * TILE, py = BOARD_Y + MARGIN - TILE;
     if (b.type === 'chest') {
