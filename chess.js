@@ -540,6 +540,7 @@ function teamLeap(fierce = false) {
   epTarget = -1;
   selected = -1;
   validMoves = [];
+  wkMoved = true; wraMoved = true; wrhMoved = true; // castling invalid after a leap
   firstMoveMade = true;
   recordPosition();
   applyAutoItemSpaces();
