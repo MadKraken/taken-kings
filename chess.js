@@ -108,7 +108,12 @@ let itemSpaces = new Array(64).fill(ITEM_NONE);
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
-let specialSpaces = new Array(64).fill(null); // {type:'obstacle', dx, dy}
+let pendingShopQueue = []; // shop-space indices queued after a Team Advance
+let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'shop', ...}
+let shopMode = false;
+let shopSpaceIdx = -1; // which specialSpaces entry is currently open
+let shopOffers = []; // reference to specialSpaces[shopSpaceIdx].offers
+let shopOnDone = null; // callback after shop closes
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_PROMOTER]: "item_promoter",
@@ -117,6 +122,14 @@ const ITEM_SPRITE_KEYS = {
   [ITEM_KING_PROMOTER]: "item_king_promoter",
   [ITEM_CLONER]: "item_cloner",
   [ITEM_UPGRADER]: "item_upgrader"
+};
+const ITEM_PRICES = {
+  [ITEM_PROMOTER]: 3,
+  [ITEM_ANY_PROMOTER]: 6,
+  [ITEM_TELEPORTER]: 4,
+  [ITEM_KING_PROMOTER]: 5,
+  [ITEM_CLONER]: 6,
+  [ITEM_UPGRADER]: 3
 };
 
 let wkMoved = false;
@@ -142,6 +155,55 @@ function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
+
+// Draw a storefront icon centered in the tile at (tx,ty) with the given tile size.
+function drawShopTile(gctx, tx, ty, tileSize) {
+  const cx = tx + tileSize / 2, cy = ty + tileSize / 2;
+  const sz = tileSize * 0.60;
+
+  // Building body
+  const bW = sz * 0.88, bH = sz * 0.54;
+  const bX = cx - bW / 2, bY = cy - sz * 0.04;
+  gctx.fillStyle = "rgba(220,185,110,0.95)";
+  gctx.fillRect(bX, bY, bW, bH);
+
+  // Awning — mostly above bY, small overlap into building top
+  const aW = sz, aH = sz * 0.19;
+  const aX = cx - aW / 2, aY = bY - aH * 0.6;
+  // awning bottom = aY + aH = bY + aH*0.4 = bY + sz*0.076
+  gctx.fillStyle = "#c03030";
+  gctx.beginPath();
+  gctx.moveTo(aX, aY);
+  gctx.lineTo(aX + aW, aY);
+  gctx.lineTo(aX + aW * 0.87, aY + aH);
+  gctx.lineTo(aX + aW * 0.13, aY + aH);
+  gctx.closePath();
+  gctx.fill();
+
+  // Small scalloped bottom — scallops bottom ≈ bY + sz*0.111
+  const scR = sz * 0.035;
+  gctx.fillStyle = "#901a1a";
+  const scInner = aW * 0.74, scCount = 5;
+  for (let k = 0; k < scCount; k++) {
+    const scX = aX + aW * 0.13 + scInner * (k + 0.5) / scCount;
+    gctx.beginPath();
+    gctx.arc(scX, aY + aH, scR, 0, Math.PI);
+    gctx.fill();
+  }
+
+  // Door — top at bY + sz*0.292, leaving room for windows above it
+  const dW = bW * 0.28, dH = bH * 0.46;
+  gctx.fillStyle = "rgba(90,50,18,0.9)";
+  gctx.beginPath();
+  gctx.roundRect(cx - dW / 2, bY + bH - dH, dW, dH, 2);
+  gctx.fill();
+
+  // Windows — explicitly placed between scallops bottom (sz*0.111) and door top (sz*0.292)
+  gctx.fillStyle = "rgba(180,230,255,0.78)";
+  const wW = bW * 0.22, wH = sz * 0.13, wY = bY + sz * 0.14;
+  gctx.fillRect(bX + bW * 0.06, wY, wW, wH);
+  gctx.fillRect(bX + bW - bW * 0.06 - wW, wY, wW, wH);
+}
 
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 
@@ -213,12 +275,16 @@ function generateRowBonuses(wave) {
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (randInt(8) !== 0) continue;
-    const type = ['chest', 'item', 'obstacle'][randInt(3)];
+    const type = ['chest', 'item', 'obstacle', 'shop'][randInt(4)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
       const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
       bonuses.push({ type: 'item', col: x, item: items[randInt(items.length)] });
+    } else if (type === 'shop') {
+      const all = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+      const offers = [all[randInt(all.length)], all[randInt(all.length)], all[randInt(all.length)]];
+      bonuses.push({ type: 'shop', col: x, offers, sold: [false, false, false] });
     } else {
       const dirs = [];
       for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
@@ -614,6 +680,7 @@ function pitchShift() {
   }
   for (const b of nextBonuses) {
     if (b.type === 'obstacle') newSpecialSpaces[idx(b.col, 0)] = { type: 'obstacle', dx: b.dx, dy: b.dy };
+    if (b.type === 'shop') newSpecialSpaces[idx(b.col, 0)] = { type: 'shop', offers: b.offers, sold: b.sold };
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
 
@@ -1009,10 +1076,31 @@ function activateItemSpace(item, i) {
 // Called after item/obstacle interaction completes; drains queue or ends turn.
 function processNextQueuedItem() {
   activeItemSpaceIdx = -1;
-  if (pendingItemQueue.length === 0) { endWhiteTurn(); return; }
+  if (pendingItemQueue.length === 0) { processNextShop(); return; }
   const { item, i } = pendingItemQueue.shift();
   const done = activateItemSpace(item, i);
   if (done) processNextQueuedItem();
+}
+
+function processNextShop() {
+  if (pendingShopQueue.length === 0) { endWhiteTurn(); return; }
+  const spaceIdx = pendingShopQueue.shift();
+  openShop(spaceIdx, () => processNextShop());
+}
+
+function openShop(spaceIdx, onDone) {
+  shopSpaceIdx = spaceIdx;
+  shopOffers = specialSpaces[spaceIdx].offers;
+  shopMode = true;
+  shopOnDone = onDone;
+  draw();
+}
+
+function closeShop() {
+  shopMode = false;
+  const done = shopOnDone;
+  shopOnDone = null;
+  if (done) done();
 }
 
 // After a Team Advance, apply obstacle spaces then item spaces left→right, front→back.
@@ -1038,6 +1126,12 @@ function applySpacesAfterAdvance() {
     if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
     else if (item === ITEM_KING_PROMOTER) { board[i] = KING; itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
+  }
+
+  // Pass 3: shop spaces — queued after items so each triggers its own dialogue.
+  pendingShopQueue = [];
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] === W && specialSpaces[i]?.type === 'shop') pendingShopQueue.push(i);
   }
   processNextQueuedItem();
 }
@@ -1178,6 +1272,13 @@ function draw() {
       ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
       ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
       ctx.restore();
+    } else if (b.type === 'shop') {
+      ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
+      ctx.fillRect(bpx, bpy, TILE, TILE);
+      ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bpx + 1, bpy + 1, TILE - 2, TILE - 2);
+      drawShopTile(ctx, bpx, bpy, TILE);
     }
   }
 
@@ -1239,6 +1340,20 @@ function draw() {
       ctx.drawImage(img, px + (TILE - sz) / 2, py + (TILE - sz) / 2, sz, sz);
       ctx.globalAlpha = 1.0;
     }
+  }
+
+  // Shop spaces
+  for (let i = 0; i < 64; i++) {
+    const sp = specialSpaces[i];
+    if (!sp || sp.type !== 'shop') continue;
+    const [x, y] = xy(i);
+    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+    ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
+    drawShopTile(ctx, px, py, TILE);
   }
 
   // Arrow spaces
@@ -1565,7 +1680,7 @@ function draw() {
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#ddd";
   ctx.textAlign = "center";
-  const status = gameOver ? gameMsg : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : (aiThinking ? "AI Thinking..." : "Your Turn")))))));
+  const status = gameOver ? gameMsg : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : (aiThinking ? "AI Thinking..." : "Your Turn"))))))));
   ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#aaa";
@@ -1622,6 +1737,85 @@ function draw() {
     }
   }
 
+  // Shop dialogue
+  if (shopMode) {
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const dlgW = 420, dlgH = 260;
+    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
+    ctx.fillStyle = "#1e1e3c";
+    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.fill();
+    ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.stroke();
+
+    ctx.fillStyle = "#f0c040";
+    ctx.font = "bold 22px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 30);
+    ctx.fillStyle = "#aaa";
+    ctx.font = "13px sans-serif";
+    ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 48);
+
+    const cardW = 108, cardH = 160, cardGap = 14;
+    const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
+    const cardsY = dlgY + 58;
+
+    const shopSold = specialSpaces[shopSpaceIdx].sold;
+    for (let i = 0; i < shopOffers.length; i++) {
+      const item = shopOffers[i];
+      const price = ITEM_PRICES[item];
+      const cardX = cardsStartX + i * (cardW + cardGap);
+      const isSold = shopSold[i];
+      const canAfford = !isSold && gold >= price;
+
+      ctx.fillStyle = isSold ? "#161622" : (canAfford ? "#2a2a52" : "#1e1e30");
+      ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.fill();
+      if (canAfford) {
+        ctx.strokeStyle = "rgba(255,200,50,0.3)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
+      }
+
+      const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
+      if (simg && simg.complete) {
+        ctx.globalAlpha = isSold ? 0.25 : 1.0;
+        ctx.drawImage(simg, cardX + 24, cardsY + 10, 60, 60);
+        ctx.globalAlpha = 1.0;
+      }
+
+      ctx.fillStyle = isSold ? "#444" : "#ddd";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "center";
+      const name = ITEM_NAMES[item];
+      const words = name.split(" ");
+      if (words.length > 1) {
+        const mid = Math.ceil(words.length / 2);
+        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 82);
+        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 96);
+      } else {
+        ctx.fillText(name, cardX + cardW / 2, cardsY + 89);
+      }
+
+      ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
+      ctx.font = "bold 15px sans-serif";
+      ctx.fillText(isSold ? "—" : `${price} G`, cardX + cardW / 2, cardsY + 116);
+
+      ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
+      ctx.beginPath(); ctx.roundRect(cardX + 10, cardsY + cardH - 32, cardW - 20, 26, 4); ctx.fill();
+      ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 19);
+    }
+
+    // Close button
+    const closeBtnX = dlgX + dlgW - 100, closeBtnY = dlgY + dlgH - 42;
+    ctx.fillStyle = "#4a2a2a";
+    ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 86, 28, 6); ctx.fill();
+    ctx.fillStyle = "#ddd";
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText("Close", closeBtnX + 43, closeBtnY + 14);
+  }
+
 }
 
 canvas.addEventListener("click", (e) => {
@@ -1632,6 +1826,34 @@ canvas.addEventListener("click", (e) => {
   const scaleY = canvas.height / rect.height;
   const cx = (e.clientX - rect.left) * scaleX;
   const cy = (e.clientY - rect.top) * scaleY;
+
+  // Shop dialogue
+  if (shopMode) {
+    const dlgW = 420, dlgH = 260, dlgX = (canvas.width - 420) / 2, dlgY = (canvas.height - 260) / 2;
+    const cardW = 108, cardH = 160, cardGap = 14;
+    const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
+    const cardsY = dlgY + 54;
+    for (let i = 0; i < shopOffers.length; i++) {
+      const price = ITEM_PRICES[shopOffers[i]];
+      const cardX = cardsStartX + i * (cardW + cardGap);
+      const btnX = cardX + 10, btnY = cardsY + cardH - 32, btnW = cardW - 20, btnH = 26;
+      const sold = specialSpaces[shopSpaceIdx].sold[i];
+      if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !sold) {
+        gold -= price;
+        addToInventory(shopOffers[i]);
+        specialSpaces[shopSpaceIdx].sold[i] = true;
+        draw();
+        return;
+      }
+    }
+    // Close button or outside-dialog click
+    const closeBtnX = dlgX + dlgW - 100, closeBtnY = dlgY + dlgH - 42, closeBtnW = 86, closeBtnH = 28;
+    if ((cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) ||
+        cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
+      closeShop();
+    }
+    return;
+  }
 
   // Piece chooser dialog (shared by Pawn Promoter and Any Promoter)
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
@@ -1989,12 +2211,19 @@ canvas.addEventListener("click", (e) => {
           const movedTo = applySpecialSpace(clickedDest);
           checkWhiteKingAlive();
           if (!gameOver) {
-            const item = itemSpaces[movedTo];
-            if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
-              const done = activateItemSpace(item, movedTo);
-              if (done) endWhiteTurn();
+            const continueAfterShop = () => {
+              const item = itemSpaces[movedTo];
+              if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
+                const done = activateItemSpace(item, movedTo);
+                if (done) endWhiteTurn();
+              } else {
+                endWhiteTurn();
+              }
+            };
+            if (specialSpaces[movedTo]?.type === 'shop' && sides[movedTo] === W) {
+              openShop(movedTo, continueAfterShop);
             } else {
-              endWhiteTurn();
+              continueAfterShop();
             }
           } else { draw(); }
         } else { draw(); }
