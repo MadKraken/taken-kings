@@ -3,13 +3,14 @@ const ctx = canvas.getContext("2d");
 
 const TILE = 80;
 const MARGIN = 32;
+const LOGO_H = 90;
 const PREVIEW_H = 60;
 const BOARD_PX = TILE * 8;
 const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
 const INV_W = INV_COLS * (INV_SLOT + INV_PAD) + INV_PAD;
 const INV_X = BOARD_PX + MARGIN * 2 + 10;
 canvas.width = INV_X + INV_W + 10;
-canvas.height = PREVIEW_H + BOARD_PX + MARGIN * 2 + 130;
+canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 130;
 
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
@@ -28,7 +29,11 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 19;
+  const total = 20;
+  const logoImg = new Image();
+  logoImg.src = "taken_kings_logo.png";
+  logoImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["logo"] = logoImg;
   for (const s of [W, B]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
@@ -915,7 +920,7 @@ function applyAutoItemSpaces() {
 }
 
 // --- Leap button geometry ---
-const BOARD_Y = PREVIEW_H;
+const BOARD_Y = LOGO_H + PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 72;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
 const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
@@ -929,6 +934,15 @@ function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Logo
+  const logoImg = spriteImages["logo"];
+  if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
+    const maxW = canvas.width - MARGIN * 2;
+    const scale = Math.min(maxW / logoImg.naturalWidth, (LOGO_H - 8) / logoImg.naturalHeight);
+    const lw = logoImg.naturalWidth * scale, lh = logoImg.naturalHeight * scale;
+    ctx.drawImage(logoImg, (canvas.width - lw) / 2, (LOGO_H - lh) / 2, lw, lh);
+  }
 
   // Preview row (ghosted board tile + pieces above the board)
   const previewRowNum = 8 + leapCount + 1;
