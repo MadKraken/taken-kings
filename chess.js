@@ -1049,9 +1049,9 @@ function draw() {
       const sz = 20;
       const shieldImg = spriteImages["item_upgrader"];
       if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-      ctx.fillStyle = "#fff";
-      ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.lineWidth = 2;
+      ctx.fillStyle = "#ff2222";
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 2.5;
       ctx.font = "bold 11px sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
