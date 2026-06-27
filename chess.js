@@ -87,7 +87,7 @@ let score = 0;
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
-let nextChestCol = -1; // column for next chest, -1 if none
+let nextBonuses = []; // [{type:'chest'|'item'|'obstacle', col, item?, dx?, dy?}]
 let positionHistory = []; // track board states to detect repetition
 const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
@@ -104,11 +104,9 @@ let clonerSelected = -1;
 let upgraderMode = false;
 let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
-let nextItemSpaceCol = -1;
-let nextItemType = ITEM_NONE;
+
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
-let specialSpaces = new Array(64).fill(null); // {type:'arrow', dx, dy}
-let nextSpecialSpace = null; // {col, dx, dy} for next incoming row
+let specialSpaces = new Array(64).fill(null); // {type:'obstacle', dx, dy}
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_PROMOTER]: "item_promoter",
@@ -183,35 +181,33 @@ function generateWave(count) {
   return wave;
 }
 
-// Returns exactly one bonus for the incoming wave row.
-// nextLeap===1 (row 9) is always a chest; all others pick randomly.
-function generateRowBonus(nextLeap, wave) {
+// Each open column has a 1-in-8 chance of becoming a bonus (chest, item, or obstacle).
+function generateRowBonuses(wave) {
   const waveCols = new Set(wave.map(w => w.x));
-  const open = [];
-  for (let x = 0; x < 8; x++) { if (!waveCols.has(x)) open.push(x); }
-  const none = { chestCol: -1, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: null };
-  if (open.length === 0) return none;
-
-  const type = nextLeap === 1 ? 'chest' : ['chest', 'item', 'arrow'][randInt(3)];
-  const col = open[randInt(open.length)];
-
-  if (type === 'chest') {
-    return { chestCol: col, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: null };
-  } else if (type === 'item') {
-    const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
-    return { chestCol: -1, itemSpaceCol: col, itemType: items[randInt(items.length)], specialSpace: null };
-  } else {
-    const dirs = [];
-    for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
-      if (dx === 0 && dy === 0) continue;
-      if (col + dx < 0 || col + dx > 7) continue;
-      if (dy === -1) continue;
-      dirs.push({ dx, dy });
+  const bonuses = [];
+  for (let x = 0; x < 8; x++) {
+    if (waveCols.has(x)) continue;
+    if (randInt(8) !== 0) continue;
+    const type = ['chest', 'item', 'obstacle'][randInt(3)];
+    if (type === 'chest') {
+      bonuses.push({ type: 'chest', col: x });
+    } else if (type === 'item') {
+      const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+      bonuses.push({ type: 'item', col: x, item: items[randInt(items.length)] });
+    } else {
+      const dirs = [];
+      for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
+        if (dx === 0 && dy === 0) continue;
+        if (x + dx < 0 || x + dx > 7) continue;
+        if (dy === -1) continue;
+        dirs.push({ dx, dy });
+      }
+      if (dirs.length === 0) continue;
+      const d = dirs[randInt(dirs.length)];
+      bonuses.push({ type: 'obstacle', col: x, dx: d.dx, dy: d.dy });
     }
-    if (dirs.length === 0) return none;
-    const d = dirs[randInt(dirs.length)];
-    return { chestCol: -1, itemSpaceCol: -1, itemType: ITEM_NONE, specialSpace: { col, dx: d.dx, dy: d.dy } };
   }
+  return bonuses;
 }
 
 function placeWave(row, wave) {
@@ -244,9 +240,7 @@ function initBoard() {
   placeWave(0, firstWave);
   nextWave = generateWave(spawnCount + 1);
   leapCount = 0;
-  const initBonus = generateRowBonus(leapCount + 1, nextWave);
-  nextChestCol = initBonus.chestCol; nextItemSpaceCol = initBonus.itemSpaceCol;
-  nextItemType = initBonus.itemType; nextSpecialSpace = initBonus.specialSpace;
+  nextBonuses = generateRowBonuses(nextWave);
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
@@ -568,8 +562,8 @@ function pitchShift() {
     if (y === 7) continue;
     newSpecialSpaces[idx(x, y + 1)] = specialSpaces[i];
   }
-  if (nextSpecialSpace) {
-    newSpecialSpaces[idx(nextSpecialSpace.col, 0)] = { type: 'arrow', dx: nextSpecialSpace.dx, dy: nextSpecialSpace.dy };
+  for (const b of nextBonuses) {
+    if (b.type === 'obstacle') newSpecialSpaces[idx(b.col, 0)] = { type: 'obstacle', dx: b.dx, dy: b.dy };
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
 
@@ -581,8 +575,8 @@ function pitchShift() {
     if (y === 7) continue;
     newItemSpaces[idx(x, y + 1)] = itemSpaces[i];
   }
-  if (nextItemSpaceCol >= 0) {
-    newItemSpaces[idx(nextItemSpaceCol, 0)] = nextItemType;
+  for (const b of nextBonuses) {
+    if (b.type === 'item') newItemSpaces[idx(b.col, 0)] = b.item;
   }
   itemSpaces.splice(0, 64, ...newItemSpaces);
 
@@ -591,14 +585,12 @@ function pitchShift() {
   for (const w of nextWave) {
     set(w.x, 0, w.piece, B);
   }
-  if (nextChestCol >= 0) {
-    set(nextChestCol, 0, CHEST, 0);
+  for (const b of nextBonuses) {
+    if (b.type === 'chest') set(b.col, 0, CHEST, 0);
   }
 
   nextWave = generateWave(spawnCount + 1);
-  const nextBonus = generateRowBonus(leapCount + 1, nextWave);
-  nextChestCol = nextBonus.chestCol; nextItemSpaceCol = nextBonus.itemSpaceCol;
-  nextItemType = nextBonus.itemType; nextSpecialSpace = nextBonus.specialSpace;
+  nextBonuses = generateRowBonuses(nextWave);
 
   epTarget = -1;
   selected = -1;
@@ -618,7 +610,7 @@ function saveState() {
   return {
     board: [...board], sides: [...sides], epTarget,
     wkMoved, wraMoved, wrhMoved, score, inventory: [...inventory],
-    spawnCount, nextChestCol, nextWave: nextWave.map(w => ({...w})),
+    spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length,
     health: [...health], shiftCountdown
   };
@@ -631,7 +623,7 @@ function restoreState(st) {
   wkMoved = st.wkMoved;
   wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
   score = st.score; inventory.splice(0, inventory.length, ...st.inventory);
-  spawnCount = st.spawnCount; nextChestCol = st.nextChestCol;
+  spawnCount = st.spawnCount; nextBonuses = st.nextBonuses.map(b => ({...b}));
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
   health.splice(0, 64, ...st.health);
@@ -658,9 +650,9 @@ function simulateLeap() {
   sides.splice(0, 64, ...newSides);
   spawnCount++;
   placeWave(0, nextWave);
-  if (nextChestCol >= 0) set(nextChestCol, 0, CHEST, 0);
+  for (const b of nextBonuses) { if (b.type === 'chest') set(b.col, 0, CHEST, 0); }
   nextWave = generateWave(spawnCount + 1);
-  nextChestCol = generateChestCol(leapCount + 1, nextWave);
+  nextBonuses = generateRowBonuses(nextWave);
   epTarget = -1;
 }
 
@@ -952,7 +944,7 @@ function applyAutoItemSpaces() {
 // Returns the index where the piece ended up (may differ if arrow redirected it).
 function applySpecialSpace(toI) {
   const sp = specialSpaces[toI];
-  if (!sp || sp.type !== 'arrow') return toI;
+  if (!sp || sp.type !== 'obstacle') return toI;
   const [x, y] = xy(toI);
   const nx = x + sp.dx, ny = y + sp.dy;
   if (!inB(nx, ny)) return toI;
@@ -1023,42 +1015,34 @@ function draw() {
       ctx.drawImage(img, MARGIN + w.x * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
     }
   }
-  if (nextChestCol >= 0) {
-    const cimg = spriteImages["chest"];
-    if (cimg && cimg.complete) {
-      ctx.drawImage(cimg, MARGIN + nextChestCol * TILE + previewPad, BOARD_Y + MARGIN - TILE + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
-    }
-  }
-  if (nextItemSpaceCol >= 0) {
-    const ikey = ITEM_SPRITE_KEYS[nextItemType];
-    const iimg = spriteImages[ikey];
-    if (iimg && iimg.complete) {
-      const px = MARGIN + nextItemSpaceCol * TILE;
-      const py = BOARD_Y + MARGIN - TILE;
-      ctx.fillStyle = "rgba(255,220,80,0.22)";
+  for (const b of nextBonuses) {
+    const px = MARGIN + b.col * TILE, py = BOARD_Y + MARGIN - TILE;
+    if (b.type === 'chest') {
+      const cimg = spriteImages["chest"];
+      if (cimg && cimg.complete)
+        ctx.drawImage(cimg, px + previewPad, py + previewPad, TILE - previewPad * 2, TILE - previewPad * 2);
+    } else if (b.type === 'item') {
+      const iimg = spriteImages[ITEM_SPRITE_KEYS[b.item]];
+      if (iimg && iimg.complete) {
+        ctx.fillStyle = "rgba(255,220,80,0.22)";
+        ctx.fillRect(px, py, TILE, TILE);
+        const sz = (TILE - previewPad * 2) * 0.44, off = (TILE - sz) / 2;
+        ctx.drawImage(iimg, px + off, py + off, sz, sz);
+      }
+    } else if (b.type === 'obstacle') {
+      ctx.fillStyle = "rgba(80,200,255,0.18)";
       ctx.fillRect(px, py, TILE, TILE);
-      const sz = (TILE - previewPad * 2) * 0.44;
-      const off = (TILE - sz) / 2;
-      ctx.drawImage(iimg, px + off, py + off, sz, sz);
+      const cx2 = px + TILE / 2, cy2 = py + TILE / 2;
+      const angle2 = Math.atan2(b.dy, b.dx), len2 = TILE * 0.32;
+      const tx3 = cx2 + Math.cos(angle2) * len2, ty3 = cy2 + Math.sin(angle2) * len2;
+      const bx3 = cx2 - Math.cos(angle2) * len2 * 0.55, by3 = cy2 - Math.sin(angle2) * len2 * 0.55;
+      ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(bx3, by3); ctx.lineTo(tx3, ty3); ctx.stroke();
+      ctx.fillStyle = "rgba(120,230,255,0.9)";
+      ctx.save(); ctx.translate(tx3, ty3); ctx.rotate(angle2);
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
+      ctx.restore();
     }
-  }
-  if (nextSpecialSpace) {
-    const px = MARGIN + nextSpecialSpace.col * TILE;
-    const py = BOARD_Y + MARGIN - TILE;
-    ctx.fillStyle = "rgba(80,200,255,0.18)";
-    ctx.fillRect(px, py, TILE, TILE);
-    const cx2 = px + TILE / 2, cy2 = py + TILE / 2;
-    const angle2 = Math.atan2(nextSpecialSpace.dy, nextSpecialSpace.dx);
-    const len2 = TILE * 0.32;
-    const tx3 = cx2 + Math.cos(angle2) * len2, ty3 = cy2 + Math.sin(angle2) * len2;
-    const bx3 = cx2 - Math.cos(angle2) * len2 * 0.55, by3 = cy2 - Math.sin(angle2) * len2 * 0.55;
-    ctx.strokeStyle = "rgba(120,230,255,0.9)";
-    ctx.lineWidth = 3; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(bx3, by3); ctx.lineTo(tx3, ty3); ctx.stroke();
-    ctx.fillStyle = "rgba(120,230,255,0.9)";
-    ctx.save(); ctx.translate(tx3, ty3); ctx.rotate(angle2);
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
-    ctx.restore();
   }
   ctx.globalAlpha = 1.0;
 
@@ -1119,7 +1103,7 @@ function draw() {
   // Arrow spaces
   for (let i = 0; i < 64; i++) {
     const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'arrow') continue;
+    if (!sp || sp.type !== 'obstacle') continue;
     const [x, y] = xy(i);
     const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
     const cx = px + TILE / 2, cy = py + TILE / 2;
