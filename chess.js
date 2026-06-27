@@ -1811,4 +1811,3 @@ canvas.addEventListener("click", (e) => {
 
 initBoard();
 loadSprites();
-draw();
