@@ -284,7 +284,7 @@ function pseudoMoves(x, y) {
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
         if (inB(nx, ny)) {
-          if (side(nx, ny) === e || piece(nx, ny) === CHEST) moves.push(idx(nx, ny));
+          if (side(nx, ny) === e) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
       }
