@@ -1800,13 +1800,13 @@ function draw() {
   // Graveyard panels
   for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillStyle = "#ddd";
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx, GRAVE_Y - 6);
     ctx.fillStyle = "#111120";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
     ctx.strokeStyle = "#2a2a3e"; ctx.lineWidth = 1; ctx.stroke();
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillStyle = isPlayer ? "#663333" : "#336633";
-    ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + 8, GRAVE_Y + 6);
     for (let i = 0; i < pool.length; i++) {
       const p = pool[i];
       if (!p) continue;
