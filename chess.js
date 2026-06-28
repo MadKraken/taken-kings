@@ -1438,7 +1438,7 @@ const GRAVE_H = 150;
 const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
-const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 20, w: 160, h: 60 };
+const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 8, w: 160, h: 60 };
 const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
 const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
@@ -1907,10 +1907,12 @@ function draw() {
 
   // Inventory panel
   const invY = INV_PANEL_TOP + 50;
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 16; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 6;
   ctx.fillStyle = "#2a2a4e";
   ctx.beginPath();
   ctx.roundRect(INV_X, invY - 50, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 58, 8);
   ctx.fill();
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.strokeStyle = "#5a5a8e";
   ctx.lineWidth = 3;
   ctx.stroke();
@@ -2018,10 +2020,12 @@ function draw() {
   } else if (!gameOver) {
     // Team Leap
     const canLeap = canTeamLeap();
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
     ctx.beginPath();
     ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
     ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = canLeap ? "#fff" : "#999";
     ctx.font = "bold 36px sans-serif";
     ctx.fillText("TEAM ADVANCE", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
@@ -2031,10 +2035,12 @@ function draw() {
     const canShift = canManualPitchShift();
     const shiftHighlight = hintMove === "leap";
     const shiftUrgent = shiftCountdown <= 3;
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
     ctx.beginPath();
     ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
     ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = canShift ? "#fff" : "#999";
     ctx.font = "bold 36px sans-serif";
     ctx.fillText("FIELD ADVANCE", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
@@ -2049,10 +2055,12 @@ function draw() {
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
     // Resign
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#993333";
     ctx.beginPath();
     ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
     ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#fff";
     ctx.fillText("RESIGN", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
   }
@@ -2081,8 +2089,10 @@ function draw() {
     ctx.fillStyle = "#fff";
     ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#4a3f2e";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
     const sideVal = isPlayer ? W : B;
     const slotW = GRAVE_W / GRAVE_TYPES.length;
