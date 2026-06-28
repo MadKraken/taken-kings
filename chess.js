@@ -1246,9 +1246,11 @@ const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
 const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
-const HINT_BTN = { x: MARGIN + 276, y: BTN_Y, w: 90, h: 36 };
-const TEST_BTN = { x: MARGIN + 374, y: BTN_Y, w: 90, h: 36 };
 const RESIGN_BTN = { x: MARGIN + BOARD_PX - 100, y: BTN_Y, w: 100, h: 36 };
+const INV_PANEL_BOTTOM = BOARD_Y + MARGIN - 24 + INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
+const SIDE_BTN_Y = INV_PANEL_BOTTOM + 10 + 44 + 14;
+const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 32 };
+const TEST_BTN = { x: INV_X, y: SIDE_BTN_Y + 38, w: INV_W, h: 32 };
 
 // --- Draw ---
 
@@ -1621,7 +1623,7 @@ function draw() {
   ctx.font = "bold 12px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("ITEMS", INV_X + INV_W / 2, invY - 10);
+  ctx.fillText("INVENTORY", INV_X + INV_W / 2, invY - 10);
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {
       const slotIdx = r * INV_COLS + c;
@@ -1691,6 +1693,21 @@ function draw() {
     }
   }
 
+  // Test + Hint buttons (right panel, below trashcan)
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#336633";
+  ctx.beginPath(); ctx.roundRect(TEST_BTN.x, TEST_BTN.y, TEST_BTN.w, TEST_BTN.h, 6); ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText("🧪 TEST", TEST_BTN.x + TEST_BTN.w / 2, TEST_BTN.y + TEST_BTN.h / 2);
+  if (testMode) {
+    const hintActive = turn === W && !aiThinking;
+    ctx.fillStyle = hintActive ? "#8855aa" : "#333";
+    ctx.beginPath(); ctx.roundRect(HINT_BTN.x, HINT_BTN.y, HINT_BTN.w, HINT_BTN.h, 6); ctx.fill();
+    ctx.fillStyle = hintActive ? "#fff" : "#999";
+    ctx.fillText("💡 HINT", HINT_BTN.x + HINT_BTN.w / 2, HINT_BTN.y + HINT_BTN.h / 2);
+  }
+
   // Floating drag item
   if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
     const item = inventory[dragSlot];
@@ -1747,24 +1764,6 @@ function draw() {
     ctx.font = "bold 16px sans-serif";
 
     // Hint (only shown in test mode)
-    if (testMode) {
-      const hintActive = turn === W && !aiThinking;
-      ctx.fillStyle = hintActive ? "#8855aa" : LEAP_BTN_DISABLED;
-      ctx.beginPath();
-      ctx.roundRect(HINT_BTN.x, HINT_BTN.y, HINT_BTN.w, HINT_BTN.h, 6);
-      ctx.fill();
-      ctx.fillStyle = hintActive ? "#fff" : "#999";
-      ctx.fillText("💡 HINT", HINT_BTN.x + HINT_BTN.w / 2, HINT_BTN.y + HINT_BTN.h / 2);
-    }
-
-    // Test
-    ctx.fillStyle = "#336633";
-    ctx.beginPath();
-    ctx.roundRect(TEST_BTN.x, TEST_BTN.y, TEST_BTN.w, TEST_BTN.h, 6);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText("🧪 TEST", TEST_BTN.x + TEST_BTN.w / 2, TEST_BTN.y + TEST_BTN.h / 2);
-
     // Resign
     ctx.fillStyle = "#993333";
     ctx.beginPath();
