@@ -1914,7 +1914,7 @@ function draw() {
   ctx.lineWidth = 3;
   ctx.stroke();
   const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "";
-  ctx.fillStyle = invStatus ? "#ffdd88" : "#aaa";
+  ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
   ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
