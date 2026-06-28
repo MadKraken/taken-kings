@@ -1782,9 +1782,11 @@ function draw() {
   if (status) ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
   if (aiThinking) {
     ctx.font = "bold 18px sans-serif";
-    ctx.fillStyle = "#cc4444";
+    ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
-    ctx.fillText("ENEMY STRATEGIZING", MARGIN + 4 * TILE, LOGO_H + PREVIEW_H / 2 + 7);
+    ctx.textBaseline = "bottom";
+    ctx.fillText("ENEMY STRATEGIZING", MARGIN + 4 * TILE, LOGO_H - 8);
+    ctx.textBaseline = "middle";
   }
   const statsY = BOARD_Y + MARGIN + BOARD_PX + 46;
   const statsCx = MARGIN + 4 * TILE;
