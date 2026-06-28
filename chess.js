@@ -1482,10 +1482,12 @@ function draw() {
     ctx.font = "bold 36px sans-serif";
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = "#c84040";
     ctx.fillText(`TAKEN KINGS: ${score}`, MARGIN, LOGO_H * 0.35);
     ctx.fillStyle = "#e8c040";
     ctx.fillText(`GOLD: ${gold}`, MARGIN, LOGO_H * 0.70);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   }
 
   ctx.save();
