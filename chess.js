@@ -2087,11 +2087,8 @@ function draw() {
     ctx.fillStyle = "#fff";
     ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#4a3f2e";
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
     const sideVal = isPlayer ? W : B;
     const slotW = GRAVE_W / GRAVE_TYPES.length;
     const pieceSz = 80;
