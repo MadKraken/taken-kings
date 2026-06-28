@@ -10,7 +10,7 @@ const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
 const INV_W = INV_COLS * (INV_SLOT + INV_PAD) + INV_PAD;
 const INV_X = BOARD_PX + MARGIN * 2 + 10;
 canvas.width = INV_X + INV_W + 10;
-canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 158;
+canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 380;
 
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
@@ -94,6 +94,7 @@ const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER =
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
+let playerDead = [], enemyDead = [], flyAnims = [];
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -156,6 +157,32 @@ function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
+
+function graveSlotPos(isPlayer, slotIdx) {
+  const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+  const slotSz = 30;
+  const cols = Math.floor((GRAVE_W - 16) / slotSz);
+  const col = slotIdx % cols;
+  const row = Math.floor(slotIdx / cols);
+  return [gx + 8 + col * slotSz + 14, GRAVE_Y + 28 + row * slotSz + 14];
+}
+
+function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
+  flyAnims.push({ piece, side, sx, sy, tx, ty, startMs: performance.now(), dur: 600, onDone });
+  if (flyAnims.length === 1) requestAnimationFrame(_flyTick);
+}
+
+function _flyTick() {
+  const now = performance.now();
+  for (let i = flyAnims.length - 1; i >= 0; i--) {
+    if (now - flyAnims[i].startMs >= flyAnims[i].dur) {
+      if (flyAnims[i].onDone) flyAnims[i].onDone();
+      flyAnims.splice(i, 1);
+    }
+  }
+  draw();
+  if (flyAnims.length > 0) requestAnimationFrame(_flyTick);
+}
 
 // Draw a storefront icon centered in the tile at (tx,ty) with the given tile size.
 function drawShopTile(gctx, tx, ty, tileSize) {
@@ -337,6 +364,7 @@ function initBoard() {
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
+  playerDead = []; enemyDead = []; flyAnims = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -481,10 +509,11 @@ function calcBouncePos(fromI, toI, p) {
   return fromI;
 }
 
-function makeMove(fromI, toI) {
+function makeMove(fromI, toI, visual = false) {
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
+  const capSide = sides[toI];
 
   // Bounce: black piece attacks white piece with health > 1 — damage but no capture
   if (s === B && sides[toI] === W && health[toI] > 1) {
@@ -495,6 +524,17 @@ function makeMove(fromI, toI) {
       board[fromI] = NONE; sides[fromI] = 0;
     }
     return;
+  }
+
+  if (visual && captured !== NONE && captured !== CHEST && capSide !== s) {
+    const capSX = MARGIN + tx * TILE + TILE / 2;
+    const capSY = BOARD_Y + MARGIN + ty * TILE + TILE / 2;
+    const isPlayerPiece = capSide === W;
+    const pool = isPlayerPiece ? playerDead : enemyDead;
+    const slot = pool.length;
+    pool.push(null);
+    const [tgx, tgy] = graveSlotPos(isPlayerPiece, slot);
+    startFlyAnim(captured, capSide, capSX, capSY, tgx, tgy, () => { pool[slot] = captured; });
   }
 
   if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
@@ -522,6 +562,15 @@ function makeMove(fromI, toI) {
   if (p === PAWN && toI === epTarget) {
     const capY = ty + (s === W ? 1 : -1);
     const epPiece = piece(tx, capY);
+    const epSide = side(tx, capY);
+    if (visual && epPiece !== NONE) {
+      const isEPPlayer = epSide === W;
+      const epPool = isEPPlayer ? playerDead : enemyDead;
+      const epSlot = epPool.length;
+      epPool.push(null);
+      const [etgx, etgy] = graveSlotPos(isEPPlayer, epSlot);
+      startFlyAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2, etgx, etgy, () => { epPool[epSlot] = epPiece; });
+    }
     if (epPiece === KING) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
     set(tx, capY, NONE, 0);
@@ -588,6 +637,20 @@ function teamLeap() {
       toCX: MARGIN + ax * TILE, toCY: BOARD_Y + MARGIN + (ay - 1) * TILE,
       piece: board[i], side: sides[i], hlth: health[i]
     });
+  }
+
+  // Track enemy captures from team advance
+  for (let i = 0; i < 64; i++) {
+    if (!canMoveUp[i]) continue;
+    const [ax2, ay2] = xy(i);
+    const ni2 = idx(ax2, ay2 - 1);
+    if (sides[ni2] === B && board[ni2] !== NONE && board[ni2] !== CHEST) {
+      const capPiece = board[ni2];
+      const slot = enemyDead.length;
+      enemyDead.push(null);
+      const [tgx, tgy] = graveSlotPos(false, slot);
+      startFlyAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2, tgx, tgy, () => { enemyDead[slot] = capPiece; });
+    }
   }
 
   const newBoard = new Array(64).fill(NONE);
@@ -954,7 +1017,7 @@ function aiPlay() {
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
-      makeMove(move[0], move[1]);
+      makeMove(move[0], move[1], true);
       applySpecialSpace(move[1]);
       recordPosition();
       const aiAnimPieces = [{
@@ -1176,6 +1239,11 @@ function applySpecialSpace(startI) {
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 100;
+const GRAVE_Y = BTN_Y + 54;
+const GRAVE_H = 110;
+const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
+const PLAYER_GRAVE_X = MARGIN;
+const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
 const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
 const HINT_BTN = { x: MARGIN + 276, y: BTN_Y, w: 90, h: 36 };
@@ -1728,6 +1796,54 @@ function draw() {
   ctx.font = "13px sans-serif";
   ctx.fillStyle = "#888";
   ctx.fillText("Gold", statsCx + 22, statsY + 20);
+
+  // Graveyard panels
+  for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+    const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+    ctx.fillStyle = "#111120";
+    ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
+    ctx.strokeStyle = "#2a2a3e"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillStyle = isPlayer ? "#663333" : "#336633";
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + 8, GRAVE_Y + 6);
+    for (let i = 0; i < pool.length; i++) {
+      const p = pool[i];
+      if (!p) continue;
+      const [px, py] = graveSlotPos(isPlayer, i);
+      const isKing = p === KING;
+      const sz = isKing ? 34 : 24;
+      if (isKing) {
+        ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
+        ctx.beginPath(); ctx.arc(px, py, 19, 0, Math.PI * 2); ctx.fill();
+      }
+      const sideVal = isPlayer ? W : B;
+      const img = spriteImages[`${sideVal}_${p}`];
+      if (img && img.complete) ctx.drawImage(img, px - sz / 2, py - sz / 2, sz, sz);
+    }
+  }
+
+  // Flying pieces (captured pieces arcing to graveyard)
+  {
+    const now = performance.now();
+    for (const f of flyAnims) {
+      const t = Math.min(1, (now - f.startMs) / f.dur);
+      const cx2 = f.sx + (f.tx - f.sx) * t;
+      const cy2 = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 160;
+      const angle = t * Math.PI * 5;
+      const sz = 36;
+      const img = spriteImages[`${f.side}_${f.piece}`];
+      if (img && img.complete) {
+        ctx.save();
+        ctx.translate(cx2, cy2);
+        ctx.rotate(angle);
+        ctx.globalAlpha = t > 0.85 ? 1 - (t - 0.85) / 0.15 * 0.6 : 1;
+        ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+  }
 
   // Promoter piece chooser overlay
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
@@ -2346,7 +2462,7 @@ canvas.addEventListener("click", (e) => {
       const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
       const clickedDest = clicked;
       firstMoveMade = true;
-      makeMove(selected, clicked);
+      makeMove(selected, clicked, true);
       recordPosition();
       const wAnimPieces = [{
         toIdx: clickedDest,
