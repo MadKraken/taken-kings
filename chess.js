@@ -1044,8 +1044,20 @@ function minimax(depth, alpha, beta, maximizing) {
   }
 }
 
+function allPseudoMovesForSide(s) {
+  const moves = [];
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== s) continue;
+    const [x, y] = xy(i);
+    for (const to of pseudoMoves(x, y)) moves.push([i, to]);
+  }
+  return moves;
+}
+
 function aiBestMove() {
-  const moves = allLegalMovesForSide(B);
+  // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
+  let moves = allLegalMovesForSide(B);
+  if (moves.length === 0) moves = allPseudoMovesForSide(B);
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => board[to] === KING && sides[to] === W);
