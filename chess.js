@@ -1794,16 +1794,16 @@ function draw() {
   ctx.textAlign = "right";
   ctx.fillStyle = "#c84040";
   ctx.fillText(`♚ ${score}`, statsCx - 22, statsY);
-  ctx.font = "13px sans-serif";
-  ctx.fillStyle = "#888";
-  ctx.fillText("Kings Taken", statsCx - 22, statsY + 20);
+  ctx.font = "16px sans-serif";
+  ctx.fillStyle = "#aaa";
+  ctx.fillText("Kings Taken", statsCx - 22, statsY + 24);
   ctx.font = "bold 34px sans-serif";
   ctx.textAlign = "left";
   ctx.fillStyle = "#e8c040";
   ctx.fillText(`${gold} ●`, statsCx + 22, statsY);
-  ctx.font = "13px sans-serif";
-  ctx.fillStyle = "#888";
-  ctx.fillText("Gold", statsCx + 22, statsY + 20);
+  ctx.font = "16px sans-serif";
+  ctx.fillStyle = "#aaa";
+  ctx.fillText("Gold", statsCx + 22, statsY + 24);
 
   // Graveyard panels
   for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
