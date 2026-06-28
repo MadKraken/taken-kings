@@ -1892,12 +1892,59 @@ canvas.addEventListener("mousemove", (e) => {
 canvas.addEventListener("mouseup", (e) => {
   if (dragSlot < 0) return;
   const [cx, cy] = canvasCoords(e);
+  const slot = dragSlot;
+  const item = inventory[slot];
+  dragSlot = -1; dragOverTrash = false;
+
   const tb = trashBounds();
   if (cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h) {
-    removeFromInventory(dragSlot);
-    if (inventory._activeSlot === dragSlot) delete inventory._activeSlot;
+    removeFromInventory(slot);
+    draw();
+    return;
   }
-  dragSlot = -1; dragOverTrash = false;
+
+  // Check if dropped onto the board
+  const gx = Math.floor((cx - MARGIN) / TILE);
+  const gy = Math.floor((cy - BOARD_Y - MARGIN) / TILE);
+  if (turn === W && !aiThinking && !shopMode && inB(gx, gy)) {
+    const i = idx(gx, gy);
+    inventory._activeSlot = slot;
+
+    if (item === ITEM_PROMOTER && board[i] === PAWN && sides[i] === W) {
+      promotingMode = true; promotingPawnIdx = i;
+      selected = -1; validMoves = [];
+      draw(); return;
+    }
+    if (item === ITEM_ANY_PROMOTER && sides[i] === W && board[i] !== NONE && board[i] !== KING) {
+      anyPromotingMode = true; anyPromotingPieceIdx = i;
+      selected = -1; validMoves = [];
+      draw(); return;
+    }
+    if (item === ITEM_KING_PROMOTER && board[i] === PAWN && sides[i] === W) {
+      board[i] = KING;
+      removeFromInventory(slot); delete inventory._activeSlot;
+      kingPromotingMode = false;
+      draw(); return;
+    }
+    if (item === ITEM_UPGRADER && sides[i] === W) {
+      health[i] = Math.max(health[i], 1) + 1;
+      removeFromInventory(slot); delete inventory._activeSlot;
+      upgraderMode = false;
+      draw(); return;
+    }
+    if (item === ITEM_TELEPORTER && sides[i] === W) {
+      teleporterMode = true; teleporterSelected = i;
+      selected = -1; validMoves = [];
+      draw(); return;
+    }
+    if (item === ITEM_CLONER && sides[i] === W && adjacentClonerDests(i).length > 0) {
+      clonerMode = true; clonerSelected = i;
+      selected = -1; validMoves = [];
+      draw(); return;
+    }
+    delete inventory._activeSlot;
+  }
+
   draw();
 });
 
