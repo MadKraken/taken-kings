@@ -1793,17 +1793,20 @@ function draw() {
   ctx.font = "bold 34px sans-serif";
   ctx.textAlign = "right";
   ctx.fillStyle = "#c84040";
-  ctx.fillText(`♚ ${score}`, statsCx - 22, statsY);
-  ctx.font = "16px sans-serif";
-  ctx.fillStyle = "#aaa";
-  ctx.fillText("Kings Taken", statsCx - 22, statsY + 24);
+  const kingsText = `♚ ${score}`;
+  ctx.fillText(kingsText, statsCx - 22, statsY);
+  const kingsCenterX = statsCx - 22 - ctx.measureText(kingsText).width / 2;
   ctx.font = "bold 34px sans-serif";
   ctx.textAlign = "left";
   ctx.fillStyle = "#e8c040";
-  ctx.fillText(`${gold} ●`, statsCx + 22, statsY);
+  const goldText = `${gold} ●`;
+  ctx.fillText(goldText, statsCx + 22, statsY);
+  const goldCenterX = statsCx + 22 + ctx.measureText(goldText).width / 2;
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#aaa";
-  ctx.fillText("Gold", statsCx + 22, statsY + 24);
+  ctx.textAlign = "center";
+  ctx.fillText("Kings Taken", kingsCenterX, statsY + 24);
+  ctx.fillText("Gold", goldCenterX, statsY + 24);
 
   // Graveyard panels
   for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
