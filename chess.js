@@ -1519,7 +1519,7 @@ function draw() {
   // Board squares (live rows 0-7) — semi-transparent so ground shows through
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
     const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    if ((x + y) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.38)"; ctx.fillRect(px, py, TILE, TILE); }
+    if ((x + y) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(px, py, TILE, TILE); }
   }
 
   // Flash red fog on bottom row when field advance is 1 turn away
@@ -1536,7 +1536,7 @@ function draw() {
   // the -TILE shift places it above the clip boundary at t=0 and slides it into the
   // fog position by t=1, while wave A (board row 0) slides out of fog into the live board.
   for (let x = 0; x < 8; x++) {
-    if ((x + 1) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.38)"; ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE); }
+    if ((x + 1) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE); }
   }
   const prevPad = 6;
   for (const w of nextWave) {
