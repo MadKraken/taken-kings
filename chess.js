@@ -1298,11 +1298,11 @@ function draw() {
       if (eimg && eimg.complete)
         ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
       if (ep.side === W && ep.hlth > 1) {
-        const bx = MARGIN + ep.x * TILE + TILE - 22, by = MARGIN + BOARD_PX + 2, sz = 20;
+        const bx = MARGIN + ep.x * TILE + TILE - 32, by = MARGIN + BOARD_PX + 2, sz = 30;
         const shieldImg = spriteImages["item_upgrader"];
         if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
         ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-        ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = "bold 17px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
       }
@@ -1400,14 +1400,14 @@ function draw() {
     // Shield badge: shows number of shields (health - 1) using the shield sprite
     if (sides[i] === W && health[i] > 1) {
       const shields = health[i] - 1;
-      const bx = MARGIN + x * TILE + TILE - 22, by = MARGIN + y * TILE + 2;
-      const sz = 20;
+      const bx = MARGIN + x * TILE + TILE - 32, by = MARGIN + y * TILE + 2;
+      const sz = 30;
       const shieldImg = spriteImages["item_upgrader"];
       if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
       ctx.fillStyle = "#ffffff";
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
       ctx.lineWidth = 2.5;
-      ctx.font = "bold 11px sans-serif";
+      ctx.font = "bold 17px sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
       ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
@@ -1516,13 +1516,13 @@ function draw() {
       }
       if (ap.side === W && ap.hlth > 1) {
         const shields = ap.hlth - 1;
-        const bx = acx + TILE - 22, by = acy + 2, sz = 20;
+        const bx = acx + TILE - 32, by = acy + 2, sz = 30;
         const shieldImg = spriteImages["item_upgrader"];
         if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
         ctx.fillStyle = "#ffffff";
         ctx.strokeStyle = "rgba(0,0,0,0.7)";
         ctx.lineWidth = 2.5;
-        ctx.font = "bold 11px sans-serif";
+        ctx.font = "bold 17px sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
