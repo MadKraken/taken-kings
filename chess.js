@@ -1778,8 +1778,14 @@ function draw() {
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#ddd";
   ctx.textAlign = "center";
-  const status = gameOver ? gameMsg : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : (aiThinking ? "AI Thinking..." : ""))))))));
+  const status = gameOver ? gameMsg : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "")))))));
   if (status) ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
+  if (aiThinking) {
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillStyle = "#cc4444";
+    ctx.textAlign = "center";
+    ctx.fillText("ENEMY STRATEGIZING", MARGIN + 4 * TILE, LOGO_H + PREVIEW_H / 2 + 7);
+  }
   const statsY = BOARD_Y + MARGIN + BOARD_PX + 46;
   const statsCx = MARGIN + 4 * TILE;
   ctx.font = "bold 34px sans-serif";
