@@ -96,6 +96,7 @@ const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let playerDead = {}, enemyDead = {}, flyAnims = [];
+let shieldPops = [];
 let warnFlashRunning = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
@@ -181,6 +182,11 @@ function _warnFlashTick() {
   }
 }
 
+function startShieldPop(cx, cy) {
+  shieldPops.push({ cx, cy, startMs: performance.now(), dur: 350 });
+  if (flyAnims.length === 0 && shieldPops.length === 1) requestAnimationFrame(_flyTick);
+}
+
 function _flyTick() {
   const now = performance.now();
   for (let i = flyAnims.length - 1; i >= 0; i--) {
@@ -189,8 +195,11 @@ function _flyTick() {
       flyAnims.splice(i, 1);
     }
   }
+  for (let i = shieldPops.length - 1; i >= 0; i--) {
+    if (now - shieldPops[i].startMs >= shieldPops[i].dur) shieldPops.splice(i, 1);
+  }
   draw();
-  if (flyAnims.length > 0) requestAnimationFrame(_flyTick);
+  if (flyAnims.length > 0 || shieldPops.length > 0) requestAnimationFrame(_flyTick);
 }
 
 // Draw a storefront icon centered in the tile at (tx,ty) with the given tile size.
@@ -373,7 +382,7 @@ function initBoard() {
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
-  playerDead = {}; enemyDead = {}; flyAnims = [];
+  playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -1020,16 +1029,6 @@ function aiPlay() {
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
-      makeMove(move[0], move[1], true);
-      const _aiHops = computeObstacleHops(move[1]);
-      const _aiFinalI = applySpecialSpace(move[1]);
-      recordPosition();
-      const _aiPiece = board[_aiFinalI], _aiSide = sides[_aiFinalI], _aiHlth = health[_aiFinalI];
-      const aiAnimPieces = [{
-        toIdx: _aiFinalI,
-        fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-        piece: _aiPiece, side: _aiSide, hlth: _aiHlth
-      }];
       const _aiFinish = () => {
         if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
         else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
@@ -1037,13 +1036,45 @@ function aiPlay() {
         aiThinking = false;
         draw();
       };
-      const _aiDoHop = (hi) => {
-        if (hi >= _aiHops.length) { _aiFinish(); return; }
-        const [fI, tI] = _aiHops[hi];
-        const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-        startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
-      };
-      startAnim(aiAnimPieces, 0, () => _aiDoHop(0));
+
+      // Shield bounce: attacker slides in, bounces back
+      if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > 1) {
+        const attackPiece = board[move[0]], attackHlth = health[move[0]];
+        const wasLastShield = health[move[1]] === 2;
+        const bounceI = calcBouncePos(move[0], move[1], attackPiece);
+        const [bx, by] = xy(bounceI);
+        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+        const hitCX = mToCX + TILE / 2, hitCY = mToCY + TILE / 2;
+        // Phase 1: slide attacker onto target square (suppress at fromI)
+        startAnim([{ toIdx: move[0], fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
+          // Apply board state now
+          makeMove(move[0], move[1], true);
+          recordPosition();
+          // Phase 2: bounce back to bounceI (suppress at bounceI)
+          startAnim([{ toIdx: bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
+            if (wasLastShield) startShieldPop(hitCX, hitCY);
+            _aiFinish();
+          });
+        });
+      } else {
+        makeMove(move[0], move[1], true);
+        const _aiHops = computeObstacleHops(move[1]);
+        const _aiFinalI = applySpecialSpace(move[1]);
+        recordPosition();
+        const _aiPiece = board[_aiFinalI], _aiSide = sides[_aiFinalI], _aiHlth = health[_aiFinalI];
+        const aiAnimPieces = [{
+          toIdx: _aiFinalI,
+          fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
+          piece: _aiPiece, side: _aiSide, hlth: _aiHlth
+        }];
+        const _aiDoHop = (hi) => {
+          if (hi >= _aiHops.length) { _aiFinish(); return; }
+          const [fI, tI] = _aiHops[hi];
+          const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+          startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
+        };
+        startAnim(aiAnimPieces, 0, () => _aiDoHop(0));
+      }
     } else {
       if (countKings(W) === 0) {
         gameOver = true;
@@ -1923,6 +1954,22 @@ function draw() {
         ctx.globalAlpha = 1;
         ctx.restore();
       }
+    }
+  }
+
+  // Shield pop effects
+  if (shieldPops.length > 0) {
+    const now = performance.now();
+    for (const sp of shieldPops) {
+      const t = Math.min(1, (now - sp.startMs) / sp.dur);
+      const radius = 16 + t * 32;
+      ctx.globalAlpha = (1 - t) * 0.85;
+      ctx.strokeStyle = "#88ccff";
+      ctx.lineWidth = 3 - t * 2;
+      ctx.beginPath();
+      ctx.arc(sp.cx, sp.cy, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
   }
 
