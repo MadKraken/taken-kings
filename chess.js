@@ -1569,6 +1569,7 @@ function draw() {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+      if (dragSlot === slotIdx) { /* skip — item is being dragged */ } else
       if (inventory[slotIdx] === ITEM_PROMOTER) {
         const img = spriteImages["item_promoter"];
         if (img && img.complete) {
