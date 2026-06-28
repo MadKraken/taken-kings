@@ -30,7 +30,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 20;
+  const total = 21;
   const logoImg = new Image();
   logoImg.src = "taken_kings_logo.png?v=6";
   logoImg.onload = () => {
@@ -78,6 +78,10 @@ function loadSprites() {
   upgraderImg.src = "sprites/item_upgrader.svg?v=2";
   upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_upgrader"] = upgraderImg;
+  const groundImg = new Image();
+  groundImg.src = "ground.jpg";
+  groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
+  groundImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
 }
 
 let board = new Array(64).fill(NONE);
@@ -1448,6 +1452,20 @@ function draw() {
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  // Ground texture — tiles vertically, scrolls with the field
+  const groundEl = spriteImages["ground"];
+  if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
+    const gw = groundEl.naturalWidth, gh = groundEl.naturalHeight;
+    const scale = canvas.width / gw;
+    const tileH = gh * scale;
+    const animScrollDy = _fieldAnim ? anim.boardDy * (1 - _animT) : 0;
+    const rawOffset = leapCount * TILE + animScrollDy;
+    const startY = -((rawOffset % tileH) + tileH) % tileH;
+    for (let ty = startY; ty < canvas.height; ty += tileH) {
+      ctx.drawImage(groundEl, 0, ty, canvas.width, tileH);
+    }
+  }
+
   // Logo
   const logoEl = spriteImages["logo"];
   if (logoEl && logoEl.width > 0) {
@@ -1475,7 +1493,7 @@ function draw() {
 
   // Labels
   ctx.font = "bold 36px sans-serif";
-  ctx.fillStyle = "#ccc";
+  ctx.fillStyle = "#333";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (let i = 0; i < 8; i++) {
@@ -1493,10 +1511,10 @@ function draw() {
     ctx.translate(0, anim.boardDy * (1 - _animT));
   }
 
-  // Board squares (live rows 0-7)
+  // Board squares (live rows 0-7) — semi-transparent so ground shows through
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
     const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    ctx.fillStyle = (x + y) % 2 === 0 ? LIGHT : DARK;
+    ctx.fillStyle = (x + y) % 2 === 0 ? "rgba(237,206,160,0.72)" : "rgba(181,133,90,0.72)";
     ctx.fillRect(px, py, TILE, TILE);
   }
 
@@ -1514,7 +1532,7 @@ function draw() {
   // the -TILE shift places it above the clip boundary at t=0 and slides it into the
   // fog position by t=1, while wave A (board row 0) slides out of fog into the live board.
   for (let x = 0; x < 8; x++) {
-    ctx.fillStyle = (x + 1) % 2 === 0 ? LIGHT : DARK;
+    ctx.fillStyle = (x + 1) % 2 === 0 ? "rgba(237,206,160,0.72)" : "rgba(181,133,90,0.72)";
     ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE);
   }
   const prevPad = 6;
@@ -1892,7 +1910,7 @@ function draw() {
   ctx.lineWidth = 3;
   ctx.stroke();
   const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "";
-  ctx.fillStyle = invStatus ? "#ffdd88" : "#aaa";
+  ctx.fillStyle = invStatus ? "#ffdd88" : "#444";
   ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -2017,7 +2035,7 @@ function draw() {
     ctx.fillText("FIELD ADVANCE", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
     // Auto-advance countdown below buttons
     ctx.font = "bold 36px sans-serif";
-    ctx.fillStyle = shiftUrgent ? "#ff6666" : "#aaccff";
+    ctx.fillStyle = shiftUrgent ? "#ff6666" : "#2255aa";
     ctx.textAlign = "center";
     ctx.fillText(`FIELD AUTO-ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`, MARGIN + BOARD_PX / 2, COUNTDOWN_Y);
 
@@ -2049,8 +2067,7 @@ function draw() {
   if (!isItemActive()) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
     ctx.font = "bold 36px sans-serif";
-    ctx.fillStyle = "#ddd";
-    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.fillStyle = "#222"; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
     ctx.textAlign = "center";
     ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
     ctx.fillStyle = "#4a3f2e";
@@ -2799,4 +2816,5 @@ canvas.addEventListener("click", (e) => {
 
 initBoard();
 loadSprites();
+
 
