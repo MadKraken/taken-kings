@@ -93,6 +93,7 @@ let positionHistory = []; // track board states to detect repetition
 const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
+let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -1602,6 +1603,34 @@ function draw() {
     }
   }
 
+  // Trashcan below inventory
+  {
+    const invY = BOARD_Y + MARGIN;
+    const panelH = INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
+    const tcX = INV_X + (INV_W - 40) / 2, tcY = invY - 24 + panelH + 10;
+    const tcW = 40, tcH = 44;
+    const isHighlit = dragSlot >= 0 && dragOverTrash;
+    ctx.fillStyle = isHighlit ? "#8b2020" : "#3a2020";
+    ctx.beginPath(); ctx.roundRect(tcX + 3, tcY + 8, tcW - 6, tcH - 8, 3); ctx.fill();
+    ctx.fillStyle = isHighlit ? "#cc3030" : "#552020";
+    ctx.fillRect(tcX, tcY + 5, tcW, 5);
+    ctx.fillRect(tcX + 13, tcY, 14, 6);
+    ctx.fillStyle = isHighlit ? "rgba(255,120,120,0.5)" : "rgba(255,80,80,0.25)";
+    for (let li = 0; li < 3; li++) {
+      const lx = tcX + 10 + li * 8;
+      ctx.fillRect(lx, tcY + 11, 3, tcH - 16);
+    }
+  }
+
+  // Floating drag item
+  if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
+    const item = inventory[dragSlot];
+    const key = item === ITEM_PROMOTER ? "item_promoter" : item === ITEM_ANY_PROMOTER ? "item_any_promoter" : item === ITEM_TELEPORTER ? "item_teleporter" : item === ITEM_KING_PROMOTER ? "item_king_promoter" : item === ITEM_CLONER ? "item_cloner" : "item_upgrader";
+    const img = spriteImages[key];
+    const ds = INV_SLOT;
+    if (img && img.complete) ctx.drawImage(img, dragX - ds / 2, dragY - ds / 2, ds, ds);
+  }
+
   // Buttons
   ctx.font = "bold 16px sans-serif";
   ctx.textAlign = "center";
@@ -1817,6 +1846,59 @@ function draw() {
   }
 
 }
+
+function canvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  return [(e.clientX - rect.left) * canvas.width / rect.width,
+          (e.clientY - rect.top) * canvas.height / rect.height];
+}
+
+function trashBounds() {
+  const invY = BOARD_Y + MARGIN;
+  const panelH = INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
+  return { x: INV_X, y: invY - 24 + panelH + 10, w: INV_W, h: 54 };
+}
+
+canvas.addEventListener("mousedown", (e) => {
+  if (gameOver || anim || turn !== W || aiThinking || shopMode) return;
+  const [cx, cy] = canvasCoords(e);
+  const invY = BOARD_Y + MARGIN;
+  for (let r = 0; r < INV_ROWS; r++) {
+    for (let c = 0; c < INV_COLS; c++) {
+      const slotIdx = r * INV_COLS + c;
+      if (inventory[slotIdx] === ITEM_NONE) continue;
+      const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+      const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+      if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT) {
+        dragSlot = slotIdx;
+        dragX = cx; dragY = cy; dragOverTrash = false;
+        draw();
+        return;
+      }
+    }
+  }
+});
+
+canvas.addEventListener("mousemove", (e) => {
+  if (dragSlot < 0) return;
+  const [cx, cy] = canvasCoords(e);
+  dragX = cx; dragY = cy;
+  const tb = trashBounds();
+  dragOverTrash = cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h;
+  draw();
+});
+
+canvas.addEventListener("mouseup", (e) => {
+  if (dragSlot < 0) return;
+  const [cx, cy] = canvasCoords(e);
+  const tb = trashBounds();
+  if (cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h) {
+    removeFromInventory(dragSlot);
+    if (inventory._activeSlot === dragSlot) delete inventory._activeSlot;
+  }
+  dragSlot = -1; dragOverTrash = false;
+  draw();
+});
 
 canvas.addEventListener("click", (e) => {
   if (gameOver) return;
