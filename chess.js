@@ -1712,9 +1712,22 @@ function draw() {
   ctx.textAlign = "center";
   const status = gameOver ? gameMsg : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : (aiThinking ? "AI Thinking..." : "Your Turn"))))))));
   ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
-  ctx.font = "14px sans-serif";
-  ctx.fillStyle = "#aaa";
-  ctx.fillText(`Kings Taken: ${score}   Gold: ${gold}`, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 52);
+  const statsY = BOARD_Y + MARGIN + BOARD_PX + 56;
+  const statsCx = canvas.width / 2;
+  ctx.font = "bold 17px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#c84040";
+  ctx.fillText(`♚ ${score}`, statsCx - 18, statsY);
+  ctx.font = "13px sans-serif";
+  ctx.fillStyle = "#888";
+  ctx.fillText(" Kings Taken", statsCx - 18, statsY + 17);
+  ctx.font = "bold 17px sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#e8c040";
+  ctx.fillText(`${gold} ●`, statsCx + 18, statsY);
+  ctx.font = "13px sans-serif";
+  ctx.fillStyle = "#888";
+  ctx.fillText("Gold", statsCx + 18, statsY + 17);
 
   // Promoter piece chooser overlay
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
