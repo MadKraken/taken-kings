@@ -1991,8 +1991,14 @@ canvas.addEventListener("click", (e) => {
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
     const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const dlgW = 340, dlgH = 100;
-    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
+    const dlgW = 340, dlgH = 100, dlgGap = 18;
+    const dlgX = (canvas.width - dlgW) / 2;
+    const [ptx2, pty2] = xy(targetIdx);
+    const pawnSY2 = BOARD_Y + MARGIN + pty2 * TILE + TILE / 2;
+    const placeAbove2 = pty2 >= 4;
+    const dlgY = placeAbove2
+      ? Math.max(LOGO_H, pawnSY2 - TILE / 2 - dlgGap - dlgH)
+      : Math.min(canvas.height - dlgH - 10, pawnSY2 + TILE / 2 + dlgGap);
     const cpad = 8, csize = 60;
     const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
     for (let i = 0; i < choices.length; i++) {
