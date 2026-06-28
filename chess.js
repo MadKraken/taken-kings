@@ -1896,13 +1896,13 @@ function draw() {
   const previewRowNum = 8 + leapCount + 1;
   ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
   ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
-  ctx.globalAlpha = 0.7;
   ctx.font = "bold 36px sans-serif";
-  ctx.fillStyle = "#aaa";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = "#fff";
   ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
-  ctx.globalAlpha = 1.0;
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
   // Inventory panel
   const invY = INV_PANEL_TOP + 50;
