@@ -1472,8 +1472,7 @@ function draw() {
     const maxW = canvas.width - MARGIN * 2;
     const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
     const lw = logoEl.width * scale, lh = logoEl.height * scale;
-    const logoCx = canvas.width - MARGIN - 2 * TILE; // centered in right half
-    ctx.drawImage(logoEl, logoCx - lw / 2, (LOGO_H - lh) / 2, lw, lh);
+    ctx.drawImage(logoEl, MARGIN + BOARD_PX - lw, (LOGO_H - lh) / 2, lw, lh);
   }
 
   // Stats â€" left and right of logo, in the logo area
