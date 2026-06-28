@@ -10,7 +10,7 @@ const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
 const INV_W = INV_COLS * (INV_SLOT + INV_PAD) + INV_PAD;
 const INV_X = BOARD_PX + MARGIN * 2 + 10;
 canvas.width = INV_X + INV_W + 10;
-canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 130;
+canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 158;
 
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
@@ -1175,7 +1175,7 @@ function applySpecialSpace(startI) {
 
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
-const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 72;
+const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 100;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
 const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
 const HINT_BTN = { x: MARGIN + 276, y: BTN_Y, w: 90, h: 36 };
