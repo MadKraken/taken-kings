@@ -93,7 +93,7 @@ let positionHistory = []; // track board states to detect repetition
 const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
-let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false;
+let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -1899,6 +1899,7 @@ canvas.addEventListener("mouseup", (e) => {
   const tb = trashBounds();
   if (cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h) {
     removeFromInventory(slot);
+    dragConsumed = true;
     draw();
     return;
   }
@@ -1913,34 +1914,34 @@ canvas.addEventListener("mouseup", (e) => {
     if (item === ITEM_PROMOTER && board[i] === PAWN && sides[i] === W) {
       promotingMode = true; promotingPawnIdx = i;
       selected = -1; validMoves = [];
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     if (item === ITEM_ANY_PROMOTER && sides[i] === W && board[i] !== NONE && board[i] !== KING) {
       anyPromotingMode = true; anyPromotingPieceIdx = i;
       selected = -1; validMoves = [];
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     if (item === ITEM_KING_PROMOTER && board[i] === PAWN && sides[i] === W) {
       board[i] = KING;
       removeFromInventory(slot); delete inventory._activeSlot;
       kingPromotingMode = false;
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     if (item === ITEM_UPGRADER && sides[i] === W) {
       health[i] = Math.max(health[i], 1) + 1;
       removeFromInventory(slot); delete inventory._activeSlot;
       upgraderMode = false;
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     if (item === ITEM_TELEPORTER && sides[i] === W) {
       teleporterMode = true; teleporterSelected = i;
       selected = -1; validMoves = [];
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     if (item === ITEM_CLONER && sides[i] === W && adjacentClonerDests(i).length > 0) {
       clonerMode = true; clonerSelected = i;
       selected = -1; validMoves = [];
-      draw(); return;
+      dragConsumed = true; draw(); return;
     }
     delete inventory._activeSlot;
   }
@@ -1949,6 +1950,7 @@ canvas.addEventListener("mouseup", (e) => {
 });
 
 canvas.addEventListener("click", (e) => {
+  if (dragConsumed) { dragConsumed = false; return; }
   if (gameOver) return;
   if (anim) return;
   const rect = canvas.getBoundingClientRect();
