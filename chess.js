@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 
 const TILE = 80;
 const MARGIN = 32;
-const LOGO_H = 135;
+const LOGO_H = 203;
 const PREVIEW_H = 60;
 const BOARD_PX = TILE * 8;
 const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
