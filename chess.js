@@ -1605,8 +1605,7 @@ function draw() {
   if (_fieldAnim && anim.exitRow) {
     const erPad = 6;
     for (let x = 0; x < 8; x++) {
-      ctx.fillStyle = (x + 8) % 2 === 0 ? LIGHT : DARK;
-      ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE);
+      if ((x + 8) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE); }
     }
     for (const ep of anim.exitRow) {
       if (ep.piece === NONE) continue;
