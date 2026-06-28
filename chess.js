@@ -21,6 +21,7 @@ const LEAP_BTN_DISABLED = "#555";
 
 const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7;
 const W = 1, B = 2;
+const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING];
 
 const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king" };
 const SIDE_PREFIX = { [W]: "w", [B]: "b" };
@@ -40,7 +41,11 @@ function loadSprites() {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
       const img = new Image();
-      img.src = `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
+      if (p === PAWN && s === W) {
+        img.src = `test_sprite.png`;
+      } else {
+        img.src = `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
+      }
       img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       spriteImages[key] = img;
     }
@@ -94,7 +99,8 @@ const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER =
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
-let playerDead = [], enemyDead = [], flyAnims = [];
+let playerDead = {}, enemyDead = {}, flyAnims = [];
+let warnFlashRunning = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -158,18 +164,25 @@ function enemy(s) { return s === W ? B : W; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
-function graveSlotPos(isPlayer, slotIdx) {
+function graveSlotPos(isPlayer, pieceType) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-  const slotSz = 30;
-  const cols = Math.floor((GRAVE_W - 16) / slotSz);
-  const col = slotIdx % cols;
-  const row = Math.floor(slotIdx / cols);
-  return [gx + 8 + col * slotSz + 14, GRAVE_Y + 28 + row * slotSz + 14];
+  const slotIdx = GRAVE_TYPES.indexOf(pieceType);
+  const slotW = GRAVE_W / GRAVE_TYPES.length;
+  return [gx + slotIdx * slotW + slotW / 2, GRAVE_Y + 10 + 22];
 }
 
 function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
   flyAnims.push({ piece, side, sx, sy, tx, ty, startMs: performance.now(), dur: 600, onDone });
   if (flyAnims.length === 1) requestAnimationFrame(_flyTick);
+}
+
+function _warnFlashTick() {
+  draw();
+  if (shiftCountdown === 1) {
+    requestAnimationFrame(_warnFlashTick);
+  } else {
+    warnFlashRunning = false;
+  }
 }
 
 function _flyTick() {
@@ -364,7 +377,7 @@ function initBoard() {
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
-  playerDead = []; enemyDead = []; flyAnims = [];
+  playerDead = {}; enemyDead = {}; flyAnims = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -531,10 +544,8 @@ function makeMove(fromI, toI, visual = false) {
     const capSY = BOARD_Y + MARGIN + ty * TILE + TILE / 2;
     const isPlayerPiece = capSide === W;
     const pool = isPlayerPiece ? playerDead : enemyDead;
-    const slot = pool.length;
-    pool.push(null);
-    const [tgx, tgy] = graveSlotPos(isPlayerPiece, slot);
-    startFlyAnim(captured, capSide, capSX, capSY, tgx, tgy, () => { pool[slot] = captured; });
+    const [tgx, tgy] = graveSlotPos(isPlayerPiece, captured);
+    startFlyAnim(captured, capSide, capSX, capSY, tgx, tgy, () => { pool[captured] = (pool[captured] || 0) + 1; });
   }
 
   if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
@@ -566,10 +577,8 @@ function makeMove(fromI, toI, visual = false) {
     if (visual && epPiece !== NONE) {
       const isEPPlayer = epSide === W;
       const epPool = isEPPlayer ? playerDead : enemyDead;
-      const epSlot = epPool.length;
-      epPool.push(null);
-      const [etgx, etgy] = graveSlotPos(isEPPlayer, epSlot);
-      startFlyAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2, etgx, etgy, () => { epPool[epSlot] = epPiece; });
+      const [etgx, etgy] = graveSlotPos(isEPPlayer, epPiece);
+      startFlyAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2, etgx, etgy, () => { epPool[epPiece] = (epPool[epPiece] || 0) + 1; });
     }
     if (epPiece === KING) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
@@ -646,10 +655,8 @@ function teamLeap() {
     const ni2 = idx(ax2, ay2 - 1);
     if (sides[ni2] === B && board[ni2] !== NONE && board[ni2] !== CHEST) {
       const capPiece = board[ni2];
-      const slot = enemyDead.length;
-      enemyDead.push(null);
-      const [tgx, tgy] = graveSlotPos(false, slot);
-      startFlyAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2, tgx, tgy, () => { enemyDead[slot] = capPiece; });
+      const [tgx, tgy] = graveSlotPos(false, capPiece);
+      startFlyAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2, tgx, tgy, () => { enemyDead[capPiece] = (enemyDead[capPiece] || 0) + 1; });
     }
   }
 
@@ -1018,25 +1025,29 @@ function aiPlay() {
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
       makeMove(move[0], move[1], true);
-      applySpecialSpace(move[1]);
+      const _aiHops = computeObstacleHops(move[1]);
+      const _aiFinalI = applySpecialSpace(move[1]);
       recordPosition();
+      const _aiPiece = board[_aiFinalI], _aiSide = sides[_aiFinalI], _aiHlth = health[_aiFinalI];
       const aiAnimPieces = [{
-        toIdx: move[1],
+        toIdx: _aiFinalI,
         fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-        piece: board[move[1]], side: sides[move[1]], hlth: health[move[1]]
+        piece: _aiPiece, side: _aiSide, hlth: _aiHlth
       }];
-      startAnim(aiAnimPieces, 0, () => {
-        if (countKings(W) === 0) {
-          gameOver = true;
-          gameMsg = `Game Over! Score: ${score}`;
-        } else if (isCheckmated(W)) {
-          gameOver = true;
-          gameMsg = `Checkmate! Score: ${score}`;
-        }
+      const _aiFinish = () => {
+        if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+        else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
         if (!gameOver) turn = W;
         aiThinking = false;
         draw();
-      });
+      };
+      const _aiDoHop = (hi) => {
+        if (hi >= _aiHops.length) { _aiFinish(); return; }
+        const [fI, tI] = _aiHops[hi];
+        const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+        startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
+      };
+      startAnim(aiAnimPieces, 0, () => _aiDoHop(0));
     } else {
       if (countKings(W) === 0) {
         gameOver = true;
@@ -1200,6 +1211,31 @@ function applySpacesAfterAdvance() {
   processNextQueuedItem();
 }
 
+// Dry-run: returns the list of [fromI, toI] hops an obstacle chain would produce,
+// without modifying board state. Used to drive redirect animations.
+function computeObstacleHops(startI) {
+  const visited = new Set();
+  const hops = [];
+  let curI = startI;
+  while (true) {
+    if (visited.has(curI)) break;
+    const sp = specialSpaces[curI];
+    if (!sp || sp.type !== 'obstacle') break;
+    visited.add(curI);
+    const [x, y] = xy(curI);
+    const nx = x + sp.dx, ny = y + sp.dy;
+    if (!inB(nx, ny)) break;
+    const destI = idx(nx, ny);
+    const moverSide = sides[curI];
+    const destSide = sides[destI];
+    if (destSide !== 0 && destSide === moverSide) break;
+    if (moverSide === B && destSide === W && health[destI] > 1) break;
+    hops.push([curI, destI]);
+    curI = destI;
+  }
+  return hops;
+}
+
 // Applies obstacle (arrow) spaces with chaining. Any piece — white or black —
 // landing on an obstacle is redirected; if the destination is also an obstacle
 // the chain continues. Visited set prevents infinite loops.
@@ -1240,7 +1276,7 @@ function applySpecialSpace(startI) {
 const BOARD_Y = LOGO_H + PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 100;
 const GRAVE_Y = BTN_Y + 74;
-const GRAVE_H = 110;
+const GRAVE_H = 80;
 const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
@@ -1300,6 +1336,14 @@ function draw() {
     const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
     ctx.fillStyle = (x + y) % 2 === 0 ? LIGHT : DARK;
     ctx.fillRect(px, py, TILE, TILE);
+  }
+
+  // Flash red fog on bottom row when field advance is 1 turn away
+  if (shiftCountdown === 1 && !anim) {
+    const pulse = 0.18 + 0.22 * Math.abs(Math.sin(performance.now() / 250));
+    ctx.fillStyle = `rgba(220,30,30,${pulse.toFixed(3)})`;
+    ctx.fillRect(MARGIN, MARGIN + 7 * TILE, 8 * TILE, TILE);
+    if (!warnFlashRunning) { warnFlashRunning = true; requestAnimationFrame(_warnFlashTick); }
   }
 
   // Preview row — always drawn one row above the live board, scrolls with the board.
@@ -1757,10 +1801,12 @@ function draw() {
     ctx.fill();
     ctx.fillStyle = canShift ? "#fff" : "#999";
     ctx.font = "bold 13px sans-serif";
-    ctx.fillText(`FIELD ADVANCE`, PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2 - 4);
-    ctx.font = "11px sans-serif";
-    ctx.fillStyle = shiftUrgent ? "#ffaaaa" : "#aaccff";
-    ctx.fillText(`auto in ${shiftCountdown}`, PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2 + 10);
+    ctx.fillText("FIELD ADVANCE", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+    // Auto-advance countdown between Field Advance and Resign
+    const countdownX = (PITCH_BTN.x + PITCH_BTN.w + RESIGN_BTN.x) / 2;
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillStyle = shiftUrgent ? "#ff6666" : "#aaccff";
+    ctx.fillText(`FIELD ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`, countdownX, BTN_Y + 18);
     ctx.font = "bold 16px sans-serif";
 
     // Hint (only shown in test mode)
@@ -1817,19 +1863,32 @@ function draw() {
     ctx.fillStyle = "#4a3f2e";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
     ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
-    for (let i = 0; i < pool.length; i++) {
-      const p = pool[i];
-      if (!p) continue;
-      const [px, py] = graveSlotPos(isPlayer, i);
-      const isKing = p === KING;
-      const sz = isKing ? 34 : 24;
-      if (isKing) {
-        ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
-        ctx.beginPath(); ctx.arc(px, py, 19, 0, Math.PI * 2); ctx.fill();
+    const sideVal = isPlayer ? W : B;
+    const slotW = GRAVE_W / GRAVE_TYPES.length;
+    const pieceSz = 44;
+    const pieceCY = GRAVE_Y + 10 + pieceSz / 2;
+    for (let si = 0; si < GRAVE_TYPES.length; si++) {
+      const pt = GRAVE_TYPES[si];
+      const count = pool[pt] || 0;
+      const [cx] = graveSlotPos(isPlayer, pt);
+      const cy = pieceCY;
+      const isKing = pt === KING;
+      const img = spriteImages[`${sideVal}_${pt}`];
+      if (count === 0) {
+        ctx.globalAlpha = 0.15;
+        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        ctx.globalAlpha = 1;
+      } else {
+        if (isKing) {
+          ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
+          ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
+        }
+        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        ctx.font = "bold 12px sans-serif";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 3);
       }
-      const sideVal = isPlayer ? W : B;
-      const img = spriteImages[`${sideVal}_${p}`];
-      if (img && img.complete) ctx.drawImage(img, px - sz / 2, py - sz / 2, sz, sz);
     }
   }
 
@@ -1955,25 +2014,27 @@ function draw() {
       ctx.fillStyle = isSold ? "#444" : "#ddd";
       ctx.font = "11px sans-serif";
       ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
       const name = ITEM_NAMES[item];
       const words = name.split(" ");
       if (words.length > 1) {
         const mid = Math.ceil(words.length / 2);
-        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 82);
-        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 96);
+        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 88);
+        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 102);
       } else {
-        ctx.fillText(name, cardX + cardW / 2, cardsY + 89);
+        ctx.fillText(name, cardX + cardW / 2, cardsY + 95);
       }
 
       ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
       ctx.font = "bold 15px sans-serif";
-      ctx.fillText(isSold ? "—" : `${price} G`, cardX + cardW / 2, cardsY + 116);
+      ctx.fillText(isSold ? "—" : `${price} G`, cardX + cardW / 2, cardsY + 122);
 
       ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
       ctx.beginPath(); ctx.roundRect(cardX + 10, cardsY + cardH - 32, cardW - 20, 26, 4); ctx.fill();
       ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
       ctx.font = "bold 13px sans-serif";
-      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 19);
+      ctx.textBaseline = "middle";
+      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 32 + 13);
     }
 
     // Close button
@@ -1982,6 +2043,7 @@ function draw() {
     ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 86, 28, 6); ctx.fill();
     ctx.fillStyle = "#ddd";
     ctx.font = "bold 13px sans-serif";
+    ctx.textBaseline = "middle";
     ctx.fillText("Close", closeBtnX + 43, closeBtnY + 14);
   }
 
@@ -2482,28 +2544,40 @@ canvas.addEventListener("click", (e) => {
       if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
-      startAnim(wAnimPieces, 0, () => {
+      const _wHops = computeObstacleHops(clickedDest);
+      const _wFinalI = applySpecialSpace(clickedDest);
+      const _wPiece = board[_wFinalI], _wSide = sides[_wFinalI], _wHlth = health[_wFinalI];
+      // Update wAnimPieces toIdx to point to where piece actually ends up
+      wAnimPieces[0].toIdx = _wFinalI;
+      if (_wPiece !== undefined) { wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth; }
+      const _wContinue = (movedTo) => {
         checkWhiteKingAlive();
         if (!gameOver) {
-          const movedTo = applySpecialSpace(clickedDest);
-          checkWhiteKingAlive();
-          if (!gameOver) {
-            const continueAfterShop = () => {
-              const item = itemSpaces[movedTo];
-              if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
-                const done = activateItemSpace(item, movedTo);
-                if (done) endWhiteTurn();
-              } else {
-                endWhiteTurn();
-              }
-            };
-            if (specialSpaces[movedTo]?.type === 'shop' && sides[movedTo] === W) {
-              openShop(movedTo, continueAfterShop);
+          const continueAfterShop = () => {
+            const item = itemSpaces[movedTo];
+            if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
+              const done = activateItemSpace(item, movedTo);
+              if (done) endWhiteTurn();
             } else {
-              continueAfterShop();
+              endWhiteTurn();
             }
-          } else { draw(); }
+          };
+          if (specialSpaces[movedTo]?.type === 'shop' && sides[movedTo] === W) {
+            openShop(movedTo, continueAfterShop);
+          } else {
+            continueAfterShop();
+          }
         } else { draw(); }
+      };
+      const _wDoHop = (hi) => {
+        if (hi >= _wHops.length) { _wContinue(_wFinalI); return; }
+        const [fI, tI] = _wHops[hi];
+        const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+        startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => _wDoHop(hi+1));
+      };
+      startAnim(wAnimPieces, 0, () => {
+        checkWhiteKingAlive();
+        if (!gameOver) { _wDoHop(0); } else { draw(); }
       });
       return;
     } else if (sides[clicked] === W) {
