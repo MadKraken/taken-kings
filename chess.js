@@ -1,16 +1,16 @@
-const canvas = document.getElementById("board");
+﻿const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
-const TILE = 80;
-const MARGIN = 32;
-const LOGO_H = 203;
-const PREVIEW_H = 60;
+const TILE = 120;
+const MARGIN = 60;
+const LOGO_H = 160;
+const PREVIEW_H = 40;
 const BOARD_PX = TILE * 8;
-const INV_COLS = 2, INV_ROWS = 4, INV_SLOT = 50, INV_PAD = 4;
-const INV_W = INV_COLS * (INV_SLOT + INV_PAD) + INV_PAD;
-const INV_X = BOARD_PX + MARGIN * 2 + 10;
-canvas.width = INV_X + INV_W + 10;
-canvas.height = LOGO_H + PREVIEW_H + BOARD_PX + MARGIN * 2 + 380;
+const INV_COLS = 8, INV_ROWS = 1, INV_SLOT = TILE, INV_PAD = 0;
+const INV_W = BOARD_PX;
+canvas.width = MARGIN + BOARD_PX + MARGIN;
+canvas.height = 1920;
+const INV_X = MARGIN;
 
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
@@ -32,9 +32,13 @@ function loadSprites() {
   let count = 0;
   const total = 20;
   const logoImg = new Image();
-  logoImg.src = "taken_kings_logo.png?v=3";
+  logoImg.src = "taken_kings_logo.png?v=6";
   logoImg.onload = () => {
     spriteImages["logo"] = logoImg;
+    count++; if (count === total) { spritesLoaded = true; draw(); }
+  };
+  logoImg.onerror = (e) => {
+    console.log("logo FAILED", e);
     count++; if (count === total) { spritesLoaded = true; draw(); }
   };
   for (const s of [W, B]) {
@@ -99,6 +103,7 @@ let playerDead = {}, enemyDead = {}, flyAnims = [];
 let shieldPops = [];
 let warnFlashRunning = false;
 let voidPulseRunning = false;
+let chestBobRunning = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -166,7 +171,7 @@ function graveSlotPos(isPlayer, pieceType) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
   const slotIdx = GRAVE_TYPES.indexOf(pieceType);
   const slotW = GRAVE_W / GRAVE_TYPES.length;
-  return [gx + slotIdx * slotW + slotW / 2, GRAVE_Y + 10 + 22];
+  return [gx + slotIdx * slotW + slotW / 2, GRAVE_Y + 10 + 40];
 }
 
 function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
@@ -189,6 +194,15 @@ function _voidPulseTick() {
     requestAnimationFrame(_voidPulseTick);
   } else {
     voidPulseRunning = false;
+  }
+}
+
+function _chestBobTick() {
+  draw();
+  if (itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item')) {
+    requestAnimationFrame(_chestBobTick);
+  } else {
+    chestBobRunning = false;
   }
 }
 
@@ -219,25 +233,25 @@ function drawBlockTile(gctx, tx, ty, tileSize) {
   // Outer dark edge / base
   gctx.fillStyle = "#1e1a16";
   gctx.fillRect(tx, ty, tileSize, tileSize);
-  // Top bevel — lit from above
+  // Top bevel â€" lit from above
   gctx.fillStyle = "#c8b890";
   gctx.beginPath();
   gctx.moveTo(tx, ty); gctx.lineTo(tx + tileSize, ty);
   gctx.lineTo(tx + tileSize - bev, ty + bev); gctx.lineTo(tx + bev, ty + bev);
   gctx.closePath(); gctx.fill();
-  // Bottom bevel — deep shadow
+  // Bottom bevel â€" deep shadow
   gctx.fillStyle = "#2e2418";
   gctx.beginPath();
   gctx.moveTo(tx, ty + tileSize); gctx.lineTo(tx + tileSize, ty + tileSize);
   gctx.lineTo(tx + tileSize - bev, ty + tileSize - bev); gctx.lineTo(tx + bev, ty + tileSize - bev);
   gctx.closePath(); gctx.fill();
-  // Left bevel — half-lit
+  // Left bevel â€" half-lit
   gctx.fillStyle = "#908068";
   gctx.beginPath();
   gctx.moveTo(tx, ty); gctx.lineTo(tx, ty + tileSize);
   gctx.lineTo(tx + bev, ty + tileSize - bev); gctx.lineTo(tx + bev, ty + bev);
   gctx.closePath(); gctx.fill();
-  // Right bevel — shadow side
+  // Right bevel â€" shadow side
   gctx.fillStyle = "#403428";
   gctx.beginPath();
   gctx.moveTo(tx + tileSize, ty); gctx.lineTo(tx + tileSize, ty + tileSize);
@@ -267,7 +281,7 @@ function drawShopTile(gctx, tx, ty, tileSize) {
   gctx.fillStyle = "rgba(220,185,110,0.95)";
   gctx.fillRect(bX, bY, bW, bH);
 
-  // Awning — mostly above bY, small overlap into building top
+  // Awning â€" mostly above bY, small overlap into building top
   const aW = sz, aH = sz * 0.19;
   const aX = cx - aW / 2, aY = bY - aH * 0.6;
   // awning bottom = aY + aH = bY + aH*0.4 = bY + sz*0.076
@@ -280,7 +294,7 @@ function drawShopTile(gctx, tx, ty, tileSize) {
   gctx.closePath();
   gctx.fill();
 
-  // Small scalloped bottom — scallops bottom ≈ bY + sz*0.111
+  // Small scalloped bottom â€" scallops bottom â‰ˆ bY + sz*0.111
   const scR = sz * 0.035;
   gctx.fillStyle = "#901a1a";
   const scInner = aW * 0.74, scCount = 5;
@@ -291,14 +305,14 @@ function drawShopTile(gctx, tx, ty, tileSize) {
     gctx.fill();
   }
 
-  // Door — top at bY + sz*0.292, leaving room for windows above it
+  // Door â€" top at bY + sz*0.292, leaving room for windows above it
   const dW = bW * 0.28, dH = bH * 0.46;
   gctx.fillStyle = "rgba(90,50,18,0.9)";
   gctx.beginPath();
   gctx.roundRect(cx - dW / 2, bY + bH - dH, dW, dH, 2);
   gctx.fill();
 
-  // Windows — explicitly placed between scallops bottom (sz*0.111) and door top (sz*0.292)
+  // Windows â€" explicitly placed between scallops bottom (sz*0.111) and door top (sz*0.292)
   gctx.fillStyle = "rgba(180,230,255,0.78)";
   const wW = bW * 0.22, wH = sz * 0.13, wY = bY + sz * 0.14;
   gctx.fillRect(bX + bW * 0.06, wY, wW, wH);
@@ -354,7 +368,7 @@ function countPosition(hash) {
 }
 
 function generateWave(count) {
-  // count=1 → 1 piece (opening row); count≥2 → starts at 2, +1 every 5 rows, max 7
+  // count=1 â†’ 1 piece (opening row); countâ‰¥2 â†’ starts at 2, +1 every 5 rows, max 7
   const n = count === 1 ? 1 : Math.min(2 + Math.floor((count - 2) / 5), 7);
   const cols = [];
   while (cols.length < n) {
@@ -458,7 +472,7 @@ function slidingMoves(moves, x, y, dirs, s) {
       if (side(nx, ny) === s) break;
       if (s === B && piece(nx, ny) === CHEST) break;
       const ni = idx(nx, ny);
-      if (isBlockSpace(ni)) break; // wall — stop ray, can't land or pass through
+      if (isBlockSpace(ni)) break; // wall â€" stop ray, can't land or pass through
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
       if (piece(nx, ny) !== NONE && piece(nx, ny) !== CHEST) break; // chests and voids don't stop the ray
@@ -561,7 +575,7 @@ function isAttacked(tx, ty, bySide) {
 }
 
 function legalMoves(x, y) {
-  // White has no check restriction — all pseudo-legal moves are legal.
+  // White has no check restriction â€" all pseudo-legal moves are legal.
   // Black still can't move into check (keeps AI from hanging its own king).
   const s = side(x, y);
   if (s === W) return pseudoMoves(x, y);
@@ -597,7 +611,7 @@ function makeMove(fromI, toI, visual = false) {
   const captured = board[toI];
   const capSide = sides[toI];
 
-  // Bounce: black piece attacks white piece with health > 1 — damage but no capture
+  // Bounce: black piece attacks white piece with health > 1 â€" damage but no capture
   if (s === B && sides[toI] === W && health[toI] > 1) {
     health[toI]--;
     const bounceI = calcBouncePos(fromI, toI, p);
@@ -677,6 +691,31 @@ function endWhiteTurn() {
 }
 
 // --- Team Leap & Pitch Shift ---
+
+function isItemActive() {
+  return promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode;
+}
+
+function cancelItemMode() {
+  promotingMode = false; anyPromotingMode = false; teleporterMode = false;
+  kingPromotingMode = false; clonerMode = false; upgraderMode = false;
+  promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
+  teleporterSelected = -1; clonerSelected = -1;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  draw();
+}
+
+function trashActiveItem() {
+  if (inventory._activeSlot !== undefined) {
+    removeFromInventory(inventory._activeSlot);
+    delete inventory._activeSlot;
+  }
+  promotingMode = false; anyPromotingMode = false; teleporterMode = false;
+  kingPromotingMode = false; clonerMode = false; upgraderMode = false;
+  promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
+  teleporterSelected = -1; clonerSelected = -1;
+  draw();
+}
 
 function canTeamLeap() {
   return !(gameOver || turn !== W || aiThinking);
@@ -946,7 +985,7 @@ function evaluate() {
     }
   }
   if (!whiteKing) return -99999;
-  // Penalize repeated positions — both sides should avoid loops
+  // Penalize repeated positions â€" both sides should avoid loops
   const reps = countPosition(boardHash());
   if (reps >= 2) val -= 5000;
   else if (reps >= 1) val -= 1000;
@@ -1216,7 +1255,7 @@ function activateItemSpace(item, i) {
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_PROMOTER:
-      // Skip pawn selection — piece is already known. Jump straight to chooser.
+      // Skip pawn selection â€" piece is already known. Jump straight to chooser.
       promotingPawnIdx = i;
       draw();
       return false;
@@ -1273,7 +1312,7 @@ function closeShop() {
   if (done) done();
 }
 
-// After a Team Advance, apply obstacle spaces then item spaces left→right, front→back.
+// After a Team Advance, apply obstacle spaces then item spaces leftâ†’right, frontâ†’back.
 function applySpacesAfterAdvance() {
   // Pass 1: obstacles. Collect starters first so pieces that land mid-chain aren't re-triggered.
   const obstacleStarters = [];
@@ -1288,7 +1327,7 @@ function applySpacesAfterAdvance() {
   checkWhiteKingAlive();
   if (gameOver) { draw(); return; }
 
-  // Pass 2: item spaces — instant items applied now, interactive items queued.
+  // Pass 2: item spaces â€" instant items applied now, interactive items queued.
   pendingItemQueue = [];
   for (let i = 0; i < 64; i++) {
     const item = itemSpaces[i];
@@ -1298,7 +1337,7 @@ function applySpacesAfterAdvance() {
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
 
-  // Pass 3: shop spaces — queued after items so each triggers its own dialogue.
+  // Pass 3: shop spaces â€" queued after items so each triggers its own dialogue.
   pendingShopQueue = [];
   for (let i = 0; i < 64; i++) {
     if (sides[i] === W && specialSpaces[i]?.type === 'shop') pendingShopQueue.push(i);
@@ -1332,14 +1371,14 @@ function computeObstacleHops(startI) {
   return hops;
 }
 
-// Applies obstacle (arrow) spaces with chaining. Any piece — white or black —
+// Applies obstacle (arrow) spaces with chaining. Any piece â€" white or black â€"
 // landing on an obstacle is redirected; if the destination is also an obstacle
 // the chain continues. Visited set prevents infinite loops.
 function applySpecialSpace(startI) {
   const visited = new Set();
   let toI = startI;
   while (true) {
-    if (visited.has(toI)) break; // cycle detected — piece stays where it is
+    if (visited.has(toI)) break; // cycle detected â€" piece stays where it is
     const sp = specialSpaces[toI];
     if (!sp || sp.type !== 'obstacle') break;
     visited.add(toI);
@@ -1371,19 +1410,21 @@ function applySpecialSpace(startI) {
 
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
-const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 100;
-const GRAVE_Y = BTN_Y + 74;
-const GRAVE_H = 80;
+const INV_PANEL_TOP = BOARD_Y + MARGIN + BOARD_PX + 70;
+const INV_PANEL_BOTTOM = INV_PANEL_TOP + INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 58;
+const BTN_Y = INV_PANEL_BOTTOM + 20;
+const BTN_GAP = 8;
+const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
+const PITCH_BTN = { x: MARGIN + BOARD_PX / 2 + BTN_GAP / 2, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
+const COUNTDOWN_Y = BTN_Y + 60 + 46;
+const GRAVE_Y = COUNTDOWN_Y + 100;
+const GRAVE_H = 150;
 const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
-const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: 130, h: 36 };
-const PITCH_BTN = { x: MARGIN + 138, y: BTN_Y, w: 130, h: 36 };
-const RESIGN_BTN = { x: MARGIN + BOARD_PX - 100, y: BTN_Y, w: 100, h: 36 };
-const INV_PANEL_BOTTOM = BOARD_Y + MARGIN - 24 + INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
-const SIDE_BTN_Y = INV_PANEL_BOTTOM + 10 + 44 + 14;
-const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 32 };
-const TEST_BTN = { x: INV_X, y: SIDE_BTN_Y + 38, w: INV_W, h: 32 };
+const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 20, w: 160, h: 60 };
+const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
+const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
 // --- Draw ---
 
@@ -1401,21 +1442,33 @@ function draw() {
     const maxW = canvas.width - MARGIN * 2;
     const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
     const lw = logoEl.width * scale, lh = logoEl.height * scale;
-    const logoCx = MARGIN + 4 * TILE; // d/e column boundary
+    const logoCx = canvas.width - MARGIN - 2 * TILE; // centered in right half
     ctx.drawImage(logoEl, logoCx - lw / 2, (LOGO_H - lh) / 2, lw, lh);
+  }
+
+  // Stats â€" left and right of logo, in the logo area
+  {
+    const statsY = LOGO_H * 0.55;
+    ctx.font = "bold 36px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#c84040";
+    ctx.fillText(`TAKEN KINGS: ${score}`, MARGIN, LOGO_H * 0.35);
+    ctx.fillStyle = "#e8c040";
+    ctx.fillText(`GOLD: ${gold}`, MARGIN, LOGO_H * 0.70);
   }
 
   ctx.save();
   ctx.translate(0, BOARD_Y);
 
   // Labels
-  ctx.font = "14px sans-serif";
-  ctx.fillStyle = "#aaa";
+  ctx.font = "bold 36px sans-serif";
+  ctx.fillStyle = "#ccc";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (let i = 0; i < 8; i++) {
-    ctx.fillText("abcdefgh"[i], MARGIN + i * TILE + TILE / 2, MARGIN + BOARD_PX + 16);
-    ctx.fillText(8 + leapCount - i, MARGIN - 16, MARGIN + i * TILE + TILE / 2);
+    ctx.fillText("abcdefgh"[i], MARGIN + i * TILE + TILE / 2, MARGIN + BOARD_PX + 36);
+    ctx.fillText(8 + leapCount - i, MARGIN - 26, MARGIN + i * TILE + TILE / 2);
   }
 
   // During Field Advance animation: clip to the fog row and below so content above the fog
@@ -1443,7 +1496,7 @@ function draw() {
     if (!warnFlashRunning) { warnFlashRunning = true; requestAnimationFrame(_warnFlashTick); }
   }
 
-  // Preview row — always drawn one row above the live board, scrolls with the board.
+  // Preview row â€" always drawn one row above the live board, scrolls with the board.
   // In normal play: shows nextWave (the upcoming row) underneath the fog overlay.
   // During Field Advance: nextWave is already updated to wave B, so wave B sits here;
   // the -TILE shift places it above the clip boundary at t=0 and slides it into the
@@ -1468,8 +1521,18 @@ function draw() {
       if (iimg && iimg.complete) {
         ctx.fillStyle = "rgba(255,220,80,0.22)";
         ctx.fillRect(bpx, bpy, TILE, TILE);
-        const sz2 = (TILE - prevPad * 2) * 0.44, off2 = (TILE - sz2) / 2;
-        ctx.drawImage(iimg, bpx + off2, bpy + off2, sz2, sz2);
+        const sz2 = TILE * 0.7, off2 = (TILE - sz2) / 2;
+        const bob2 = Math.sin(performance.now() * 0.002 + b.col * 0.7) * 6;
+        const shadowAlpha2 = 0.3 - 0.1 * ((bob2 + 6) / 12);
+        ctx.save();
+        ctx.globalAlpha = shadowAlpha2;
+        ctx.beginPath();
+        ctx.ellipse(bpx + TILE / 2, bpy + TILE - 10, sz2 * 0.35, 5, 0, 0, Math.PI * 2);
+        ctx.fillStyle = "#000"; ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 0.9;
+        ctx.drawImage(iimg, bpx + off2, bpy + off2 + bob2, sz2, sz2);
+        ctx.globalAlpha = 1.0;
       }
     } else if (b.type === 'obstacle') {
       ctx.fillStyle = "rgba(80,200,255,0.18)";
@@ -1505,7 +1568,7 @@ function draw() {
     }
   }
 
-  // Exit row — only during Field Advance animation. Drawn at y=8 (one below the live board)
+  // Exit row â€" only during Field Advance animation. Drawn at y=8 (one below the live board)
   // so it starts at its original position and slides down behind the bottom border.
   if (_fieldAnim && anim.exitRow) {
     const erPad = 6;
@@ -1524,7 +1587,7 @@ function draw() {
         const shieldImg = spriteImages["item_upgrader"];
         if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
         ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-        ctx.font = "bold 17px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = "bold 36px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
       }
@@ -1558,9 +1621,21 @@ function draw() {
     const key = ITEM_SPRITE_KEYS[itemSpaces[i]];
     const img = spriteImages[key];
     if (img && img.complete) {
-      const sz = TILE * 0.44;
-      ctx.globalAlpha = 0.8;
-      ctx.drawImage(img, px + (TILE - sz) / 2, py + (TILE - sz) / 2, sz, sz);
+      const sz = TILE * 0.7;
+      const offX = (TILE - sz) / 2;
+      const baseOffY = (TILE - sz) / 2;
+      const bob = Math.sin(performance.now() * 0.002 + i * 0.7) * 6;
+      // shadow
+      const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
+      ctx.save();
+      ctx.globalAlpha = shadowAlpha;
+      ctx.beginPath();
+      ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#000";
+      ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 0.9;
+      ctx.drawImage(img, px + offX, py + baseOffY + bob, sz, sz);
       ctx.globalAlpha = 1.0;
     }
   }
@@ -1620,6 +1695,8 @@ function draw() {
     ctx.restore();
   }
   if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
+  const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item');
+  if (hasItemSpace && !chestBobRunning && !anim) { chestBobRunning = true; requestAnimationFrame(_chestBobTick); }
 
   // Block spaces
   for (let i = 0; i < 64; i++) {
@@ -1650,21 +1727,21 @@ function draw() {
     // Shield badge: shows number of shields (health - 1) using the shield sprite
     if (sides[i] === W && health[i] > 1) {
       const shields = health[i] - 1;
-      const bx = MARGIN + x * TILE + TILE - 32, by = MARGIN + y * TILE + 2;
-      const sz = 30;
+      const sz = 45;
+      const bx = MARGIN + x * TILE + TILE - sz - 2, by = MARGIN + y * TILE + 2;
       const shieldImg = spriteImages["item_upgrader"];
       if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
       ctx.fillStyle = "#ffffff";
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
       ctx.lineWidth = 2.5;
-      ctx.font = "bold 17px sans-serif";
+      ctx.font = "bold 36px sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
       ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
     }
   }
 
-  // King Promoter highlight — highlight white pawns
+  // King Promoter highlight â€" highlight white pawns
   if (kingPromotingMode) {
     for (let i = 0; i < 64; i++) {
       if (board[i] === PAWN && sides[i] === W) {
@@ -1699,7 +1776,7 @@ function draw() {
     }
   }
 
-  // Upgrader highlight — all white pieces selectable
+  // Upgrader highlight â€" all white pieces selectable
   if (upgraderMode) {
     for (let i = 0; i < 64; i++) {
       if (sides[i] !== W) continue;
@@ -1766,13 +1843,13 @@ function draw() {
       }
       if (ap.side === W && ap.hlth > 1) {
         const shields = ap.hlth - 1;
-        const bx = acx + TILE - 32, by = acy + 2, sz = 30;
+        const sz = 45; const bx = acx + TILE - sz - 2, by = acy + 2;
         const shieldImg = spriteImages["item_upgrader"];
         if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
         ctx.fillStyle = "#ffffff";
         ctx.strokeStyle = "rgba(0,0,0,0.7)";
         ctx.lineWidth = 2.5;
-        ctx.font = "bold 17px sans-serif";
+        ctx.font = "bold 36px sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
@@ -1780,30 +1857,34 @@ function draw() {
     }
   }
 
-  // Static fog window — completely independent of the board. Always at the same canvas
+  // Static fog window â€" completely independent of the board. Always at the same canvas
   // position. Board content (including the preview row) scrolls underneath it.
   const previewRowNum = 8 + leapCount + 1;
   ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
   ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
   ctx.globalAlpha = 0.7;
-  ctx.font = "14px sans-serif";
+  ctx.font = "bold 36px sans-serif";
   ctx.fillStyle = "#aaa";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(previewRowNum, MARGIN - 16, BOARD_Y + MARGIN - TILE + TILE / 2);
+  ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
   ctx.globalAlpha = 1.0;
 
   // Inventory panel
-  const invY = BOARD_Y + MARGIN;
+  const invY = INV_PANEL_TOP + 50;
   ctx.fillStyle = "#2a2a4e";
   ctx.beginPath();
-  ctx.roundRect(INV_X, invY - 24, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28, 8);
+  ctx.roundRect(INV_X, invY - 50, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 58, 8);
   ctx.fill();
-  ctx.fillStyle = "#aaa";
-  ctx.font = "bold 12px sans-serif";
+  ctx.strokeStyle = "#5a5a8e";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "";
+  ctx.fillStyle = invStatus ? "#ffdd88" : "#aaa";
+  ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("INVENTORY", INV_X + INV_W / 2, invY - 10);
+  ctx.fillText(invStatus || "INVENTORY", INV_X + INV_W / 2, invY - 25);
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {
       const slotIdx = r * INV_COLS + c;
@@ -1819,7 +1900,7 @@ function draw() {
         ctx.lineWidth = 2;
         ctx.stroke();
       }
-      if (dragSlot === slotIdx) { /* skip — item is being dragged */ } else
+      if (dragSlot === slotIdx) { /* skip â€" item is being dragged */ } else
       if (inventory[slotIdx] === ITEM_PROMOTER) {
         const img = spriteImages["item_promoter"];
         if (img && img.complete) {
@@ -1854,39 +1935,7 @@ function draw() {
     }
   }
 
-  // Trashcan below inventory
-  {
-    const invY = BOARD_Y + MARGIN;
-    const panelH = INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
-    const tcX = INV_X + (INV_W - 40) / 2, tcY = invY - 24 + panelH + 10;
-    const tcW = 40, tcH = 44;
-    const isHighlit = dragSlot >= 0 && dragOverTrash;
-    ctx.fillStyle = isHighlit ? "#8b2020" : "#3a2020";
-    ctx.beginPath(); ctx.roundRect(tcX + 3, tcY + 8, tcW - 6, tcH - 8, 3); ctx.fill();
-    ctx.fillStyle = isHighlit ? "#cc3030" : "#552020";
-    ctx.fillRect(tcX, tcY + 5, tcW, 5);
-    ctx.fillRect(tcX + 13, tcY, 14, 6);
-    ctx.fillStyle = isHighlit ? "rgba(255,120,120,0.5)" : "rgba(255,80,80,0.25)";
-    for (let li = 0; li < 3; li++) {
-      const lx = tcX + 10 + li * 8;
-      ctx.fillRect(lx, tcY + 11, 3, tcH - 16);
-    }
-  }
 
-  // Test + Hint buttons (right panel, below trashcan)
-  ctx.font = "bold 13px sans-serif";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillStyle = "#336633";
-  ctx.beginPath(); ctx.roundRect(TEST_BTN.x, TEST_BTN.y, TEST_BTN.w, TEST_BTN.h, 6); ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.fillText("🧪 TEST", TEST_BTN.x + TEST_BTN.w / 2, TEST_BTN.y + TEST_BTN.h / 2);
-  if (testMode) {
-    const hintActive = turn === W && !aiThinking;
-    ctx.fillStyle = hintActive ? "#8855aa" : "#333";
-    ctx.beginPath(); ctx.roundRect(HINT_BTN.x, HINT_BTN.y, HINT_BTN.w, HINT_BTN.h, 6); ctx.fill();
-    ctx.fillStyle = hintActive ? "#fff" : "#999";
-    ctx.fillText("💡 HINT", HINT_BTN.x + HINT_BTN.w / 2, HINT_BTN.y + HINT_BTN.h / 2);
-  }
 
   // Floating drag item
   if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
@@ -1898,7 +1947,7 @@ function draw() {
   }
 
   // Buttons
-  ctx.font = "bold 16px sans-serif";
+  ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -1915,6 +1964,22 @@ function draw() {
     ctx.fillStyle = "#fff";
     ctx.fillText("YES", yesX + btnW / 2, RESIGN_BTN.y + btnH / 2);
     ctx.fillText("NO", noX + btnW / 2, RESIGN_BTN.y + btnH / 2);
+  } else if (!gameOver && isItemActive()) {
+    // Cancel and Trash buttons replace all other controls while an item is being used
+    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
+    const btnH = 80;
+    // Cancel (X)
+    ctx.fillStyle = "#5a2a2a";
+    ctx.beginPath(); ctx.roundRect(MARGIN, BTN_Y, halfW, btnH, 8); ctx.fill();
+    ctx.fillStyle = "#ff8888";
+    ctx.font = "bold 36px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("✕  CANCEL", MARGIN + halfW / 2, BTN_Y + btnH / 2);
+    // Trash
+    ctx.fillStyle = "#2a2a2a";
+    ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
+    ctx.fillStyle = "#aaa";
+    ctx.fillText("🗑  DISCARD", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
   } else if (!gameOver) {
     // Team Leap
     const canLeap = canTeamLeap();
@@ -1923,9 +1988,9 @@ function draw() {
     ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canLeap ? "#fff" : "#999";
-    ctx.font = "bold 13px sans-serif";
+    ctx.font = "bold 36px sans-serif";
     ctx.fillText("TEAM ADVANCE", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
-    ctx.font = "bold 16px sans-serif";
+    ctx.font = "bold 36px sans-serif";
 
     // Pitch Shift
     const canShift = canManualPitchShift();
@@ -1936,16 +2001,14 @@ function draw() {
     ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
     ctx.fill();
     ctx.fillStyle = canShift ? "#fff" : "#999";
-    ctx.font = "bold 13px sans-serif";
+    ctx.font = "bold 36px sans-serif";
     ctx.fillText("FIELD ADVANCE", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
-    // Auto-advance countdown between Field Advance and Resign
-    const countdownX = (PITCH_BTN.x + PITCH_BTN.w + RESIGN_BTN.x) / 2;
-    ctx.font = "bold 14px sans-serif";
+    // Auto-advance countdown below buttons
+    ctx.font = "bold 36px sans-serif";
     ctx.fillStyle = shiftUrgent ? "#ff6666" : "#aaccff";
-    ctx.fillText(`FIELD ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`, countdownX, BTN_Y + 18);
-    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`FIELD AUTO-ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`, MARGIN + BOARD_PX / 2, COUNTDOWN_Y);
 
-    // Hint (only shown in test mode)
     // Resign
     ctx.fillStyle = "#993333";
     ctx.beginPath();
@@ -1955,12 +2018,6 @@ function draw() {
     ctx.fillText("RESIGN", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
   }
 
-  // Score + status
-  ctx.font = "20px sans-serif";
-  ctx.fillStyle = "#ddd";
-  ctx.textAlign = "center";
-  const status = gameOver ? "" : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "")))))));
-  if (status) ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
 
   // Game over overlay
   if (gameOver) {
@@ -1970,54 +2027,26 @@ function draw() {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "bold 72px sans-serif";
     ctx.fillStyle = "#cc1111";
-    ctx.fillText("GAME OVER", boardCX, boardCY - 20);
-    ctx.font = "bold 28px sans-serif";
+    ctx.fillText("GAME OVER", boardCX, boardCY - 40);
+    ctx.font = "bold 72px sans-serif";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(`SCORE: ${score} KINGS TAKEN`, boardCX, boardCY + 50);
+    ctx.fillText(`TAKEN KINGS: ${score}`, boardCX, boardCY + 60);
     ctx.textBaseline = "alphabetic";
   }
-  if (aiThinking) {
-    ctx.font = "bold 18px sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillText("ENEMY STRATEGIZING", MARGIN + 4 * TILE, LOGO_H - 8);
-    ctx.textBaseline = "middle";
-  }
-  const statsY = BOARD_Y + MARGIN + BOARD_PX + 46;
-  const statsCx = MARGIN + 4 * TILE;
-  ctx.font = "bold 34px sans-serif";
-  ctx.textAlign = "right";
-  ctx.fillStyle = "#c84040";
-  const kingsText = `♚ ${score}`;
-  ctx.fillText(kingsText, statsCx - 22, statsY);
-  const kingsCenterX = statsCx - 22 - ctx.measureText(kingsText).width / 2;
-  ctx.font = "bold 34px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#e8c040";
-  const goldText = `${gold} ●`;
-  ctx.fillText(goldText, statsCx + 22, statsY);
-  const goldCenterX = statsCx + 22 + ctx.measureText(goldText).width / 2;
-  ctx.font = "bold 16px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#c84040";
-  ctx.fillText("KINGS TAKEN", kingsCenterX, statsY + 24);
-  ctx.fillStyle = "#e8c040";
-  ctx.fillText("GOLD", goldCenterX, statsY + 24);
-
-  // Graveyard panels
-  for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+  // Graveyard panels (hidden while using an item)
+  if (!isItemActive()) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-    ctx.font = "bold 14px sans-serif";
+    ctx.font = "bold 36px sans-serif";
     ctx.fillStyle = "#ddd";
     ctx.textAlign = "left"; ctx.textBaseline = "bottom";
-    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx, GRAVE_Y - 6);
+    ctx.textAlign = "center";
+    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
     ctx.fillStyle = "#4a3f2e";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
     ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
     const sideVal = isPlayer ? W : B;
     const slotW = GRAVE_W / GRAVE_TYPES.length;
-    const pieceSz = 44;
+    const pieceSz = 80;
     const pieceCY = GRAVE_Y + 10 + pieceSz / 2;
     for (let si = 0; si < GRAVE_TYPES.length; si++) {
       const pt = GRAVE_TYPES[si];
@@ -2036,10 +2065,10 @@ function draw() {
           ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
         }
         if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
-        ctx.font = "bold 12px sans-serif";
+        ctx.font = "bold 24px sans-serif";
         ctx.fillStyle = "#fff";
         ctx.textAlign = "center"; ctx.textBaseline = "top";
-        ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 3);
+        ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
       }
     }
   }
@@ -2092,7 +2121,7 @@ function draw() {
     const pawnSX = MARGIN + ptx * TILE + TILE / 2;
     const pawnSY = BOARD_Y + MARGIN + pty * TILE + TILE / 2;
 
-    const dlgW = 340, dlgH = 100, dlgGap = 18;
+    const dlgW = 600, dlgH = 200, dlgGap = 18;
     const dlgX = (canvas.width - dlgW) / 2;
     // Place dialogue above pawn if pawn is in lower half, below if in upper half
     const placeAbove = pty >= 4;
@@ -2117,19 +2146,19 @@ function draw() {
     ctx.fillStyle = "#2a2a4e";
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
     ctx.fillStyle = "#ddd";
-    ctx.font = "bold 16px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 24);
+    ctx.font = "bold 36px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 36);
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const cpad = 8, csize = 60;
+    const cpad = 16, csize = 100;
     const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
     for (let i = 0; i < choices.length; i++) {
       const cx = startX + i * (csize + cpad);
-      const cy = dlgY + 36;
+      const cy = dlgY + 70;
       ctx.fillStyle = "#3a3a5e";
-      ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 6); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 8); ctx.fill();
       const img = spriteImages[`${W}_${choices[i]}`];
-      if (img && img.complete) ctx.drawImage(img, cx + 6, cy + 6, csize - 12, csize - 12);
+      if (img && img.complete) ctx.drawImage(img, cx + 8, cy + 8, csize - 16, csize - 16);
     }
   }
 
@@ -2138,7 +2167,7 @@ function draw() {
     ctx.fillStyle = "rgba(0,0,0,0.65)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const dlgW = 420, dlgH = 260;
+    const dlgW = 820, dlgH = 500;
     const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
     ctx.fillStyle = "#1e1e3c";
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.fill();
@@ -2146,16 +2175,15 @@ function draw() {
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.stroke();
 
     ctx.fillStyle = "#f0c040";
-    ctx.font = "bold 22px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 30);
+    ctx.font = "bold 36px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("SHOP", dlgX + dlgW / 2, dlgY + 45);
     ctx.fillStyle = "#aaa";
-    ctx.font = "13px sans-serif";
-    ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 48);
+    ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
 
-    const cardW = 108, cardH = 160, cardGap = 14;
+    const cardW = 220, cardH = 300, cardGap = 20;
     const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
-    const cardsY = dlgY + 58;
+    const cardsY = dlgY + 120;
 
     const shopSold = specialSpaces[shopSpaceIdx].sold;
     for (let i = 0; i < shopOffers.length; i++) {
@@ -2175,44 +2203,44 @@ function draw() {
       const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
       if (simg && simg.complete) {
         ctx.globalAlpha = isSold ? 0.25 : 1.0;
-        ctx.drawImage(simg, cardX + 24, cardsY + 10, 60, 60);
+        ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
         ctx.globalAlpha = 1.0;
       }
 
       ctx.fillStyle = isSold ? "#444" : "#ddd";
-      ctx.font = "11px sans-serif";
+      ctx.font = "bold 36px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const name = ITEM_NAMES[item];
       const words = name.split(" ");
       if (words.length > 1) {
         const mid = Math.ceil(words.length / 2);
-        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 88);
-        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 102);
+        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 130);
+        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 168);
       } else {
-        ctx.fillText(name, cardX + cardW / 2, cardsY + 95);
+        ctx.fillText(name, cardX + cardW / 2, cardsY + 149);
       }
 
       ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
-      ctx.font = "bold 15px sans-serif";
-      ctx.fillText(isSold ? "—" : `${price} G`, cardX + cardW / 2, cardsY + 122);
+      ctx.font = "bold 36px sans-serif";
+      ctx.fillText(isSold ? "-" : `${price} G`, cardX + cardW / 2, cardsY + 210);
 
       ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
-      ctx.beginPath(); ctx.roundRect(cardX + 10, cardsY + cardH - 32, cardW - 20, 26, 4); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
       ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
-      ctx.font = "bold 13px sans-serif";
+      ctx.font = "bold 36px sans-serif";
       ctx.textBaseline = "middle";
-      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 32 + 13);
+      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
     }
 
     // Close button
-    const closeBtnX = dlgX + dlgW - 100, closeBtnY = dlgY + dlgH - 42;
+    const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58;
     ctx.fillStyle = "#4a2a2a";
-    ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 86, 28, 6); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 110, 44, 6); ctx.fill();
     ctx.fillStyle = "#ddd";
-    ctx.font = "bold 13px sans-serif";
+    ctx.font = "bold 36px sans-serif";
     ctx.textBaseline = "middle";
-    ctx.fillText("Close", closeBtnX + 43, closeBtnY + 14);
+    ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
   }
 
 }
@@ -2224,7 +2252,7 @@ function canvasCoords(e) {
 }
 
 function trashBounds() {
-  const invY = BOARD_Y + MARGIN;
+  const invY = INV_PANEL_TOP + 50;
   const panelH = INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 28;
   return { x: INV_X, y: invY - 24 + panelH + 10, w: INV_W, h: 54 };
 }
@@ -2232,7 +2260,7 @@ function trashBounds() {
 canvas.addEventListener("mousedown", (e) => {
   if (gameOver || anim || turn !== W || aiThinking || shopMode) return;
   const [cx, cy] = canvasCoords(e);
-  const invY = BOARD_Y + MARGIN;
+  const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {
       const slotIdx = r * INV_COLS + c;
@@ -2330,14 +2358,14 @@ canvas.addEventListener("click", (e) => {
 
   // Shop dialogue
   if (shopMode) {
-    const dlgW = 420, dlgH = 260, dlgX = (canvas.width - 420) / 2, dlgY = (canvas.height - 260) / 2;
-    const cardW = 108, cardH = 160, cardGap = 14;
+    const dlgW = 820, dlgH = 500, dlgX = (canvas.width - 820) / 2, dlgY = (canvas.height - 500) / 2;
+    const cardW = 220, cardH = 300, cardGap = 20;
     const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
-    const cardsY = dlgY + 54;
+    const cardsY = dlgY + 120;
     for (let i = 0; i < shopOffers.length; i++) {
       const price = ITEM_PRICES[shopOffers[i]];
       const cardX = cardsStartX + i * (cardW + cardGap);
-      const btnX = cardX + 10, btnY = cardsY + cardH - 32, btnW = cardW - 20, btnH = 26;
+      const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
       const sold = specialSpaces[shopSpaceIdx].sold[i];
       if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !sold) {
         gold -= price;
@@ -2348,7 +2376,7 @@ canvas.addEventListener("click", (e) => {
       }
     }
     // Close button or outside-dialog click
-    const closeBtnX = dlgX + dlgW - 100, closeBtnY = dlgY + dlgH - 42, closeBtnW = 86, closeBtnH = 28;
+    const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58, closeBtnW = 110, closeBtnH = 44;
     if ((cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) ||
         cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
       closeShop();
@@ -2360,7 +2388,7 @@ canvas.addEventListener("click", (e) => {
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
     const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const dlgW = 340, dlgH = 100, dlgGap = 18;
+    const dlgW = 600, dlgH = 200, dlgGap = 18;
     const dlgX = (canvas.width - dlgW) / 2;
     const [ptx2, pty2] = xy(targetIdx);
     const pawnSY2 = BOARD_Y + MARGIN + pty2 * TILE + TILE / 2;
@@ -2368,11 +2396,11 @@ canvas.addEventListener("click", (e) => {
     const dlgY = placeAbove2
       ? Math.max(LOGO_H, pawnSY2 - TILE / 2 - dlgGap - dlgH)
       : Math.min(canvas.height - dlgH - 10, pawnSY2 + TILE / 2 + dlgGap);
-    const cpad = 8, csize = 60;
+    const cpad = 16, csize = 100;
     const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
     for (let i = 0; i < choices.length; i++) {
       const bx = startX + i * (csize + cpad);
-      const by = dlgY + 36;
+      const by = dlgY + 70;
       if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
         board[targetIdx] = choices[i];
         if (inventory._activeSlot !== undefined) {
@@ -2492,7 +2520,7 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
-  // King Promoter — select a white pawn, convert to King
+  // King Promoter â€" select a white pawn, convert to King
   if (kingPromotingMode) {
     const mx = cx - MARGIN;
     const my = cy - BOARD_Y - MARGIN;
@@ -2576,6 +2604,18 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
+  // Cancel / Trash buttons (shown while item is active)
+  if (!gameOver && isItemActive()) {
+    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
+    const btnH = 80;
+    if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+      cancelItemMode(); return;
+    }
+    if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+      trashActiveItem(); return;
+    }
+  }
+
   // Check resign button
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
       cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) {
@@ -2586,7 +2626,7 @@ canvas.addEventListener("click", (e) => {
 
   // Check inventory click
   if (turn === W && !aiThinking) {
-    const invY = BOARD_Y + MARGIN;
+    const invY = INV_PANEL_TOP + 50;
     for (let r = 0; r < INV_ROWS; r++) {
       for (let c = 0; c < INV_COLS; c++) {
         const slotIdx = r * INV_COLS + c;
@@ -2649,19 +2689,6 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
-  // Check test button
-  if (cx >= TEST_BTN.x && cx <= TEST_BTN.x + TEST_BTN.w &&
-      cy >= TEST_BTN.y && cy <= TEST_BTN.y + TEST_BTN.h) {
-    testMode = true;
-    addToInventory(ITEM_PROMOTER);
-    addToInventory(ITEM_ANY_PROMOTER);
-    addToInventory(ITEM_TELEPORTER);
-    addToInventory(ITEM_KING_PROMOTER);
-    addToInventory(ITEM_CLONER);
-    addToInventory(ITEM_UPGRADER);
-    draw();
-    return;
-  }
 
   // Check leap button
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
@@ -2760,3 +2787,4 @@ canvas.addEventListener("click", (e) => {
 
 initBoard();
 loadSprites();
+
