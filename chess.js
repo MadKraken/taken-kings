@@ -41,11 +41,7 @@ function loadSprites() {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
       const img = new Image();
-      if (p === PAWN && s === W) {
-        img.src = `test_sprite.png`;
-      } else {
-        img.src = `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
-      }
+      img.src = `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
       img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       spriteImages[key] = img;
     }
@@ -1823,8 +1819,23 @@ function draw() {
   ctx.font = "20px sans-serif";
   ctx.fillStyle = "#ddd";
   ctx.textAlign = "center";
-  const status = gameOver ? gameMsg : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "")))))));
+  const status = gameOver ? "" : (shopMode ? "Shop" : (promotingMode ? "Select a Pawn to promote" : (anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : (kingPromotingMode ? "Select a Pawn to crown as King" : (clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : (upgraderMode ? "Select a piece to upgrade" : (teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "")))))));
   if (status) ctx.fillText(status, canvas.width / 2, BOARD_Y + MARGIN + BOARD_PX + 36);
+
+  // Game over overlay
+  if (gameOver) {
+    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "bold 72px sans-serif";
+    ctx.fillStyle = "#cc1111";
+    ctx.fillText("GAME OVER", boardCX, boardCY - 20);
+    ctx.font = "bold 28px sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`SCORE: ${score} KINGS TAKEN`, boardCX, boardCY + 50);
+    ctx.textBaseline = "alphabetic";
+  }
   if (aiThinking) {
     ctx.font = "bold 18px sans-serif";
     ctx.fillStyle = "#ffffff";
