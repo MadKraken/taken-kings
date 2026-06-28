@@ -1458,7 +1458,7 @@ function draw() {
     const gw = groundEl.naturalWidth, gh = groundEl.naturalHeight;
     const scale = canvas.width / gw;
     const tileH = gh * scale;
-    const animScrollDy = _fieldAnim ? anim.boardDy * (1 - _animT) : 0;
+    const animScrollDy = _fieldAnim ? -anim.boardDy * (1 - _animT) : 0;
     const rawOffset = leapCount * TILE + animScrollDy;
     const startY = -((rawOffset % tileH) + tileH) % tileH;
     for (let ty = startY; ty < canvas.height; ty += tileH) {
