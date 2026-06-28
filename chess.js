@@ -98,6 +98,7 @@ let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = f
 let playerDead = {}, enemyDead = {}, flyAnims = [];
 let shieldPops = [];
 let warnFlashRunning = false;
+let voidPulseRunning = false;
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -114,7 +115,7 @@ let itemSpaces = new Array(64).fill(ITEM_NONE);
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
 let pendingShopQueue = []; // shop-space indices queued after a Team Advance
-let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'shop', ...}
+let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'shop'|'void', ...}
 let shopMode = false;
 let shopSpaceIdx = -1; // which specialSpaces entry is currently open
 let shopOffers = []; // reference to specialSpaces[shopSpaceIdx].offers
@@ -179,6 +180,15 @@ function _warnFlashTick() {
     requestAnimationFrame(_warnFlashTick);
   } else {
     warnFlashRunning = false;
+  }
+}
+
+function _voidPulseTick() {
+  draw();
+  if (specialSpaces.some(sp => sp?.type === 'void')) {
+    requestAnimationFrame(_voidPulseTick);
+  } else {
+    voidPulseRunning = false;
   }
 }
 
@@ -320,8 +330,8 @@ function generateRowBonuses(wave) {
   const bonuses = [];
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
-    if (randInt(8) !== 0) continue;
-    const type = ['chest', 'item', 'obstacle', 'shop'][randInt(4)];
+    if (randInt(5) !== 0) continue;
+    const type = ['chest', 'item', 'obstacle', 'shop', 'void'][randInt(5)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
@@ -331,6 +341,8 @@ function generateRowBonuses(wave) {
       const all = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
       const offers = [all[randInt(all.length)], all[randInt(all.length)], all[randInt(all.length)]];
       bonuses.push({ type: 'shop', col: x, offers, sold: [false, false, false] });
+    } else if (type === 'void') {
+      bonuses.push({ type: 'void', col: x });
     } else {
       const dirs = [];
       for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
@@ -399,12 +411,16 @@ function slidingMoves(moves, x, y, dirs, s) {
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
       if (s === B && piece(nx, ny) === CHEST) break;
-      moves.push(idx(nx, ny));
-      if (piece(nx, ny) !== NONE) break;
+      const ni = idx(nx, ny);
+      const isVoid = specialSpaces[ni]?.type === 'void';
+      if (!isVoid) moves.push(ni);
+      if (piece(nx, ny) !== NONE && piece(nx, ny) !== CHEST) break; // chests and voids don't stop the ray
       nx += dx; ny += dy;
     }
   }
 }
+
+function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 
 function pseudoMoves(x, y) {
   const moves = [];
@@ -414,13 +430,13 @@ function pseudoMoves(x, y) {
       // White pawns move and capture upward only (toward row 0)
       const dir = -1;
       const fwd = piece(x, y + dir);
-      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST)) {
+      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST) && !isVoidSpace(idx(x, y + dir))) {
         moves.push(idx(x, y + dir));
-        if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE) moves.push(idx(x, y - 2));
+        if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE && !isVoidSpace(idx(x, y - 2))) moves.push(idx(x, y - 2));
       }
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
-        if (inB(nx, ny)) {
+        if (inB(nx, ny) && !isVoidSpace(idx(nx, ny))) {
           if (side(nx, ny) === e) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
@@ -428,19 +444,19 @@ function pseudoMoves(x, y) {
     } else {
       // Black pawns move down; can move two squares from row 0 (first turn after entering)
       const dir = 1;
-      if (inB(x, y + dir) && piece(x, y + dir) === NONE) {
+      if (inB(x, y + dir) && piece(x, y + dir) === NONE && !isVoidSpace(idx(x, y + dir))) {
         moves.push(idx(x, y + dir));
-        if (y === 0 && piece(x, y + 2) === NONE) moves.push(idx(x, y + 2));
+        if (y === 0 && piece(x, y + 2) === NONE && !isVoidSpace(idx(x, y + 2))) moves.push(idx(x, y + 2));
       }
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
-        if (inB(nx, ny) && side(nx, ny) === e && piece(nx, ny) !== CHEST) moves.push(idx(nx, ny));
+        if (inB(nx, ny) && side(nx, ny) === e && piece(nx, ny) !== CHEST && !isVoidSpace(idx(nx, ny))) moves.push(idx(nx, ny));
       }
     }
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST)) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     slidingMoves(moves, x, y, [[1,1],[1,-1],[-1,1],[-1,-1]], s);
@@ -452,7 +468,7 @@ function pseudoMoves(x, y) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST)) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
       if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
@@ -757,6 +773,7 @@ function pitchShift() {
   for (const b of nextBonuses) {
     if (b.type === 'obstacle') newSpecialSpaces[idx(b.col, 0)] = { type: 'obstacle', dx: b.dx, dy: b.dy };
     if (b.type === 'shop') newSpecialSpaces[idx(b.col, 0)] = { type: 'shop', offers: b.offers, sold: b.sold };
+    if (b.type === 'void') newSpecialSpaces[idx(b.col, 0)] = { type: 'void' };
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
 
@@ -1253,6 +1270,7 @@ function computeObstacleHops(startI) {
     const nx = x + sp.dx, ny = y + sp.dy;
     if (!inB(nx, ny)) break;
     const destI = idx(nx, ny);
+    if (isVoidSpace(destI)) break; // can't redirect onto void
     const moverSide = sides[curI];
     const destSide = sides[destI];
     if (destSide !== 0 && destSide === moverSide) break;
@@ -1278,6 +1296,7 @@ function applySpecialSpace(startI) {
     const nx = x + sp.dx, ny = y + sp.dy;
     if (!inB(nx, ny)) break;
     const destI = idx(nx, ny);
+    if (isVoidSpace(destI)) break; // can't redirect onto void
     const moverSide = sides[toI];
     const destSide = sides[destI];
     if (destSide !== 0 && destSide === moverSide) break; // friendly blocks
@@ -1421,6 +1440,15 @@ function draw() {
       ctx.lineWidth = 2;
       ctx.strokeRect(bpx + 1, bpy + 1, TILE - 2, TILE - 2);
       drawShopTile(ctx, bpx, bpy, TILE);
+    } else if (b.type === 'void') {
+      const vcx = bpx + TILE / 2, vcy = bpy + TILE / 2;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2);
+      ctx.fillStyle = "#000000"; ctx.fill();
+      ctx.strokeStyle = "rgba(140,0,220,0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -1519,6 +1547,26 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
+
+  // Void spaces
+  let hasVoid = false;
+  for (let i = 0; i < 64; i++) {
+    const sp = specialSpaces[i];
+    if (!sp || sp.type !== 'void') continue;
+    hasVoid = true;
+    const [x, y] = xy(i);
+    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+    const cx = px + TILE / 2, cy = py + TILE / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2);
+    ctx.fillStyle = "#000000"; ctx.fill();
+    const pulse = 0.45 + 0.25 * Math.abs(Math.sin(performance.now() / 700 + i));
+    ctx.strokeStyle = `rgba(140,0,220,${pulse.toFixed(2)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
 
   // Pieces and chests
   const pad = 6;
