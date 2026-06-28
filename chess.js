@@ -1804,9 +1804,9 @@ function draw() {
     ctx.fillStyle = "#ddd";
     ctx.textAlign = "left"; ctx.textBaseline = "bottom";
     ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx, GRAVE_Y - 6);
-    ctx.fillStyle = "#111120";
+    ctx.fillStyle = "#4a3f2e";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
-    ctx.strokeStyle = "#2a2a3e"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
     for (let i = 0; i < pool.length; i++) {
       const p = pool[i];
       if (!p) continue;
