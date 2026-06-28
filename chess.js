@@ -1239,7 +1239,7 @@ function applySpecialSpace(startI) {
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
 const BTN_Y = BOARD_Y + MARGIN + BOARD_PX + 100;
-const GRAVE_Y = BTN_Y + 54;
+const GRAVE_Y = BTN_Y + 74;
 const GRAVE_H = 110;
 const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
