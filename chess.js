@@ -31,7 +31,7 @@ function loadSprites() {
   let count = 0;
   const total = 20;
   const logoImg = new Image();
-  logoImg.src = "taken_kings_logo.png?v=2";
+  logoImg.src = "taken_kings_logo.png?v=3";
   logoImg.onload = () => {
     spriteImages["logo"] = logoImg;
     count++; if (count === total) { spritesLoaded = true; draw(); }
