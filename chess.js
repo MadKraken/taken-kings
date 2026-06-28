@@ -1495,20 +1495,15 @@ function draw() {
   ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = "#fff";
   for (let i = 0; i < 8; i++) {
-    // Column letter (bottom)
-    const cx = MARGIN + i * TILE + TILE / 2, cy = MARGIN + BOARD_PX + 36;
-    ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = "#000";
-    ctx.beginPath(); ctx.roundRect(cx - 22, cy - 20, 44, 40, 6); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = "#fff"; ctx.fillText("abcdefgh"[i], cx, cy);
-    // Row number (left)
-    const rx = MARGIN - 26, ry = MARGIN + i * TILE + TILE / 2;
-    ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = "#000";
-    ctx.beginPath(); ctx.roundRect(rx - 22, ry - 20, 44, 40, 6); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = "#fff"; ctx.fillText(8 + leapCount - i, rx, ry);
+    ctx.fillText("abcdefgh"[i], MARGIN + i * TILE + TILE / 2, MARGIN + BOARD_PX + 36);
+    ctx.fillText(8 + leapCount - i, MARGIN - 26, MARGIN + i * TILE + TILE / 2);
   }
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
   // During Field Advance animation: clip to the fog row and below so content above the fog
   // stays invisible (darkness), while the incoming row slides through the fog into the board.
@@ -2047,12 +2042,10 @@ function draw() {
     ctx.fillStyle = shiftUrgent ? "#ff6666" : "#2255aa";
     ctx.textAlign = "center";
     const cdText = `FIELD AUTO-ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`;
-    const cdW = ctx.measureText(cdText).width + 32;
-    ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = "#000";
-    ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 - cdW / 2, COUNTDOWN_Y - 24, cdW, 48, 8); ctx.fill();
-    ctx.restore();
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = shiftUrgent ? "#ff6666" : "#88bbff";
     ctx.fillText(cdText, MARGIN + BOARD_PX / 2, COUNTDOWN_Y);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
     // Resign
     ctx.fillStyle = "#993333";
@@ -2083,13 +2076,10 @@ function draw() {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
     ctx.font = "bold 36px sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    const gLabel = isPlayer ? "FALLEN" : "SLAIN";
-    const gLabelW = ctx.measureText(gLabel).width + 24;
-    ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = "#000";
-    ctx.beginPath(); ctx.roundRect(gx + GRAVE_W / 2 - gLabelW / 2, GRAVE_Y - 46, gLabelW, 44, 6); ctx.fill();
-    ctx.restore();
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = "#fff";
-    ctx.fillText(gLabel, gx + GRAVE_W / 2, GRAVE_Y - 6);
+    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#4a3f2e";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
     ctx.strokeStyle = "#6a5a3e"; ctx.lineWidth = 1; ctx.stroke();
