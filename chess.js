@@ -2665,19 +2665,49 @@ canvas.addEventListener("click", (e) => {
         // Move to vacant square or chest
         if (board[i] === NONE || board[i] === CHEST) {
           if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_UPGRADER][randInt(4)]);
-          board[i] = board[teleporterSelected];
-          sides[i] = W; health[i] = health[teleporterSelected];
-          board[teleporterSelected] = NONE;
-          sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
+          const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
+          board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
+          board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
           if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
           const fromSpace = activeItemSpaceIdx >= 0;
           activeItemSpaceIdx = -1;
           teleporterMode = false; teleporterSelected = -1;
-          if (fromSpace) {
-            processNextQueuedItem();
-          } else {
-            firstMoveMade = true; recordPosition(); draw();
-          }
+          // Apply special space effects at landing square
+          const _tHops = computeObstacleHops(i);
+          const _tFinalI = applySpecialSpace(i);
+          const _tPiece = board[_tFinalI] || _tPiece0, _tHlth = health[_tFinalI] || _tHlth0;
+          const _tFinish = () => {
+            checkWhiteKingAlive();
+            if (gameOver) { draw(); return; }
+            if (fromSpace) {
+              processNextQueuedItem();
+            } else {
+              firstMoveMade = true; recordPosition();
+              const continueAfterShop = () => {
+                const itm = itemSpaces[_tFinalI];
+                if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
+                  const done = activateItemSpace(itm, _tFinalI);
+                  if (done) endWhiteTurn();
+                } else { endWhiteTurn(); }
+              };
+              if (specialSpaces[_tFinalI]?.type === 'shop' && sides[_tFinalI] === W) {
+                openShop(_tFinalI, continueAfterShop);
+              } else { continueAfterShop(); }
+            }
+          };
+          const _tDoHop = (hi) => {
+            if (hi >= _tHops.length) {
+              if (isVoidSpace(_tFinalI) && _tPiece !== NONE) {
+                const [vx, vy] = xy(_tFinalI);
+                startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
+              } else { _tFinish(); }
+              return;
+            }
+            const [fI, tI] = _tHops[hi];
+            const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+            startAnim([{ toIdx: _tFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _tPiece, side: W, hlth: _tHlth }], 0, () => _tDoHop(hi+1));
+          };
+          _tDoHop(0);
           return;
         } else if (sides[i] === W) {
           // Re-select a different white piece
