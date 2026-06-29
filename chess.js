@@ -213,6 +213,7 @@ function _chestBobTick() {
 
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
+  console.log('[startVoidDeath]', cx, cy, piece, side);
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
 }
@@ -815,6 +816,7 @@ function teamLeap() {
         // piece falls into void — don't place it
         if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
+        console.log('[TeamAdvance] _leapVoidDeath set', JSON.stringify(_leapVoidDeath), 'piece=', board[i], 'side=', W);
       } else {
         if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
@@ -835,6 +837,7 @@ function teamLeap() {
   firstMoveMade = true;
   recordPosition();
   startAnim(leapAnimPieces, 0, () => {
+    console.log('[TeamAdvance] anim done, _leapVoidDeath=', _leapVoidDeath, 'leapAnimPieces.length=', leapAnimPieces.length);
     if (_leapVoidDeath) {
       startVoidDeath(_leapVoidDeath.cx, _leapVoidDeath.cy, _leapVoidDeath.piece, _leapVoidDeath.side, applySpacesAfterAdvance);
     } else {
