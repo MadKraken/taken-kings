@@ -618,7 +618,7 @@ function slidingMoves(moves, x, y, dirs, s) {
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
       if (s === B && piece(nx, ny) === CHEST) break;
-      if (s === B && sides[idx(nx, ny)] === N) break; // enemies can't land on or pass through neutrals
+      if (sides[idx(nx, ny)] === N) break; // only W King can recruit neutrals; all others treat them as impassable
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break;
       const isVoid = specialSpaces[ni]?.type === 'void';
@@ -647,7 +647,7 @@ function pseudoMoves(x, y) {
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
         if (inB(nx, ny) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
-          if (side(nx, ny) === e || side(nx, ny) === N) moves.push(idx(nx, ny));
+          if (side(nx, ny) === e) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
       }
@@ -666,7 +666,7 @@ function pseudoMoves(x, y) {
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && sides[idx(nx, ny)] !== N && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     slidingMoves(moves, x, y, [[1,1],[1,-1],[-1,1],[-1,-1]], s);
