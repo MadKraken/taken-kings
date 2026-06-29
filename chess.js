@@ -1187,9 +1187,10 @@ function aiPlay() {
       } else {
         makeMove(move[0], move[1], true);
         const _aiHops = computeObstacleHops(move[1]);
+        const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
         const _aiFinalI = applySpecialSpace(move[1]);
         recordPosition();
-        const _aiPiece = board[_aiFinalI], _aiSide = sides[_aiFinalI], _aiHlth = health[_aiFinalI];
+        const _aiPiece = board[_aiFinalI] || _aiPiece0, _aiSide = sides[_aiFinalI] || _aiSide0, _aiHlth = health[_aiFinalI] || _aiHlth0;
         const aiAnimPieces = [{
           toIdx: _aiFinalI,
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
@@ -1410,12 +1411,12 @@ function applySpecialSpace(startI) {
     const destI = idx(nx, ny);
     if (isBlockSpace(destI)) break; // wall — stop
     if (isVoidSpace(destI)) {
-      // piece falls into void — remove it
+      // piece falls into void — remove it and return the void square
       const moverSide = sides[toI];
       if (moverSide === W && board[toI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
       if (moverSide === B && board[toI] === KING) score++;
       board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
-      break;
+      return destI;
     }
     const moverSide = sides[toI];
     const destSide = sides[destI];
@@ -2797,11 +2798,12 @@ canvas.addEventListener("click", (e) => {
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
       const _wHops = computeObstacleHops(clickedDest);
+      const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wFinalI = applySpecialSpace(clickedDest);
-      const _wPiece = board[_wFinalI], _wSide = sides[_wFinalI], _wHlth = health[_wFinalI];
+      const _wPiece = board[_wFinalI] || _wPiece0, _wSide = sides[_wFinalI] || _wSide0, _wHlth = health[_wFinalI] || _wHlth0;
       // Update wAnimPieces toIdx to point to where piece actually ends up
       wAnimPieces[0].toIdx = _wFinalI;
-      if (_wPiece !== undefined) { wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth; }
+      wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth;
       const _wContinue = (movedTo) => {
         checkWhiteKingAlive();
         if (!gameOver) {
