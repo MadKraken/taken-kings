@@ -32,7 +32,7 @@ function loadSprites() {
   let count = 0;
   const total = 23;
   const logoImg = new Image();
-  logoImg.src = "taken_kings_logo.png?v=7";
+  logoImg.src = "logo_0.png?v=1";
   logoImg.onload = () => {
     spriteImages["logo"] = logoImg;
     count++; if (count === total) { spritesLoaded = true; draw(); }
@@ -107,6 +107,13 @@ let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
 let nextBonuses = []; // [{type:'chest'|'item'|'obstacle', col, item?, dx?, dy?}]
 let positionHistory = []; // track board states to detect repetition
+let replaySnapshots = [];
+let replayMode = false;
+let replayIdx = 0;
+let replayAutoPlay = false;
+let replayAutoTimer = null;
+let _replayAnimBuffer = [];
+let _replayTransitions = [];
 const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
@@ -194,6 +201,9 @@ function graveSlotPos(isPlayer, pieceType) {
 }
 
 function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
+  if (!replayMode) {
+    _replayAnimBuffer.push({ type: 'fly', piece, side, sx, sy, tx, ty });
+  }
   flyAnims.push({ piece, side, sx, sy, tx, ty, startMs: performance.now(), dur: 600, onDone });
   if (flyAnims.length === 1) requestAnimationFrame(_flyTick);
 }
@@ -374,6 +384,20 @@ function drawShopTile(gctx, tx, ty, tileSize) {
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 
 function startAnim(pieces, boardDy, onDone, exitRow) {
+  if (!replayMode) {
+    _replayAnimBuffer.push({
+      type: 'anim',
+      board: [...board], sides: [...sides], health: [...health],
+      specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
+      itemSpaces: [...itemSpaces],
+      inventory: [...inventory],
+      score, gold, leapCount, shiftCountdown,
+      playerDead: {...playerDead}, enemyDead: {...enemyDead},
+      pieces: pieces.map(p => ({...p})),
+      boardDy: boardDy || 0,
+      exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
+    });
+  }
   anim = { pieces, boardDy, startMs: performance.now(), onDone, exitRow: exitRow || null };
   requestAnimationFrame(_animTick);
 }
@@ -411,6 +435,119 @@ function boardHash() {
 
 function recordPosition() {
   positionHistory.push(boardHash());
+}
+
+function takeReplaySnapshot() {
+  _replayTransitions.push([..._replayAnimBuffer]);
+  _replayAnimBuffer = [];
+  replaySnapshots.push({
+    board: [...board], sides: [...sides], health: [...health],
+    specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
+    itemSpaces: [...itemSpaces],
+    inventory: [...inventory],
+    score, gold, turn,
+    playerDead: {...playerDead}, enemyDead: {...enemyDead},
+    spawnCount, leapCount, shiftCountdown
+  });
+}
+
+function applyReplaySnapshot(snap) {
+  board.splice(0, 64, ...snap.board);
+  sides.splice(0, 64, ...snap.sides);
+  health.splice(0, 64, ...snap.health);
+  specialSpaces.splice(0, 64, ...snap.specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null));
+  itemSpaces.splice(0, 64, ...snap.itemSpaces);
+  inventory.splice(0, inventory.length, ...snap.inventory);
+  score = snap.score; gold = snap.gold; turn = snap.turn;
+  playerDead = {...snap.playerDead}; enemyDead = {...snap.enemyDead};
+  spawnCount = snap.spawnCount; leapCount = snap.leapCount;
+  shiftCountdown = snap.shiftCountdown;
+}
+
+function enterReplay() {
+  if (replaySnapshots.length === 0) return;
+  replayMode = true;
+  replayIdx = 0;
+  replayAutoPlay = false;
+  if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
+  gameOver = false;
+  applyReplaySnapshot(replaySnapshots[replayIdx]);
+  draw();
+}
+
+function exitReplay() {
+  replayMode = false;
+  replayAutoPlay = false;
+  if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
+  gameOver = true;
+  const last = replaySnapshots[replaySnapshots.length - 1];
+  if (last) applyReplaySnapshot(last);
+  draw();
+}
+
+function _playReplayTransition(snapIdx, onDone) {
+  const events = _replayTransitions[snapIdx] || [];
+  let ei = 0;
+  const playNext = () => {
+    // Fire all consecutive fly events (fire-and-forget, no waiting)
+    while (ei < events.length && events[ei].type === 'fly') {
+      const ev = events[ei++];
+      startFlyAnim(ev.piece, ev.side, ev.sx, ev.sy, ev.tx, ev.ty, null);
+    }
+    if (ei >= events.length) {
+      applyReplaySnapshot(replaySnapshots[snapIdx]);
+      onDone();
+      return;
+    }
+    const ev = events[ei++];
+    // ev.type === 'anim'
+    board.splice(0, 64, ...ev.board);
+    sides.splice(0, 64, ...ev.sides);
+    health.splice(0, 64, ...ev.health);
+    specialSpaces.splice(0, 64, ...ev.specialSpaces);
+    itemSpaces.splice(0, 64, ...ev.itemSpaces);
+    inventory.splice(0, inventory.length, ...ev.inventory);
+    score = ev.score; gold = ev.gold; leapCount = ev.leapCount; shiftCountdown = ev.shiftCountdown;
+    playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
+    startAnim(ev.pieces, ev.boardDy, playNext, ev.exitRow || undefined);
+  };
+  playNext();
+}
+
+function stepReplay(delta) {
+  if (anim) return;
+  const newIdx = Math.max(0, Math.min(replaySnapshots.length - 1, replayIdx + delta));
+  if (newIdx === replayIdx) return;
+  replayIdx = newIdx;
+  if (delta < 0) {
+    applyReplaySnapshot(replaySnapshots[replayIdx]);
+    draw();
+  } else {
+    _playReplayTransition(replayIdx, () => draw());
+  }
+}
+
+function _tickAutoPlay() {
+  if (!replayAutoPlay || !replayMode) return;
+  if (replayIdx >= replaySnapshots.length - 1) {
+    replayAutoPlay = false;
+    replayAutoTimer = null;
+    draw();
+    return;
+  }
+  replayIdx++;
+  _playReplayTransition(replayIdx, () => {
+    draw();
+    if (replayAutoPlay && replayMode) _tickAutoPlay();
+  });
+}
+
+function toggleReplayAutoPlay() {
+  if (anim) return;
+  replayAutoPlay = !replayAutoPlay;
+  if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
+  if (replayAutoPlay) _tickAutoPlay();
+  draw();
 }
 
 function countPosition(hash) {
@@ -499,6 +636,9 @@ function initBoard() {
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
+  replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
+  if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
+  _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
   health.fill(1); shiftCountdown = 10;
@@ -548,6 +688,7 @@ function rollSetup() {
 
 function startGame() {
   gamePhase = 'playing';
+  takeReplaySnapshot();
   draw();
 }
 
@@ -1330,10 +1471,11 @@ function aiPlay() {
         checkArrowSpaces(() => {
           if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
           else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-          if (gameOver) { aiThinking = false; draw(); return; }
+          if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
           neutralPlay(() => {
             turn = W;
             aiThinking = false;
+            takeReplaySnapshot();
             draw();
           });
         });
@@ -1392,10 +1534,11 @@ function aiPlay() {
         gameOver = true;
         gameMsg = `Checkmate! Score: ${score}`;
       }
-      if (gameOver) { aiThinking = false; draw(); return; }
+      if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
       neutralPlay(() => {
         turn = W;
         aiThinking = false;
+        takeReplaySnapshot();
         draw();
       });
     }
@@ -1554,19 +1697,15 @@ function closeShop() {
 
 // After a Team Advance, apply obstacle spaces then item spaces leftâ†’right, frontâ†’back.
 function applySpacesAfterAdvance() {
-  // Pass 1: obstacles. Collect starters first so pieces that land mid-chain aren't re-triggered.
-  const obstacleStarters = [];
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] === W && specialSpaces[i] && specialSpaces[i].type === 'obstacle') {
-      obstacleStarters.push(i);
-    }
-  }
-  for (const i of obstacleStarters) {
-    if (sides[i] === W) applySpecialSpace(i); // piece may chain-move away
-  }
-  checkWhiteKingAlive();
-  if (gameOver) { draw(); return; }
+  // Pass 1: obstacles â€" use checkArrowSpaces so hop animations play correctly.
+  checkArrowSpaces(() => {
+    checkWhiteKingAlive();
+    if (gameOver) { takeReplaySnapshot(); draw(); return; }
+    _applySpacesAfterAdvancePass2();
+  });
+}
 
+function _applySpacesAfterAdvancePass2() {
   // Pass 2: item spaces â€" instant items applied now, interactive items queued.
   pendingItemQueue = [];
   for (let i = 0; i < 64; i++) {
@@ -1761,13 +1900,13 @@ function draw() {
   // Stats â€" left and right of logo, in the logo area
   {
     const statsY = LOGO_H * 0.55;
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = "#fff";
-    ctx.fillText(`TAKEN KINGS: ${score}`, MARGIN, LOGO_H * 0.35);
-    ctx.fillText(`GOLD: ${gold}`, MARGIN, LOGO_H * 0.70);
+    ctx.fillText(`Taken Kings: ${score}`, MARGIN, LOGO_H * 0.35);
+    ctx.fillText(`Gold: ${gold}`, MARGIN, LOGO_H * 0.70);
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   }
 
@@ -1775,7 +1914,7 @@ function draw() {
   ctx.translate(0, BOARD_Y);
 
   // Labels
-  ctx.font = "bold 36px sans-serif";
+  ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.shadowColor = "rgba(0,0,0,0.9)";
@@ -1908,7 +2047,7 @@ function draw() {
         const shieldImg = spriteImages["item_upgrader"];
         if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
         ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-        ctx.font = "bold 36px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
       }
@@ -2058,7 +2197,7 @@ function draw() {
       ctx.fillStyle = "#ffffff";
       ctx.strokeStyle = "rgba(0,0,0,0.7)";
       ctx.lineWidth = 2.5;
-      ctx.font = "bold 36px sans-serif";
+      ctx.font = "42px Canterbury";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
       ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
@@ -2198,7 +2337,7 @@ function draw() {
         ctx.fillStyle = "#ffffff";
         ctx.strokeStyle = "rgba(0,0,0,0.7)";
         ctx.lineWidth = 2.5;
-        ctx.font = "bold 36px sans-serif";
+        ctx.font = "42px Canterbury";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
         ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
@@ -2211,7 +2350,7 @@ function draw() {
   const previewRowNum = 8 + leapCount + 1;
   ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
   ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
-  ctx.font = "bold 36px sans-serif";
+  ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
@@ -2232,10 +2371,10 @@ function draw() {
   ctx.stroke();
   const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
   ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
-  ctx.font = "bold 36px sans-serif";
+  ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(invStatus || "INVENTORY", INV_X + INV_W / 2, invY - 25);
+  ctx.fillText(invStatus || "Inventory", INV_X + INV_W / 2, invY - 25);
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {
       const slotIdx = r * INV_COLS + c;
@@ -2303,7 +2442,7 @@ function draw() {
   }
 
   // Buttons
-  ctx.font = "bold 36px sans-serif";
+  ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -2315,107 +2454,150 @@ function draw() {
     ctx.fillStyle = "#5a2a2a";
     ctx.beginPath(); ctx.roundRect(MARGIN, BTN_Y, halfW, btnH, 8); ctx.fill();
     ctx.fillStyle = "#ff8888";
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("✕  CANCEL", MARGIN + halfW / 2, BTN_Y + btnH / 2);
+    ctx.fillText("✕  Cancel", MARGIN + halfW / 2, BTN_Y + btnH / 2);
     // Trash
     ctx.fillStyle = "#2a2a2a";
     ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
     ctx.fillStyle = "#aaa";
-    ctx.fillText("🗑  DISCARD", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
+    ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
   } else if (!gameOver && gamePhase === 'setup') {
     // Die button (left) and Go button (right)
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#4a3a7a";
     ctx.beginPath(); ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6); ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "bold 36px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("🎲 ROLL", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#2a6e3f";
     ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "bold 36px sans-serif";
-    ctx.fillText("▶ GO!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
+    ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
   } else if (!gameOver && gamePhase === 'playing') {
-    // Team Leap
-    const canLeap = canTeamLeap();
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
-    ctx.beginPath();
-    ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = canLeap ? "#fff" : "#999";
-    ctx.font = "bold 36px sans-serif";
-    ctx.fillText("TEAM ADVANCE", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
-    ctx.font = "bold 36px sans-serif";
-
-    // Pitch Shift
-    const canShift = canManualPitchShift();
-    const shiftHighlight = hintMove === "leap";
     const shiftUrgent = shiftCountdown <= 3;
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
-    ctx.beginPath();
-    ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = canShift ? "#fff" : "#999";
-    ctx.font = "bold 36px sans-serif";
-    ctx.fillText("FIELD ADVANCE", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
-    // Auto-advance countdown below buttons
-    ctx.font = "bold 36px sans-serif";
-    ctx.fillStyle = shiftUrgent ? "#ff6666" : "#2255aa";
+    if (!replayMode) {
+      // Team Leap
+      const canLeap = canTeamLeap();
+      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+      ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
+      ctx.beginPath();
+      ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
+      ctx.fill();
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.fillStyle = canLeap ? "#fff" : "#999";
+      ctx.font = "42px Canterbury";
+      ctx.fillText("Team Advance", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+
+      // Pitch Shift
+      const canShift = canManualPitchShift();
+      const shiftHighlight = hintMove === "leap";
+      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+      ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
+      ctx.beginPath();
+      ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
+      ctx.fill();
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.fillStyle = canShift ? "#fff" : "#999";
+      ctx.font = "42px Canterbury";
+      ctx.fillText("Field Advance", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+    }
+    // Auto-advance countdown — flush under inventory in replay, normal position otherwise
+    const cdY = replayMode ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
+    ctx.font = "42px Canterbury";
     ctx.textAlign = "center";
-    const cdText = `FIELD AUTO-ADVANCES IN ${shiftCountdown} ${shiftCountdown === 1 ? 'TURN' : 'TURNS'}`;
+    const cdText = `Field Auto-Advances In ${shiftCountdown} ${shiftCountdown === 1 ? 'Turn' : 'Turns'}`;
     ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = shiftUrgent ? "#ff6666" : "#88bbff";
-    ctx.fillText(cdText, MARGIN + BOARD_PX / 2, COUNTDOWN_Y);
+    ctx.fillText(cdText, MARGIN + BOARD_PX / 2, cdY);
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
-    // Resign
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#993333";
-    ctx.beginPath();
-    ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff";
-    ctx.fillText("RESIGN", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
+    if (!replayMode) {
+      // Resign
+      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+      ctx.fillStyle = "#993333";
+      ctx.beginPath();
+      ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
+      ctx.fill();
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.fillStyle = "#fff";
+      ctx.fillText("Resign", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
+    }
   }
 
 
   // Game over overlay
-  if (gameOver) {
+  if (gameOver && !replayMode) {
     const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "bold 72px sans-serif";
+    ctx.font = "82px Canterbury";
     ctx.fillStyle = "#cc1111";
-    ctx.fillText("GAME OVER", boardCX, boardCY - 40);
-    ctx.font = "bold 72px sans-serif";
+    ctx.fillText("Game Over", boardCX, boardCY - 40);
+    ctx.font = "82px Canterbury";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(`TAKEN KINGS: ${score}`, boardCX, boardCY + 60);
-    // Start Over button
-    const soW = 320, soH = 70;
-    const soX = boardCX - soW / 2, soY = boardCY + 120;
+    ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
+    const btnW = 280, btnH = 70, btnGap = 24;
+    const totalW = btnW * 2 + btnGap;
+    const soY = boardCY + 120;
+    const soX = boardCX - totalW / 2;
+    const repX = soX + btnW + btnGap;
+    ctx.font = "44px Canterbury";
     ctx.fillStyle = "#2a6e3f";
-    ctx.beginPath(); ctx.roundRect(soX, soY, soW, soH, 8); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.font = "bold 38px sans-serif";
-    ctx.fillText("START OVER", boardCX, soY + soH / 2);
+    ctx.beginPath(); ctx.roundRect(soX, soY, btnW, btnH, 8); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Start Over", soX + btnW / 2, soY + btnH / 2);
+    ctx.fillStyle = replaySnapshots.length > 0 ? "#1a4a8a" : "#333";
+    ctx.beginPath(); ctx.roundRect(repX, soY, btnW, btnH, 8); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Replay", repX + btnW / 2, soY + btnH / 2);
     ctx.textBaseline = "alphabetic";
   }
-  // Graveyard panels (hidden while using an item)
-  if (!isItemActive() && gamePhase === 'playing') for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+  if (replayMode) {
+    // Replay nav controls — placed right below the countdown label
+    const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+    const ctrlW = BOARD_PX, ctrlH = 130;
+    ctx.fillStyle = "rgba(10,10,40,0.93)";
+    ctx.beginPath(); ctx.roundRect(ctrlX, ctrlY, ctrlW, ctrlH, 10); ctx.fill();
+    const midX = ctrlX + ctrlW / 2;
+    const rowY1 = ctrlY + 28;
+    // Step label
+    ctx.font = "30px Canterbury";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#aac";
+    ctx.fillText(`Step ${replayIdx + 1} of ${replaySnapshots.length}`, midX, rowY1);
+    // Buttons row
+    const bW = 140, bH = 52, bGap = 14;
+    const totalBW = 4 * bW + 3 * bGap;
+    let bx = midX - totalBW / 2;
+    const by = ctrlY + ctrlH - bH - 14;
+    const btns = [
+      { label: "◀ Prev", id: 'prev', enabled: replayIdx > 0, color: "#334" },
+      { label: "Next ▶", id: 'next', enabled: replayIdx < replaySnapshots.length - 1, color: "#334" },
+      { label: replayAutoPlay ? "⏸ Pause" : "▶ Auto", id: 'auto', enabled: true, color: "#1a4a8a" },
+      { label: "✕ Exit", id: 'exit', enabled: true, color: "#5a1a1a" },
+    ];
+    ctx.font = "32px Canterbury";
+    for (const btn of btns) {
+      ctx.fillStyle = btn.enabled ? btn.color : "#222";
+      ctx.beginPath(); ctx.roundRect(bx, by, bW, bH, 8); ctx.fill();
+      ctx.fillStyle = btn.enabled ? "#fff" : "#555";
+      ctx.fillText(btn.label, bx + bW / 2, by + bH / 2);
+      bx += bW + bGap;
+    }
+  }
+  // Graveyard panels (hidden while using an item or in replay mode)
+  if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
     ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
     ctx.fillStyle = "#fff";
-    ctx.fillText(isPlayer ? "FALLEN" : "SLAIN", gx + GRAVE_W / 2, GRAVE_Y - 6);
+    ctx.fillText(isPlayer ? "Fallen" : "Slain", gx + GRAVE_W / 2, GRAVE_Y - 6);
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
@@ -2440,7 +2622,7 @@ function draw() {
           ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
         }
         if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
-        ctx.font = "bold 24px sans-serif";
+        ctx.font = "28px Canterbury";
         ctx.fillStyle = "#fff";
         ctx.textAlign = "center"; ctx.textBaseline = "top";
         ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
@@ -2457,7 +2639,7 @@ function draw() {
     ctx.save();
     ctx.fillStyle = "rgba(20,10,10,0.92)";
     ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
-    ctx.font = "bold 32px sans-serif";
+    ctx.font = "37px Canterbury";
     ctx.textBaseline = "middle"; ctx.textAlign = "left";
     ctx.fillStyle = "#fff";
     const labelText = "Are you sure?";
@@ -2584,7 +2766,7 @@ function draw() {
     ctx.fillStyle = "#2a2a4e";
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
     ctx.fillStyle = "#ddd";
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 36);
     const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
@@ -2613,9 +2795,9 @@ function draw() {
     ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.stroke();
 
     ctx.fillStyle = "#f0c040";
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("SHOP", dlgX + dlgW / 2, dlgY + 45);
+    ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 45);
     ctx.fillStyle = "#aaa";
     ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
 
@@ -2646,7 +2828,7 @@ function draw() {
       }
 
       ctx.fillStyle = isSold ? "#444" : "#ddd";
-      ctx.font = "bold 36px sans-serif";
+      ctx.font = "42px Canterbury";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const name = ITEM_NAMES[item];
@@ -2660,13 +2842,13 @@ function draw() {
       }
 
       ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
-      ctx.font = "bold 36px sans-serif";
+      ctx.font = "42px Canterbury";
       ctx.fillText(isSold ? "-" : `${price} G`, cardX + cardW / 2, cardsY + 210);
 
       ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
       ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
       ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
-      ctx.font = "bold 36px sans-serif";
+      ctx.font = "42px Canterbury";
       ctx.textBaseline = "middle";
       ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
     }
@@ -2676,7 +2858,7 @@ function draw() {
     ctx.fillStyle = "#4a2a2a";
     ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 110, 44, 6); ctx.fill();
     ctx.fillStyle = "#ddd";
-    ctx.font = "bold 36px sans-serif";
+    ctx.font = "42px Canterbury";
     ctx.textBaseline = "middle";
     ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
   }
@@ -2696,7 +2878,7 @@ function trashBounds() {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (gameOver || anim || turn !== W || aiThinking || shopMode || gamePhase !== 'playing') return;
+  if (replayMode || gameOver || anim || turn !== W || aiThinking || shopMode || gamePhase !== 'playing') return;
   const [cx, cy] = canvasCoords(e);
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
@@ -2792,14 +2974,44 @@ canvas.addEventListener("mouseup", (e) => {
 
 canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
-  if (gameOver) {
-    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
-    const soW = 320, soH = 70, soX = boardCX - soW / 2, soY = boardCY + 120;
+  if (replayMode) {
     const rect2 = canvas.getBoundingClientRect();
     const cx2 = (e.clientX - rect2.left) * (canvas.width / rect2.width);
     const cy2 = (e.clientY - rect2.top) * (canvas.height / rect2.height);
-    if (cx2 >= soX && cx2 <= soX + soW && cy2 >= soY && cy2 <= soY + soH) {
+    const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+    const ctrlH = 130;
+    const midX = ctrlX + BOARD_PX / 2;
+    const bW = 140, bH = 52, bGap = 14;
+    const totalBW = 4 * bW + 3 * bGap;
+    let bx = midX - totalBW / 2;
+    const by = ctrlY + ctrlH - bH - 14;
+    const ids = ['prev', 'next', 'auto', 'exit'];
+    for (const id of ids) {
+      if (cx2 >= bx && cx2 <= bx + bW && cy2 >= by && cy2 <= by + bH) {
+        if (id === 'prev') stepReplay(-1);
+        else if (id === 'next') stepReplay(1);
+        else if (id === 'auto') toggleReplayAutoPlay();
+        else if (id === 'exit') exitReplay();
+        return;
+      }
+      bx += bW + bGap;
+    }
+    return;
+  }
+  if (gameOver) {
+    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+    const btnW = 280, btnH = 70, btnGap = 24;
+    const totalW = btnW * 2 + btnGap;
+    const soY = boardCY + 120;
+    const soX = boardCX - totalW / 2;
+    const repX = soX + btnW + btnGap;
+    const rect2 = canvas.getBoundingClientRect();
+    const cx2 = (e.clientX - rect2.left) * (canvas.width / rect2.width);
+    const cy2 = (e.clientY - rect2.top) * (canvas.height / rect2.height);
+    if (cx2 >= soX && cx2 <= soX + btnW && cy2 >= soY && cy2 <= soY + btnH) {
       initBoard(); draw();
+    } else if (cx2 >= repX && cx2 <= repX + btnW && cy2 >= soY && cy2 <= soY + btnH) {
+      enterReplay();
     }
     return;
   }
@@ -2951,7 +3163,7 @@ canvas.addEventListener("click", (e) => {
     if (inB(gx, gy)) {
       detonateBomb(idx(gx, gy));
       firstMoveMade = true; recordPosition();
-      if (!gameOver) endWhiteTurn(); else draw();
+      if (!gameOver) endWhiteTurn(); else { takeReplaySnapshot(); draw(); }
     } else { draw(); }
     return;
   }
@@ -3050,7 +3262,7 @@ canvas.addEventListener("click", (e) => {
           const _tPiece = board[_tFinalI] || _tPiece0, _tHlth = health[_tFinalI] || _tHlth0;
           const _tFinish = () => {
             checkWhiteKingAlive();
-            if (gameOver) { draw(); return; }
+            if (gameOver) { takeReplaySnapshot(); draw(); return; }
             if (fromSpace) {
               processNextQueuedItem();
             } else {
@@ -3109,7 +3321,7 @@ canvas.addEventListener("click", (e) => {
     const panelH = 72, btnW = 100, btnH = 52, gap = 16;
     const midY = confirmY + panelH / 2;
     const btnY = midY - btnH / 2;
-    ctx.font = "bold 32px sans-serif";
+    ctx.font = "37px Canterbury";
     const labelW = ctx.measureText("Are you sure?  ").width;
     const totalW = labelW + btnW + gap + btnW;
     const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
@@ -3362,7 +3574,7 @@ canvas.addEventListener("click", (e) => {
       };
       startAnim(wAnimPieces, 0, () => {
         checkWhiteKingAlive();
-        if (!gameOver) { _wDoHop(0); } else { draw(); }
+        if (!gameOver) { _wDoHop(0); } else { takeReplaySnapshot(); draw(); }
       });
       return;
     } else if (clicked === selected) {
@@ -3378,7 +3590,7 @@ canvas.addEventListener("click", (e) => {
 });
 
 initBoard();
-loadSprites();
+document.fonts.ready.then(() => loadSprites());
 
 window.setupTest = function(preset) {
   if (preset === 'teleporter_void') {
