@@ -3325,6 +3325,8 @@ canvas.addEventListener("click", (e) => {
         if (!gameOver) { _wDoHop(0); } else { draw(); }
       });
       return;
+    } else if (clicked === selected) {
+      selected = -1; validMoves = [];
     } else if (sides[clicked] === W) {
       selected = clicked;
       validMoves = legalMoves(gx, gy);
