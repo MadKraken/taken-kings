@@ -1381,12 +1381,13 @@ function computeObstacleHops(startI) {
     const nx = x + sp.dx, ny = y + sp.dy;
     if (!inB(nx, ny)) break;
     const destI = idx(nx, ny);
-    if (isVoidSpace(destI) || isBlockSpace(destI)) break; // can't redirect onto void or block
+    if (isBlockSpace(destI)) break;
     const moverSide = sides[curI];
     const destSide = sides[destI];
     if (destSide !== 0 && destSide === moverSide) break;
     if (moverSide === B && destSide === W && health[destI] > 1) break;
     hops.push([curI, destI]);
+    if (isVoidSpace(destI)) break; // animate the slide in, then piece disappears
     curI = destI;
   }
   return hops;
@@ -1412,6 +1413,7 @@ function applySpecialSpace(startI) {
       // piece falls into void — remove it
       const moverSide = sides[toI];
       if (moverSide === W && board[toI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+      if (moverSide === B && board[toI] === KING) score++;
       board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
       break;
     }
