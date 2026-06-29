@@ -1,4 +1,4 @@
-﻿const VERSION = "226";
+﻿const VERSION = "227";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -105,7 +105,8 @@ let _replayAnimBuffer = [];
 let _replayTransitions = [];
 const ITEM_NONE = 0;
 const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
-const ITEM_PROMOTER_BASE = 100; // encoded: base + from*10 + to
+const ITEM_PROMOTER_BASE = 100; // encoded: base + from*10 + to; 9 = wildcard
+const PROMOTER_WILD = 9;
 function isPromoterItem(item) { return item >= ITEM_PROMOTER_BASE; }
 function promoterFrom(item) { return Math.floor((item - ITEM_PROMOTER_BASE) / 10); }
 function promoterTo(item)   { return (item - ITEM_PROMOTER_BASE) % 10; }
@@ -113,8 +114,9 @@ function makePromoterItem(from, to) { return ITEM_PROMOTER_BASE + from * 10 + to
 const ITEM_NAMES = {
   [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb"
 };
+function _promoterSideName(v) { return v === PROMOTER_WILD ? "any" : (PIECE_NAMES[v] || "?"); }
 function itemName(item) {
-  if (isPromoterItem(item)) return `${PIECE_NAMES[promoterFrom(item)]} → ${PIECE_NAMES[promoterTo(item)]}`;
+  if (isPromoterItem(item)) return `${_promoterSideName(promoterFrom(item))} → ${_promoterSideName(promoterTo(item))}`;
   return ITEM_NAMES[item] || "?";
 }
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
@@ -414,6 +416,7 @@ function _animTick() {
 }
 
 function _randomPromoterFrom() {
+  if (randInt(16) === 0) return PROMOTER_WILD;
   const r = randInt(61);
   if (r < 32) return PAWN;
   if (r < 40) return ROOK;
@@ -424,19 +427,29 @@ function _randomPromoterFrom() {
 }
 
 function _randomPromoterTo() {
-  const r = randInt(31);
+  if (randInt(16) === 0) return PROMOTER_WILD;
+  const r = randInt(30);
   if (r < 8) return ROOK;
   if (r < 16) return KNIGHT;
   if (r < 24) return BISHOP;
   if (r < 28) return QUEEN;
-  if (r < 30) return KING;
-  return CHECKERS;
+  return KING;
+}
+
+function _rollWildTo() {
+  // Roll a random non-Checkers destination piece
+  const r = randInt(30);
+  if (r < 8) return ROOK;
+  if (r < 16) return KNIGHT;
+  if (r < 24) return BISHOP;
+  if (r < 28) return QUEEN;
+  return KING;
 }
 
 function _randomPromoterItem() {
   const from = _randomPromoterFrom();
   let to;
-  do { to = _randomPromoterTo(); } while (to === from);
+  do { to = _randomPromoterTo(); } while (from !== PROMOTER_WILD && to !== PROMOTER_WILD && to === from);
   return makePromoterItem(from, to);
 }
 
@@ -1693,7 +1706,10 @@ function checkWhiteKingAlive() {
 
 function canItemAffectPiece(item, i) {
   const p = board[i];
-  if (isPromoterItem(item)) return p === promoterFrom(item);
+  if (isPromoterItem(item)) {
+    const pf = promoterFrom(item);
+    return pf === PROMOTER_WILD ? (board[i] !== NONE) : p === pf;
+  }
   switch (item) {
     case ITEM_UPGRADER: return true;
     case ITEM_TELEPORTER: return true;
@@ -1819,7 +1835,7 @@ function _applySpacesAfterAdvancePass2() {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
     if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
-    else if (isPromoterItem(item)) { board[i] = promoterTo(item); itemSpaces[i] = ITEM_NONE; }
+    else if (isPromoterItem(item)) { board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item); itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
 
@@ -2318,7 +2334,7 @@ for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
 // Piece promoter highlight
 if (piecePromoterMode) {
   for (let i = 0; i < 64; i++) {
-    if (board[i] === piecePromoterFrom && sides[i] === W) {
+    if (sides[i] === W && board[i] !== NONE && (piecePromoterFrom === PROMOTER_WILD || board[i] === piecePromoterFrom)) {
       const [px, py] = xy(i);
       ctx.fillStyle = "rgba(200,150,50,0.5)";
       ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
@@ -2450,14 +2466,42 @@ ctx.fillStyle = "#fff";
 ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
 }
 
+function _drawPromoterStar(ctx, cx, cy, r) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const angle = (i * Math.PI / 5) - Math.PI / 2;
+    const rad = i % 2 === 0 ? r : r * 0.42;
+    i === 0 ? ctx.moveTo(cx + rad * Math.cos(angle), cy + rad * Math.sin(angle))
+            : ctx.lineTo(cx + rad * Math.cos(angle), cy + rad * Math.sin(angle));
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#f0c040";
+  ctx.fill();
+  ctx.strokeStyle = "#b8860b";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
 function _drawItemInSlot(ctx, item, sx, sy, size) {
   const pad = 4;
   if (isPromoterItem(item)) {
     const half = (size - pad * 2) / 2;
-    const fromImg = spriteImages[`${W}_${promoterFrom(item)}`];
-    const toImg   = spriteImages[`${W}_${promoterTo(item)}`];
-    if (fromImg && fromImg.complete) ctx.drawImage(fromImg, sx + pad, sy + pad, half, half);
-    if (toImg && toImg.complete)     ctx.drawImage(toImg, sx + pad + half, sy + pad + half, half, half);
+    const pf = promoterFrom(item), pt = promoterTo(item);
+    // from piece (top-left)
+    if (pf === PROMOTER_WILD) {
+      _drawPromoterStar(ctx, sx + pad + half / 2, sy + pad + half / 2, half * 0.42);
+    } else {
+      const fromImg = spriteImages[`${W}_${pf}`];
+      if (fromImg && fromImg.complete) ctx.drawImage(fromImg, sx + pad, sy + pad, half, half);
+    }
+    // to piece (bottom-right)
+    if (pt === PROMOTER_WILD) {
+      _drawPromoterStar(ctx, sx + pad + half + half / 2, sy + pad + half + half / 2, half * 0.42);
+    } else {
+      const toImg = spriteImages[`${W}_${pt}`];
+      if (toImg && toImg.complete) ctx.drawImage(toImg, sx + pad + half, sy + pad + half, half, half);
+    }
+    // arrow
     ctx.fillStyle = "#ffdd88";
     ctx.font = `bold ${Math.floor(size * 0.22)}px sans-serif`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -2480,7 +2524,7 @@ ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.
 ctx.strokeStyle = "#5a5a8e";
 ctx.lineWidth = 3;
 ctx.stroke();
-const invStatus = piecePromoterMode ? `Select a ${PIECE_NAMES[piecePromoterFrom] || ""} to promote to ${PIECE_NAMES[piecePromoterTo] || ""}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
+const invStatus = piecePromoterMode ? `Select ${piecePromoterFrom === PROMOTER_WILD ? "any piece" : `a ${PIECE_NAMES[piecePromoterFrom]}`} to promote to ${piecePromoterTo === PROMOTER_WILD ? "a random piece" : PIECE_NAMES[piecePromoterTo]}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
 ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
 ctx.font = "42px Canterbury";
 ctx.textAlign = "center";
@@ -3038,8 +3082,9 @@ canvas.addEventListener("mouseup", (e) => {
     const i = idx(gx, gy);
     inventory._activeSlot = slot;
 
-    if (isPromoterItem(item) && board[i] === promoterFrom(item) && sides[i] === W) {
-      board[i] = promoterTo(item);
+    if (isPromoterItem(item) && sides[i] === W && board[i] !== NONE &&
+        (promoterFrom(item) === PROMOTER_WILD || board[i] === promoterFrom(item))) {
+      board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
       removeFromInventory(slot); delete inventory._activeSlot;
       piecePromoterMode = false; piecePromoterFrom = NONE; piecePromoterTo = NONE;
       dragConsumed = true; draw(); return;
@@ -3142,8 +3187,11 @@ function handleShopClick(cx, cy) {
 function handlePiecePromoterClick(cx, cy) {
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && board[idx(gx, gy)] === piecePromoterFrom && sides[idx(gx, gy)] === W) {
-    board[idx(gx, gy)] = piecePromoterTo;
+  const i2 = inB(gx, gy) ? idx(gx, gy) : -1;
+  const eligible = i2 >= 0 && sides[i2] === W && board[i2] !== NONE &&
+    (piecePromoterFrom === PROMOTER_WILD ? true : board[i2] === piecePromoterFrom);
+  if (eligible) {
+    board[i2] = piecePromoterTo === PROMOTER_WILD ? _rollWildTo() : piecePromoterTo;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1;
