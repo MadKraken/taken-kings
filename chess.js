@@ -2307,20 +2307,7 @@ function draw() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  if (!gameOver && resignConfirm) {
-    // Resign confirm replaces all buttons
-    ctx.fillStyle = "#ddd";
-    ctx.fillText("Are you sure?", canvas.width / 2, RESIGN_BTN.y - 6);
-    const yesX = canvas.width / 2 - 70, noX = canvas.width / 2 + 20;
-    const btnW = 50, btnH = 36;
-    ctx.fillStyle = "#993333";
-    ctx.beginPath(); ctx.roundRect(yesX, RESIGN_BTN.y, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#555";
-    ctx.beginPath(); ctx.roundRect(noX, RESIGN_BTN.y, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText("YES", yesX + btnW / 2, RESIGN_BTN.y + btnH / 2);
-    ctx.fillText("NO", noX + btnW / 2, RESIGN_BTN.y + btnH / 2);
-  } else if (!gameOver && isItemActive()) {
+  if (!gameOver && isItemActive()) {
     // Cancel and Trash buttons replace all other controls while an item is being used
     const halfW = BOARD_PX / 2 - BTN_GAP / 2;
     const btnH = 80;
@@ -2452,6 +2439,30 @@ function draw() {
         ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
       }
     }
+  }
+
+  // Resign confirm — drawn after graveyard so it sits on top
+  if (!gameOver && resignConfirm) {
+    const confirmY = GRAVE_Y + GRAVE_H + 16;
+    const panelW = BOARD_PX, panelH = 120;
+    ctx.fillStyle = "rgba(20,10,10,0.92)";
+    ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, panelW, panelH, 8); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 38px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Resign? Are you sure?", MARGIN + panelW / 2, confirmY + 36);
+    const btnW = 160, btnH = 52, gap = 24;
+    const yesX = MARGIN + panelW / 2 - btnW - gap / 2;
+    const noX  = MARGIN + panelW / 2 + gap / 2;
+    const btnY = confirmY + panelH - btnH - 12;
+    ctx.fillStyle = "#993333";
+    ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
+    ctx.fillStyle = "#444";
+    ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 6); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 32px sans-serif";
+    ctx.fillText("YES", yesX + btnW / 2, btnY + btnH / 2);
+    ctx.fillText("NO",  noX  + btnW / 2, btnY + btnH / 2);
   }
 
   // Flying pieces (captured pieces arcing to graveyard)
@@ -3072,8 +3083,11 @@ canvas.addEventListener("click", (e) => {
 
   // Resign confirm dialog
   if (resignConfirm) {
-    const yesX = canvas.width / 2 - 70, noX = canvas.width / 2 + 20;
-    const btnY = RESIGN_BTN.y, btnW = 50, btnH = 36;
+    const confirmY = GRAVE_Y + GRAVE_H + 16;
+    const panelW = BOARD_PX, btnW = 160, btnH = 52, gap = 24, panelH = 120;
+    const yesX = MARGIN + panelW / 2 - btnW - gap / 2;
+    const noX  = MARGIN + panelW / 2 + gap / 2;
+    const btnY = confirmY + panelH - btnH - 12;
     if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
       resignConfirm = false;
       gameOver = true;
