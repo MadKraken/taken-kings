@@ -1,4 +1,4 @@
-﻿const VERSION = "223";
+﻿const VERSION = "224";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
