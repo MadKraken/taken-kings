@@ -3024,509 +3024,330 @@ canvas.addEventListener("mouseup", (e) => {
   draw();
 });
 
-canvas.addEventListener("click", (e) => {
-  if (dragConsumed) { dragConsumed = false; return; }
-  if (replayMode) {
-    const rect2 = canvas.getBoundingClientRect();
-    const cx2 = (e.clientX - rect2.left) * (canvas.width / rect2.width);
-    const cy2 = (e.clientY - rect2.top) * (canvas.height / rect2.height);
-    const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
-    const ctrlH = 130;
-    const midX = ctrlX + BOARD_PX / 2;
-    const bW = 140, bH = 52, bGap = 14;
-    const totalBW = 4 * bW + 3 * bGap;
-    let bx = midX - totalBW / 2;
-    const by = ctrlY + ctrlH - bH - 14;
-    const ids = ['prev', 'next', 'auto', 'exit'];
-    for (const id of ids) {
-      if (cx2 >= bx && cx2 <= bx + bW && cy2 >= by && cy2 <= by + bH) {
-        if (id === 'prev') stepReplay(-1);
-        else if (id === 'next') stepReplay(1);
-        else if (id === 'auto') toggleReplayAutoPlay();
-        else if (id === 'exit') exitReplay();
-        return;
-      }
-      bx += bW + bGap;
-    }
-    return;
-  }
-  if (gameOver) {
-    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
-    const btnW = 280, btnH = 70, btnGap = 24;
-    const totalW = btnW * 2 + btnGap;
-    const soY = boardCY + 120;
-    const soX = boardCX - totalW / 2;
-    const repX = soX + btnW + btnGap;
-    const rect2 = canvas.getBoundingClientRect();
-    const cx2 = (e.clientX - rect2.left) * (canvas.width / rect2.width);
-    const cy2 = (e.clientY - rect2.top) * (canvas.height / rect2.height);
-    if (cx2 >= soX && cx2 <= soX + btnW && cy2 >= soY && cy2 <= soY + btnH) {
-      initBoard(); draw();
-    } else if (cx2 >= repX && cx2 <= repX + btnW && cy2 >= soY && cy2 <= soY + btnH) {
-      enterReplay();
-    }
-    return;
-  }
-  if (anim) return;
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const cx = (e.clientX - rect.left) * scaleX;
-  const cy = (e.clientY - rect.top) * scaleY;
+// --- Click handler sub-functions ---
 
-  // Cancel / Trash buttons — checked first so they work regardless of active mode
-  if (gamePhase === 'playing' && isItemActive()) {
-    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
-    const btnH = 80;
-    if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-      cancelItemMode(); return;
+function handleReplayClick(cx, cy) {
+  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+  const ctrlH = 130;
+  const midX = ctrlX + BOARD_PX / 2;
+  const bW = 140, bH = 52, bGap = 14;
+  const totalBW = 4 * bW + 3 * bGap;
+  let bx = midX - totalBW / 2;
+  const by = ctrlY + ctrlH - bH - 14;
+  const ids = ['prev', 'next', 'auto', 'exit'];
+  for (const id of ids) {
+    if (cx >= bx && cx <= bx + bW && cy >= by && cy <= by + bH) {
+      if (id === 'prev') stepReplay(-1);
+      else if (id === 'next') stepReplay(1);
+      else if (id === 'auto') toggleReplayAutoPlay();
+      else if (id === 'exit') exitReplay();
+      return;
     }
-    if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-      trashActiveItem(); return;
-    }
+    bx += bW + bGap;
   }
+}
 
-  // Shop dialogue
-  if (shopMode) {
-    const dlgW = 820, dlgH = 500, dlgX = (canvas.width - 820) / 2, dlgY = (canvas.height - 500) / 2;
-    const cardW = 220, cardH = 300, cardGap = 20;
-    const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
-    const cardsY = dlgY + 120;
-    for (let i = 0; i < shopOffers.length; i++) {
-      const price = ITEM_PRICES[shopOffers[i]];
-      const cardX = cardsStartX + i * (cardW + cardGap);
-      const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
-      const sold = specialSpaces[shopSpaceIdx].sold[i];
-      if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !sold) {
-        gold -= price;
-        addToInventory(shopOffers[i]);
-        specialSpaces[shopSpaceIdx].sold[i] = true;
-        draw();
-        return;
-      }
-    }
-    // Close button or outside-dialog click
-    const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58, closeBtnW = 110, closeBtnH = 44;
-    if ((cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) ||
-        cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
-      closeShop();
-    }
-    return;
+function handleGameOverClick(cx, cy) {
+  const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+  const btnW = 280, btnH = 70, btnGap = 24;
+  const soY = boardCY + 120;
+  const soX = boardCX - (btnW * 2 + btnGap) / 2;
+  const repX = soX + btnW + btnGap;
+  if (cx >= soX && cx <= soX + btnW && cy >= soY && cy <= soY + btnH) {
+    initBoard(); draw();
+  } else if (cx >= repX && cx <= repX + btnW && cy >= soY && cy <= soY + btnH) {
+    enterReplay();
   }
+}
 
-  // Piece chooser dialog (shared by Pawn Promoter and Any Promoter)
-  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
-    const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
-    const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const dlgW = 600, dlgH = 200, dlgGap = 18;
-    const dlgX = (canvas.width - dlgW) / 2;
-    const [ptx2, pty2] = xy(targetIdx);
-    const pawnSY2 = BOARD_Y + MARGIN + pty2 * TILE + TILE / 2;
-    const placeAbove2 = pty2 >= 4;
-    const dlgY = placeAbove2
-      ? Math.max(LOGO_H, pawnSY2 - TILE / 2 - dlgGap - dlgH)
-      : Math.min(canvas.height - dlgH - 10, pawnSY2 + TILE / 2 + dlgGap);
-    const cpad = 16, csize = 100;
-    const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
-    for (let i = 0; i < choices.length; i++) {
-      const bx = startX + i * (csize + cpad);
-      const by = dlgY + 70;
-      if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
-        board[targetIdx] = choices[i];
-        if (inventory._activeSlot !== undefined) {
-          removeFromInventory(inventory._activeSlot);
-          delete inventory._activeSlot;
-        }
-        const fromSpace = activeItemSpaceIdx >= 0;
-        activeItemSpaceIdx = -1;
-        promotingPawnIdx = -1; promotingMode = false;
-        anyPromotingPieceIdx = -1; anyPromotingMode = false;
-        if (fromSpace) { processNextQueuedItem(); } else { draw(); }
-        return;
-      }
-    }
-    // Click outside cancels
-    const fromSpaceCancel = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1;
-    promotingPawnIdx = -1; promotingMode = false;
-    anyPromotingPieceIdx = -1; anyPromotingMode = false;
-    if (fromSpaceCancel) { processNextQueuedItem(); } else { draw(); }
-    return;
+function handleItemCancelOrTrash(cx, cy) {
+  const halfW = BOARD_PX / 2 - BTN_GAP / 2;
+  const btnH = 80;
+  if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+    cancelItemMode(); return true;
   }
+  if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+    trashActiveItem(); return true;
+  }
+  return false;
+}
 
-  // Pawn selection for Pawn Promoter
-  if (promotingMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
-      promotingPawnIdx = idx(gx, gy);
+function handleShopClick(cx, cy) {
+  const dlgW = 820, dlgH = 500, dlgX = (canvas.width - 820) / 2, dlgY = (canvas.height - 500) / 2;
+  const cardW = 220, cardH = 300, cardGap = 20;
+  const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
+  const cardsY = dlgY + 120;
+  for (let i = 0; i < shopOffers.length; i++) {
+    const price = ITEM_PRICES[shopOffers[i]];
+    const cardX = cardsStartX + i * (cardW + cardGap);
+    const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
+    const sold = specialSpaces[shopSpaceIdx].sold[i];
+    if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !sold) {
+      gold -= price;
+      addToInventory(shopOffers[i]);
+      specialSpaces[shopSpaceIdx].sold[i] = true;
       draw();
       return;
     }
-    // Click elsewhere cancels
-    promotingMode = false;
-    draw();
-    return;
   }
+  const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58, closeBtnW = 110, closeBtnH = 44;
+  if ((cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) ||
+      cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
+    closeShop();
+  }
+}
 
-  // Any piece selection for Any Promoter
-  if (anyPromotingMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy) && sides[idx(gx, gy)] === W && board[idx(gx, gy)] !== NONE && board[idx(gx, gy)] !== KING) {
-      anyPromotingPieceIdx = idx(gx, gy);
-      draw();
+function handlePromoDialogClick(cx, cy) {
+  const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
+  const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
+  const dlgW = 600, dlgH = 200, dlgGap = 18;
+  const dlgX = (canvas.width - dlgW) / 2;
+  const [ptx2, pty2] = xy(targetIdx);
+  const pawnSY2 = BOARD_Y + MARGIN + pty2 * TILE + TILE / 2;
+  const placeAbove2 = pty2 >= 4;
+  const dlgY = placeAbove2
+    ? Math.max(LOGO_H, pawnSY2 - TILE / 2 - dlgGap - dlgH)
+    : Math.min(canvas.height - dlgH - 10, pawnSY2 + TILE / 2 + dlgGap);
+  const cpad = 16, csize = 100;
+  const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
+  for (let i = 0; i < choices.length; i++) {
+    const bx = startX + i * (csize + cpad);
+    const by = dlgY + 70;
+    if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
+      board[targetIdx] = choices[i];
+      if (inventory._activeSlot !== undefined) {
+        removeFromInventory(inventory._activeSlot);
+        delete inventory._activeSlot;
+      }
+      const fromSpace = activeItemSpaceIdx >= 0;
+      activeItemSpaceIdx = -1;
+      promotingPawnIdx = -1; promotingMode = false;
+      anyPromotingPieceIdx = -1; anyPromotingMode = false;
+      if (fromSpace) { processNextQueuedItem(); } else { draw(); }
       return;
     }
-    // Click elsewhere cancels
-    anyPromotingMode = false;
-    draw();
-    return;
   }
+  const fromSpaceCancel = activeItemSpaceIdx >= 0;
+  activeItemSpaceIdx = -1;
+  promotingPawnIdx = -1; promotingMode = false;
+  anyPromotingPieceIdx = -1; anyPromotingMode = false;
+  if (fromSpaceCancel) { processNextQueuedItem(); } else { draw(); }
+}
 
-  // Upgrader
-  if (upgraderMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-      const i = idx(gx, gy);
-      health[i] = Math.max(health[i], 1) + 1;
-      if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-      upgraderMode = false;
-      draw();
-      return;
-    }
-    upgraderMode = false;
-    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    draw();
-    return;
+function handlePromotingModeClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
+    promotingPawnIdx = idx(gx, gy);
+    draw(); return;
   }
+  promotingMode = false; draw();
+}
 
-  // Bomb
-  if (bombMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    bombMode = false; bombHoverIdx = -1;
+function handleAnyPromotingModeClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && sides[idx(gx, gy)] === W && board[idx(gx, gy)] !== NONE && board[idx(gx, gy)] !== KING) {
+    anyPromotingPieceIdx = idx(gx, gy);
+    draw(); return;
+  }
+  anyPromotingMode = false; draw();
+}
+
+function handleUpgraderClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
+    const i = idx(gx, gy);
+    health[i] = Math.max(health[i], 1) + 1;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    if (inB(gx, gy)) {
-      detonateBomb(idx(gx, gy));
-      firstMoveMade = true; recordPosition();
-      if (!gameOver) endWhiteTurn(); else { takeReplaySnapshot(); draw(); }
-    } else { draw(); }
-    return;
+    upgraderMode = false; draw(); return;
   }
+  upgraderMode = false;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  draw();
+}
 
-  // Cloner
-  if (clonerMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy)) {
-      const i = idx(gx, gy);
-      if (clonerSelected < 0) {
-        if (sides[i] === W && adjacentClonerDests(i).length > 0) {
-          clonerSelected = i;
-          draw();
-          return;
-        }
-      } else {
-        const dests = adjacentClonerDests(clonerSelected);
-        if (dests.includes(i)) {
-          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
-          board[i] = board[clonerSelected];
-          sides[i] = W;
-          health[i] = health[clonerSelected];
-          if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-          const clonerFromSpace = activeItemSpaceIdx >= 0;
-          activeItemSpaceIdx = -1;
-          clonerMode = false; clonerSelected = -1;
-          if (clonerFromSpace) {
+function handleBombClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  bombMode = false; bombHoverIdx = -1;
+  if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+  if (inB(gx, gy)) {
+    detonateBomb(idx(gx, gy));
+    firstMoveMade = true; recordPosition();
+    if (!gameOver) endWhiteTurn(); else { takeReplaySnapshot(); draw(); }
+  } else { draw(); }
+}
+
+function handleClonerClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy)) {
+    const i = idx(gx, gy);
+    if (clonerSelected < 0) {
+      if (sides[i] === W && adjacentClonerDests(i).length > 0) {
+        clonerSelected = i; draw(); return;
+      }
+    } else {
+      const dests = adjacentClonerDests(clonerSelected);
+      if (dests.includes(i)) {
+        if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
+        board[i] = board[clonerSelected]; sides[i] = W; health[i] = health[clonerSelected];
+        if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+        const clonerFromSpace = activeItemSpaceIdx >= 0;
+        activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
+        if (clonerFromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
+        return;
+      } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
+        clonerSelected = i; draw(); return;
+      }
+    }
+  }
+  const clonerCancelSpace = activeItemSpaceIdx >= 0;
+  activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  if (clonerCancelSpace) { processNextQueuedItem(); } else { draw(); }
+}
+
+function handleKingPromoterClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
+    board[idx(gx, gy)] = KING;
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+    kingPromotingMode = false; draw(); return;
+  }
+  kingPromotingMode = false;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  draw();
+}
+
+function handleTeleporterClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy)) {
+    const i = idx(gx, gy);
+    if (teleporterSelected < 0) {
+      if (sides[i] === W) { teleporterSelected = i; draw(); return; }
+    } else {
+      if (board[i] === NONE || board[i] === CHEST) {
+        if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_UPGRADER][randInt(4)]);
+        const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
+        board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
+        board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
+        if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+        const fromSpace = activeItemSpaceIdx >= 0;
+        activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
+        const _tHops = computeObstacleHops(i);
+        const _tFinalI = applySpecialSpace(i);
+        const _tPiece = board[_tFinalI] || _tPiece0, _tHlth = health[_tFinalI] || _tHlth0;
+        const _tFinish = () => {
+          checkWhiteKingAlive();
+          if (gameOver) { takeReplaySnapshot(); draw(); return; }
+          if (fromSpace) {
             processNextQueuedItem();
           } else {
-            firstMoveMade = true; recordPosition(); draw();
+            firstMoveMade = true; recordPosition();
+            const continueAfterShop = () => {
+              const itm = itemSpaces[_tFinalI];
+              if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
+                const done = activateItemSpace(itm, _tFinalI);
+                if (done) endWhiteTurn();
+              } else { endWhiteTurn(); }
+            };
+            if (specialSpaces[_tFinalI]?.type === 'shop' && sides[_tFinalI] === W) {
+              openShop(_tFinalI, continueAfterShop);
+            } else { continueAfterShop(); }
           }
-          return;
-        } else if (sides[i] === W && adjacentClonerDests(i).length > 0) {
-          clonerSelected = i;
-          draw();
-          return;
-        }
-      }
-    }
-    const clonerCancelSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1;
-    clonerMode = false; clonerSelected = -1;
-    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    if (clonerCancelSpace) { processNextQueuedItem(); } else { draw(); }
-    return;
-  }
-
-  // King Promoter â€" select a white pawn, convert to King
-  if (kingPromotingMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
-      board[idx(gx, gy)] = KING;
-      if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-      kingPromotingMode = false;
-      draw();
-      return;
-    }
-    kingPromotingMode = false;
-    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    draw();
-    return;
-  }
-
-  // Teleporter
-  if (teleporterMode) {
-    const mx = cx - MARGIN;
-    const my = cy - BOARD_Y - MARGIN;
-    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-    if (inB(gx, gy)) {
-      const i = idx(gx, gy);
-      if (teleporterSelected < 0) {
-        // Select a white piece
-        if (sides[i] === W) {
-          teleporterSelected = i;
-          draw();
-          return;
-        }
-      } else {
-        // Move to vacant square or chest
-        if (board[i] === NONE || board[i] === CHEST) {
-          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_UPGRADER][randInt(4)]);
-          const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
-          board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
-          board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
-          if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-          const fromSpace = activeItemSpaceIdx >= 0;
-          activeItemSpaceIdx = -1;
-          teleporterMode = false; teleporterSelected = -1;
-          // Apply special space effects at landing square
-          const _tHops = computeObstacleHops(i);
-          const _tFinalI = applySpecialSpace(i);
-          const _tPiece = board[_tFinalI] || _tPiece0, _tHlth = health[_tFinalI] || _tHlth0;
-          const _tFinish = () => {
-            checkWhiteKingAlive();
-            if (gameOver) { takeReplaySnapshot(); draw(); return; }
-            if (fromSpace) {
-              processNextQueuedItem();
-            } else {
-              firstMoveMade = true; recordPosition();
-              const continueAfterShop = () => {
-                const itm = itemSpaces[_tFinalI];
-                if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
-                  const done = activateItemSpace(itm, _tFinalI);
-                  if (done) endWhiteTurn();
-                } else { endWhiteTurn(); }
-              };
-              if (specialSpaces[_tFinalI]?.type === 'shop' && sides[_tFinalI] === W) {
-                openShop(_tFinalI, continueAfterShop);
-              } else { continueAfterShop(); }
-            }
-          };
-          const _tDoHop = (hi) => {
-            if (hi >= _tHops.length) {
-              if (isVoidSpace(_tFinalI) && _tPiece !== NONE) {
-                // Piece still on board if it landed directly on void (applySpecialSpace only clears arrow→void)
-                if (board[_tFinalI] !== NONE) {
-                  if (board[_tFinalI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-                  board[_tFinalI] = NONE; sides[_tFinalI] = 0; health[_tFinalI] = 1;
-                }
-                const [vx, vy] = xy(_tFinalI);
-                startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
-              } else { _tFinish(); }
-              return;
-            }
-            const [fI, tI] = _tHops[hi];
-            const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-            startAnim([{ toIdx: _tFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _tPiece, side: W, hlth: _tHlth }], 0, () => _tDoHop(hi+1));
-          };
-          _tDoHop(0);
-          return;
-        } else if (sides[i] === W) {
-          // Re-select a different white piece
-          teleporterSelected = i;
-          draw();
-          return;
-        }
-      }
-    }
-    // Click outside board or invalid target cancels
-    const teleFromSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1;
-    teleporterMode = false; teleporterSelected = -1;
-    if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-    if (teleFromSpace) { processNextQueuedItem(); } else { draw(); }
-    return;
-  }
-
-  // Resign confirm dialog
-  if (resignConfirm) {
-    const confirmY = GRAVE_Y + GRAVE_H + 12;
-    const panelH = 72, btnW = 100, btnH = 52, gap = 16;
-    const midY = confirmY + panelH / 2;
-    const btnY = midY - btnH / 2;
-    ctx.font = "37px Canterbury";
-    const labelW = ctx.measureText("Are you sure?  ").width;
-    const totalW = labelW + btnW + gap + btnW;
-    const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
-    const noX  = yesX + btnW + gap;
-    if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
-      resignConfirm = false;
-      gameOver = true;
-      gameMsg = `Resigned. Kings Taken: ${score}`;
-      selected = -1; validMoves = [];
-      draw();
-    } else if (cx >= noX && cx <= noX + btnW && cy >= btnY && cy <= btnY + btnH) {
-      resignConfirm = false;
-      draw();
-    }
-    return;
-  }
-
-  // Cancel / Trash buttons (shown while item is active)
-  if (!gameOver && isItemActive()) {
-    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
-    const btnH = 80;
-    if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-      cancelItemMode(); return;
-    }
-    if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-      trashActiveItem(); return;
+        };
+        const _tDoHop = (hi) => {
+          if (hi >= _tHops.length) {
+            if (isVoidSpace(_tFinalI) && _tPiece !== NONE) {
+              if (board[_tFinalI] !== NONE) {
+                if (board[_tFinalI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+                board[_tFinalI] = NONE; sides[_tFinalI] = 0; health[_tFinalI] = 1;
+              }
+              const [vx, vy] = xy(_tFinalI);
+              startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
+            } else { _tFinish(); }
+            return;
+          }
+          const [fI, tI] = _tHops[hi];
+          const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+          startAnim([{ toIdx: _tFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _tPiece, side: W, hlth: _tHlth }], 0, () => _tDoHop(hi+1));
+        };
+        _tDoHop(0);
+        return;
+      } else if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     }
   }
+  const teleFromSpace = activeItemSpaceIdx >= 0;
+  activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  if (teleFromSpace) { processNextQueuedItem(); } else { draw(); }
+}
 
-  // Check resign button
-  if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
-      cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) {
-    resignConfirm = true;
-    draw();
-    return;
+function handleResignConfirmClick(cx, cy) {
+  const confirmY = GRAVE_Y + GRAVE_H + 12;
+  const panelH = 72, btnW = 100, btnH = 52, gap = 16;
+  const midY = confirmY + panelH / 2;
+  const btnY = midY - btnH / 2;
+  ctx.font = "37px Canterbury";
+  const labelW = ctx.measureText("Are you sure?  ").width;
+  const totalW = labelW + btnW + gap + btnW;
+  const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
+  const noX  = yesX + btnW + gap;
+  if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
+    resignConfirm = false; gameOver = true;
+    gameMsg = `Resigned. Kings Taken: ${score}`;
+    selected = -1; validMoves = []; draw();
+  } else if (cx >= noX && cx <= noX + btnW && cy >= btnY && cy <= btnY + btnH) {
+    resignConfirm = false; draw();
   }
+}
 
-  // Check inventory click
-  if (gamePhase === 'playing' && turn === W && !aiThinking) {
-    const invY = INV_PANEL_TOP + 50;
-    for (let r = 0; r < INV_ROWS; r++) {
-      for (let c = 0; c < INV_COLS; c++) {
-        const slotIdx = r * INV_COLS + c;
-        const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
-        const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-        if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT) {
-          if (inventory[slotIdx] === ITEM_PROMOTER) {
-            promotingMode = true;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
-            anyPromotingMode = true;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_TELEPORTER) {
-            teleporterMode = true;
-            teleporterSelected = -1;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_CLONER) {
-            clonerMode = true;
-            clonerSelected = -1;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
-            kingPromotingMode = true;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_UPGRADER) {
-            upgraderMode = true;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-          if (inventory[slotIdx] === ITEM_BOMB) {
-            bombMode = true; bombHoverIdx = -1;
-            selected = -1; validMoves = [];
-            inventory._activeSlot = slotIdx;
-            draw();
-            return;
-          }
-        }
+function handleInventoryClick(cx, cy) {
+  if (gamePhase !== 'playing' || turn !== W || aiThinking) return false;
+  const invY = INV_PANEL_TOP + 50;
+  for (let r = 0; r < INV_ROWS; r++) {
+    for (let c = 0; c < INV_COLS; c++) {
+      const slotIdx = r * INV_COLS + c;
+      const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+      const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+      if (!(cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT)) continue;
+      const item = inventory[slotIdx];
+      if (item === ITEM_NONE) continue;
+      const modeMap = {
+        [ITEM_PROMOTER]:     () => { promotingMode = true; },
+        [ITEM_ANY_PROMOTER]: () => { anyPromotingMode = true; },
+        [ITEM_TELEPORTER]:   () => { teleporterMode = true; teleporterSelected = -1; },
+        [ITEM_CLONER]:       () => { clonerMode = true; clonerSelected = -1; },
+        [ITEM_KING_PROMOTER]:() => { kingPromotingMode = true; },
+        [ITEM_UPGRADER]:     () => { upgraderMode = true; },
+        [ITEM_BOMB]:         () => { bombMode = true; bombHoverIdx = -1; },
+      };
+      if (modeMap[item]) {
+        modeMap[item]();
+        selected = -1; validMoves = [];
+        inventory._activeSlot = slotIdx;
+        draw();
+        return true;
       }
     }
   }
+  return false;
+}
 
-  // Check hint button (test mode only)
-  if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
-      cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) {
-    showHint();
-    return;
-  }
-
-
-  // Setup lobby buttons
-  if (gamePhase === 'setup') {
-    if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-        cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) {
-      rollSetup(); draw(); return;
-    }
-    if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) {
-      startGame(); return;
-    }
-    return;
-  }
-
-  // Check leap button
-  if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) {
-    hintMove = null;
-    teamLeap();
-    return;
-  }
-
-  // Check pitch shift button
-  if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) {
-    hintMove = null;
-    if (canManualPitchShift()) pitchShift();
-    return;
-  }
-
+function handleBoardClick(cx, cy) {
   if (aiThinking || turn !== W) return;
   hintMove = null;
-  const mx = cx - MARGIN;
-  const my = cy - BOARD_Y - MARGIN;
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (!inB(gx, gy)) { selected = -1; validMoves = []; draw(); return; }
-
   const clicked = idx(gx, gy);
-
   if (selected < 0) {
-    if (sides[clicked] === W) {
-      selected = clicked;
-      validMoves = legalMoves(gx, gy);
-    }
+    if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); }
   } else {
     if (validMoves.includes(clicked)) {
       const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
@@ -3536,7 +3357,6 @@ canvas.addEventListener("click", (e) => {
       const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
       const clickedDest = clicked;
       firstMoveMade = true;
-
       // Hire neutral: bounce attacker, neutral turns white
       if (sides[clicked] === N) {
         const fromI = selected;
@@ -3555,7 +3375,6 @@ canvas.addEventListener("click", (e) => {
         });
         return;
       }
-
       makeMove(selected, clicked, true);
       recordPosition();
       const wAnimPieces = [{
@@ -3567,18 +3386,16 @@ canvas.addEventListener("click", (e) => {
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
       const _wHops = computeObstacleHops(clickedDest);
-      // Snapshot captures at each hop destination before applySpecialSpace clears them
       const _wHopCaptures = {};
       for (const [, tI] of _wHops) {
         if (board[tI] !== NONE && board[tI] !== CHEST && sides[tI] !== W) {
           _wHopCaptures[tI] = { piece: board[tI], side: sides[tI] };
-          pendingCaptures[tI] = _wHopCaptures[tI]; // keep rendering until hop arrives
+          pendingCaptures[tI] = _wHopCaptures[tI];
         }
       }
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wFinalI = applySpecialSpace(clickedDest);
       const _wPiece = board[_wFinalI] || _wPiece0, _wSide = sides[_wFinalI] || _wSide0, _wHlth = health[_wFinalI] || _wHlth0;
-      // Update wAnimPieces toIdx to point to where piece actually ends up
       wAnimPieces[0].toIdx = _wFinalI;
       wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth;
       const _wContinue = (movedTo) => {
@@ -3590,15 +3407,11 @@ canvas.addEventListener("click", (e) => {
             if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
               const done = activateItemSpace(item, movedTo);
               if (done) endWhiteTurn();
-            } else {
-              endWhiteTurn();
-            }
+            } else { endWhiteTurn(); }
           };
           if (specialSpaces[movedTo]?.type === 'shop' && sides[movedTo] === W) {
             openShop(movedTo, continueAfterShop);
-          } else {
-            continueAfterShop();
-          }
+          } else { continueAfterShop(); }
         } else { draw(); }
       };
       const _wDoHop = (hi) => {
@@ -3612,7 +3425,6 @@ canvas.addEventListener("click", (e) => {
         const [fI, tI] = _wHops[hi];
         const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
         startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => {
-          // Hop arrived — remove pending capture overlay and fly it to graveyard
           const cap = _wHopCaptures[tI];
           if (cap) {
             delete pendingCaptures[tI];
@@ -3632,14 +3444,51 @@ canvas.addEventListener("click", (e) => {
     } else if (clicked === selected) {
       selected = -1; validMoves = [];
     } else if (sides[clicked] === W) {
-      selected = clicked;
-      validMoves = legalMoves(gx, gy);
+      selected = clicked; validMoves = legalMoves(gx, gy);
     } else {
       selected = -1; validMoves = [];
     }
   }
   draw();
+}
+
+canvas.addEventListener("click", (e) => {
+  if (dragConsumed) { dragConsumed = false; return; }
+  const [cx, cy] = canvasCoords(e);
+  if (replayMode) { handleReplayClick(cx, cy); return; }
+  if (gameOver) { handleGameOverClick(cx, cy); return; }
+  if (anim) return;
+  if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
+  if (shopMode) { handleShopClick(cx, cy); return; }
+  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) { handlePromoDialogClick(cx, cy); return; }
+  if (promotingMode) { handlePromotingModeClick(cx, cy); return; }
+  if (anyPromotingMode) { handleAnyPromotingModeClick(cx, cy); return; }
+  if (upgraderMode) { handleUpgraderClick(cx, cy); return; }
+  if (bombMode) { handleBombClick(cx, cy); return; }
+  if (clonerMode) { handleClonerClick(cx, cy); return; }
+  if (kingPromotingMode) { handleKingPromoterClick(cx, cy); return; }
+  if (teleporterMode) { handleTeleporterClick(cx, cy); return; }
+  if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
+  if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
+  if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
+      cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { resignConfirm = true; draw(); return; }
+  if (handleInventoryClick(cx, cy)) return;
+  if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
+      cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { showHint(); return; }
+  if (gamePhase === 'setup') {
+    if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
+        cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
+    if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
+        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { startGame(); return; }
+    return;
+  }
+  if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
+      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { hintMove = null; teamLeap(); return; }
+  if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
+      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) pitchShift(); return; }
+  handleBoardClick(cx, cy);
 });
+
 
 initBoard();
 document.fonts.ready.then(() => loadSprites());
