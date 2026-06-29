@@ -2399,6 +2399,13 @@ function draw() {
     ctx.font = "bold 72px sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.fillText(`TAKEN KINGS: ${score}`, boardCX, boardCY + 60);
+    // Start Over button
+    const soW = 320, soH = 70;
+    const soX = boardCX - soW / 2, soY = boardCY + 120;
+    ctx.fillStyle = "#2a6e3f";
+    ctx.beginPath(); ctx.roundRect(soX, soY, soW, soH, 8); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 38px sans-serif";
+    ctx.fillText("START OVER", boardCX, soY + soH / 2);
     ctx.textBaseline = "alphabetic";
   }
   // Graveyard panels (hidden while using an item)
@@ -2785,7 +2792,17 @@ canvas.addEventListener("mouseup", (e) => {
 
 canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
-  if (gameOver) return;
+  if (gameOver) {
+    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+    const soW = 320, soH = 70, soX = boardCX - soW / 2, soY = boardCY + 120;
+    const rect2 = canvas.getBoundingClientRect();
+    const cx2 = (e.clientX - rect2.left) * (canvas.width / rect2.width);
+    const cy2 = (e.clientY - rect2.top) * (canvas.height / rect2.height);
+    if (cx2 >= soX && cx2 <= soX + soW && cy2 >= soY && cy2 <= soY + soH) {
+      initBoard(); draw();
+    }
+    return;
+  }
   if (anim) return;
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
