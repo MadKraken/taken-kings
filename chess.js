@@ -109,6 +109,7 @@ let warnFlashRunning = false;
 let voidPulseRunning = false;
 let chestBobRunning = false;
 let voidDeathAnim = null; // {items:[{cx,cy,piece,side}], startMs, onDone}
+let pendingCaptures = {}; // boardIdx -> {piece, side} — removed from board but still rendered until hop arrives
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -1874,6 +1875,15 @@ function draw() {
     }
   }
 
+  // Pending captures: pieces removed from board but not yet visually taken (waiting for hop anim)
+  for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
+    const i = Number(idxStr);
+    const [x, y] = xy(i);
+    const key = `${cap.side}_${cap.piece}`;
+    const img = spriteImages[key];
+    if (img && img.complete) ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+  }
+
   // King Promoter highlight â€" highlight white pawns
   if (kingPromotingMode) {
     for (let i = 0; i < 64; i++) {
@@ -2943,6 +2953,7 @@ canvas.addEventListener("click", (e) => {
       for (const [, tI] of _wHops) {
         if (board[tI] !== NONE && board[tI] !== CHEST && sides[tI] !== W) {
           _wHopCaptures[tI] = { piece: board[tI], side: sides[tI] };
+          pendingCaptures[tI] = _wHopCaptures[tI]; // keep rendering until hop arrives
         }
       }
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
@@ -2952,6 +2963,7 @@ canvas.addEventListener("click", (e) => {
       wAnimPieces[0].toIdx = _wFinalI;
       wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth;
       const _wContinue = (movedTo) => {
+        pendingCaptures = {};
         checkWhiteKingAlive();
         if (!gameOver) {
           const continueAfterShop = () => {
@@ -2981,9 +2993,10 @@ canvas.addEventListener("click", (e) => {
         const [fI, tI] = _wHops[hi];
         const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
         startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => {
-          // Fly captured piece at this hop destination to graveyard
+          // Hop arrived — remove pending capture overlay and fly it to graveyard
           const cap = _wHopCaptures[tI];
           if (cap) {
+            delete pendingCaptures[tI];
             const isPlayerPiece = cap.side === W;
             const pool = isPlayerPiece ? playerDead : enemyDead;
             const [tgx, tgy] = graveSlotPos(isPlayerPiece, cap.piece);
