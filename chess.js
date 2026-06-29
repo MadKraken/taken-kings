@@ -2938,6 +2938,13 @@ canvas.addEventListener("click", (e) => {
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
       const _wHops = computeObstacleHops(clickedDest);
+      // Snapshot captures at each hop destination before applySpecialSpace clears them
+      const _wHopCaptures = {};
+      for (const [, tI] of _wHops) {
+        if (board[tI] !== NONE && board[tI] !== CHEST && sides[tI] !== W) {
+          _wHopCaptures[tI] = { piece: board[tI], side: sides[tI] };
+        }
+      }
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wFinalI = applySpecialSpace(clickedDest);
       const _wPiece = board[_wFinalI] || _wPiece0, _wSide = sides[_wFinalI] || _wSide0, _wHlth = health[_wFinalI] || _wHlth0;
@@ -2973,7 +2980,17 @@ canvas.addEventListener("click", (e) => {
         }
         const [fI, tI] = _wHops[hi];
         const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-        startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => _wDoHop(hi+1));
+        startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => {
+          // Fly captured piece at this hop destination to graveyard
+          const cap = _wHopCaptures[tI];
+          if (cap) {
+            const isPlayerPiece = cap.side === W;
+            const pool = isPlayerPiece ? playerDead : enemyDead;
+            const [tgx, tgy] = graveSlotPos(isPlayerPiece, cap.piece);
+            startFlyAnim(cap.piece, cap.side, MARGIN + tx*TILE + TILE/2, BOARD_Y + MARGIN + ty*TILE + TILE/2, tgx, tgy, () => { pool[cap.piece] = (pool[cap.piece] || 0) + 1; });
+          }
+          _wDoHop(hi+1);
+        });
       };
       startAnim(wAnimPieces, 0, () => {
         checkWhiteKingAlive();
