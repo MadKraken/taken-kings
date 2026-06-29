@@ -480,6 +480,7 @@ function placeWave(row, wave) {
 let firstMoveMade = false;
 let resignConfirm = false;
 let testMode = false;
+let gamePhase = 'setup'; // 'setup' | 'playing'
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -491,17 +492,8 @@ function shuffle(arr) {
 
 function initBoard() {
   board.fill(NONE); sides.fill(0);
-  const back = [ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK];
-  for (let x = 0; x < 8; x++) {
-    set(x, 6, PAWN, W);
-    set(x, 7, back[x], W);
-  }
   spawnCount = 1;
-  const firstWave = generateWave(spawnCount);
-  placeWave(0, firstWave);
-  nextWave = generateWave(spawnCount + 1);
   leapCount = 0;
-  nextBonuses = generateRowBonuses(nextWave);
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
@@ -513,6 +505,50 @@ function initBoard() {
   specialSpaces.fill(null);
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
+  gamePhase = 'setup';
+  rollSetup();
+}
+
+function _randomSetupPiece() {
+  const r = randInt(16);
+  if (r < 8) return PAWN;
+  if (r === 8) return ROOK;
+  if (r === 9) return KNIGHT;
+  if (r === 10) return BISHOP;
+  if (r === 11) return QUEEN;
+  if (r === 12) return KING;
+  return NONE; // 3/16 chance of empty
+}
+
+function rollSetup() {
+  // Clear all pieces and regenerate enemy wave
+  board.fill(NONE); sides.fill(0); health.fill(1);
+  spawnCount = 1;
+  const firstWave = generateWave(spawnCount);
+  placeWave(0, firstWave);
+  nextWave = generateWave(spawnCount + 1);
+  nextBonuses = generateRowBonuses(nextWave);
+
+  // Place guaranteed King at a random position in rows 6–7
+  const positions = [];
+  for (let y = 6; y <= 7; y++) for (let x = 0; x < 8; x++) positions.push({ x, y });
+  shuffle(positions);
+  set(positions[0].x, positions[0].y, KING, W);
+
+  // Roll remaining 15 positions
+  for (let i = 1; i < 16; i++) {
+    const p = _randomSetupPiece();
+    if (p !== NONE) set(positions[i].x, positions[i].y, p, W);
+  }
+
+  // One random item in inventory
+  inventory.fill(ITEM_NONE);
+  inventory[0] = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)];
+}
+
+function startGame() {
+  gamePhase = 'playing';
+  draw();
 }
 
 
@@ -2192,7 +2228,22 @@ function draw() {
     ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
     ctx.fillStyle = "#aaa";
     ctx.fillText("🗑  DISCARD", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
-  } else if (!gameOver) {
+  } else if (!gameOver && gamePhase === 'setup') {
+    // Die button (left) and Go button (right)
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = "#4a3a7a";
+    ctx.beginPath(); ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "bold 36px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("🎲 ROLL", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = "#2a6e3f";
+    ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "bold 36px sans-serif";
+    ctx.fillText("▶ GO!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+  } else if (!gameOver && gamePhase === 'playing') {
     // Team Leap
     const canLeap = canTeamLeap();
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
@@ -2256,7 +2307,7 @@ function draw() {
     ctx.textBaseline = "alphabetic";
   }
   // Graveyard panels (hidden while using an item)
-  if (!isItemActive()) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+  if (!isItemActive() && gamePhase === 'playing') for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
     const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
     ctx.font = "bold 36px sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
@@ -3008,6 +3059,19 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
+
+  // Setup lobby buttons
+  if (gamePhase === 'setup') {
+    if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
+        cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) {
+      rollSetup(); draw(); return;
+    }
+    if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
+        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) {
+      startGame(); return;
+    }
+    return;
+  }
 
   // Check leap button
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
