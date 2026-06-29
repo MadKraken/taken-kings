@@ -693,16 +693,20 @@ function startGame() {
   draw();
 }
 
+let _conquestGifActive = false;
+
 function playConquestGif() {
   const gif = document.getElementById('conquest-gif');
   if (!gif) { startGame(); return; }
-  // Restart the gif by clearing and re-setting src
   const src = gif.src;
   gif.src = '';
   gif.src = src;
+  _conquestGifActive = true;
+  draw();
   gif.style.display = 'block';
   setTimeout(() => {
     gif.style.display = 'none';
+    _conquestGifActive = false;
     startGame();
   }, 3120);
 }
@@ -2918,6 +2922,10 @@ function draw() {
   drawBackground(_fieldAnim, _animT);
   drawBoardArea(_animT, _animToSet, _fieldAnim);
   drawFogWindow();
+  if (_conquestGifActive) {
+    ctx.fillStyle = "rgba(0,0,0,0.20)";
+    ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
+  }
   drawInventoryPanel();
   drawActionButtons();
   drawGameOverOverlay();
