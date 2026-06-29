@@ -2666,7 +2666,7 @@ function trashBounds() {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (gameOver || anim || turn !== W || aiThinking || shopMode) return;
+  if (gameOver || anim || turn !== W || aiThinking || shopMode || gamePhase !== 'playing') return;
   const [cx, cy] = canvasCoords(e);
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
