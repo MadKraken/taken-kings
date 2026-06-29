@@ -19,18 +19,18 @@ const MOVE_COLOR = "rgba(100,180,60,0.55)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
 
-const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7;
+const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7, CHECKERS = 8;
 const W = 1, B = 2, N = 3;
-const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING];
+const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS];
 
-const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king" };
+const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king", [CHECKERS]: "checkers" };
 const SIDE_PREFIX = { [W]: "w", [B]: "b" };
 const spriteImages = {};
 let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 23;
+  const total = 25;
   const logoImg = new Image();
   logoImg.src = "logo_0.png?v=1";
   logoImg.onload = () => {
@@ -42,7 +42,7 @@ function loadSprites() {
     count++; if (count === total) { spritesLoaded = true; draw(); }
   };
   for (const s of [W, B]) {
-    for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
+    for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
       const key = `${s}_${p}`;
       const img = new Image();
       img.src = (s === W && p === PAWN) ? "pawn.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
@@ -177,8 +177,8 @@ let aiThinking = false;
 
 const AI_DEPTH = 3;
 const HINT_DEPTH = 4;
-const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0 };
-const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0 };
+const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150 };
+const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2 };
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 const ANIM_MS = 180;
@@ -567,7 +567,7 @@ function generateWave(count) {
   }
   const wave = [{x: cols[0], piece: KING}];
   for (let i = 1; i < cols.length; i++) {
-    wave.push({x: cols[i], piece: SPAWN_PIECES[randInt(SPAWN_PIECES.length)]});
+    wave.push({x: cols[i], piece: _randomEnemyPiece()});
   }
   return wave;
 }
@@ -653,13 +653,24 @@ function initBoard() {
 }
 
 function _randomSetupPiece() {
-  const r = randInt(16);
-  if (r < 8) return PAWN;     // 8/16 = 1/2
-  if (r < 10) return ROOK;    // 2/16 = 1/8
-  if (r < 12) return BISHOP;  // 2/16 = 1/8
-  if (r < 14) return KNIGHT;  // 2/16 = 1/8
-  if (r === 14) return QUEEN; // 1/16
-  return KING;                 // 1/16
+  const r = randInt(65);
+  if (r < 32) return PAWN;
+  if (r < 40) return ROOK;
+  if (r < 48) return BISHOP;
+  if (r < 56) return KNIGHT;
+  if (r < 60) return QUEEN;
+  if (r < 64) return KING;
+  return CHECKERS;             // 1/65 ≈ 1/64
+}
+
+function _randomEnemyPiece() {
+  const r = randInt(65);
+  if (r < 32) return PAWN;
+  if (r < 40) return ROOK;
+  if (r < 48) return BISHOP;
+  if (r < 56) return KNIGHT;
+  if (r < 64) return QUEEN;
+  return CHECKERS;             // 1/65 ≈ 1/64
 }
 
 function rollSetup() {
@@ -719,6 +730,9 @@ function neutralMovesFor(i) {
   if (p === PAWN) {
     if (canLand(x, y - 1)) moves.push(idx(x, y - 1));
     if (canLand(x, y + 1)) moves.push(idx(x, y + 1));
+  } else if (p === CHECKERS) {
+    for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]])
+      if (canLand(x + dx, y + dy)) moves.push(idx(x + dx, y + dy));
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]])
       if (canLand(x + dx, y + dy)) moves.push(idx(x + dx, y + dy));
@@ -821,6 +835,24 @@ function pseudoMoves(x, y) {
         if (inB(nx, ny) && side(nx, ny) === e && piece(nx, ny) !== CHEST && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
       }
     }
+  } else if (p === CHECKERS) {
+    const dir = s === W ? -1 : 1;
+    const e = enemy(s);
+    for (const dx of [-1, 1]) {
+      const nx = x + dx, ny = y + dir;
+      // Step move: forward diagonal to empty square
+      if (inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny)))
+        moves.push(idx(nx, ny));
+      // Jump capture: leap over an enemy to the empty square beyond
+      const jx = x + 2*dx, jy = y + 2*dir;
+      if (inB(nx, ny) && inB(jx, jy)) {
+        const midI = idx(nx, ny), landI = idx(jx, jy);
+        const midSide = sides[midI];
+        if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE && board[midI] !== CHEST
+            && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+          moves.push(landI);
+      }
+    }
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
@@ -855,6 +887,9 @@ function isAttacked(tx, ty, bySide) {
     const [ax, ay] = xy(i);
     const p = board[i];
     if (p === PAWN) {
+      const dir = att === W ? -1 : 1;
+      if (ay + dir === ty && (ax - 1 === tx || ax + 1 === tx)) return true;
+    } else if (p === CHECKERS) {
       const dir = att === W ? -1 : 1;
       if (ay + dir === ty && (ax - 1 === tx || ax + 1 === tx)) return true;
     } else if (p === KNIGHT) {
@@ -916,6 +951,21 @@ function makeMove(fromI, toI, visual = false) {
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
   const capSide = sides[toI];
+
+  // Checkers jump: leaps 2 diagonally — remove the piece in the middle square
+  if (p === CHECKERS && Math.abs(tx - fx) === 2) {
+    const midI = idx((fx + tx) / 2, (fy + ty) / 2);
+    const capPiece = board[midI], capSide = sides[midI];
+    if (visual && capPiece !== NONE) {
+      const isPlayerPiece = capSide === W;
+      const pool = isPlayerPiece ? playerDead : enemyDead;
+      const [tgx, tgy] = graveSlotPos(isPlayerPiece, capPiece);
+      startFlyAnim(capPiece, capSide, MARGIN + ((fx+tx)/2)*TILE + TILE/2, BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2, tgx, tgy, () => { pool[capPiece] = (pool[capPiece] || 0) + 1; });
+    }
+    if (capSide !== s && s === W) gold += GOLD_VALUE[capPiece] ?? 0;
+    if (capPiece === KING && capSide !== s && s === W) score += 1;
+    board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
+  }
 
   // Bounce: white piece attacks neutral â€" attacker bounces back, neutral is hired
   if (s === W && sides[toI] === N) {
@@ -2637,9 +2687,11 @@ if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool,
     const isKing = pt === KING;
     const img = spriteImages[`${sideVal}_${pt}`];
     if (count === 0) {
-      ctx.globalAlpha = 0.15;
-      if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
-      ctx.globalAlpha = 1;
+      if (pt !== CHECKERS) {
+        ctx.globalAlpha = 0.15;
+        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        ctx.globalAlpha = 1;
+      }
     } else {
       if (isKing) {
         ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
