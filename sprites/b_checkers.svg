@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Disc side/thickness -->
+  <path d="M12 60 Q12 75 50 75 Q88 75 88 60 L88 68 Q88 83 50 83 Q12 83 12 68 Z" fill="#6a0e00"/>
+  <!-- Top face of disc -->
+  <ellipse cx="50" cy="58" rx="38" ry="14" fill="#aa1a00" stroke="#5a0000" stroke-width="3"/>
+  <!-- Inner ring -->
+  <ellipse cx="50" cy="58" rx="26" ry="9" fill="none" stroke="#cc3300" stroke-width="2.5"/>
+  <!-- Centre dot -->
+  <ellipse cx="50" cy="58" rx="7" ry="4" fill="#cc3300"/>
+</svg>
