@@ -707,9 +707,11 @@ function endWhiteTurn() {
   if (shiftCountdown <= 0) {
     pitchShift();
   } else {
-    turn = B;
-    draw();
-    if (!gameOver) aiPlay();
+    checkArrowSpaces(() => {
+      turn = B;
+      draw();
+      if (!gameOver) aiPlay();
+    });
   }
 }
 
@@ -1185,11 +1187,13 @@ function aiPlay() {
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
       const _aiFinish = () => {
-        if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-        else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-        if (!gameOver) turn = W;
-        aiThinking = false;
-        draw();
+        checkArrowSpaces(() => {
+          if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+          else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
+          if (!gameOver) turn = W;
+          aiThinking = false;
+          draw();
+        });
       };
 
       // Shield bounce: attacker slides in, bounces back
@@ -1398,6 +1402,56 @@ function applySpacesAfterAdvance() {
     if (sides[i] === W && specialSpaces[i]?.type === 'shop') pendingShopQueue.push(i);
   }
   processNextQueuedItem();
+}
+
+// After any move, check if a piece that was stuck on an arrow space can now redirect.
+function checkArrowSpaces(onDone) {
+  const toProcess = [];
+  for (let i = 0; i < 64; i++) {
+    const sp = specialSpaces[i];
+    if (!sp || sp.type !== 'obstacle') continue;
+    if (board[i] === NONE) continue;
+    const [x, y] = xy(i);
+    const nx = x + sp.dx, ny = y + sp.dy;
+    if (!inB(nx, ny)) continue;
+    const destI = idx(nx, ny);
+    if (isBlockSpace(destI)) continue;
+    const moverSide = sides[i];
+    const destSide = sides[destI];
+    if (destSide !== 0 && destSide === moverSide) continue; // still blocked by friendly
+    if (moverSide === B && destSide === W && health[destI] > 1) continue; // shielded
+    toProcess.push(i);
+  }
+  if (toProcess.length === 0) { onDone(); return; }
+  let qi = 0;
+  const processNext = () => {
+    if (qi >= toProcess.length) { onDone(); return; }
+    const startI = toProcess[qi++];
+    if (board[startI] === NONE) { processNext(); return; } // already moved by prior chain
+    const piece0 = board[startI], side0 = sides[startI], hlth0 = health[startI];
+    const hops = computeObstacleHops(startI);
+    const finalI = applySpecialSpace(startI);
+    const piece = board[finalI] || piece0, side = sides[finalI] || side0, hlth = health[finalI] || hlth0;
+    const doHop = (hi) => {
+      if (hi >= hops.length) {
+        if (isVoidSpace(finalI) && piece !== NONE) {
+          if (board[finalI] !== NONE) {
+            if (board[finalI] === KING && side === W) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+            else if (board[finalI] === KING && side === B) score++;
+            board[finalI] = NONE; sides[finalI] = 0; health[finalI] = 1;
+          }
+          const [vx, vy] = xy(finalI);
+          startVoidDeath(MARGIN + vx*TILE + TILE/2, BOARD_Y + MARGIN + vy*TILE + TILE/2, piece, side, processNext);
+        } else { processNext(); }
+        return;
+      }
+      const [fI, tI] = hops[hi];
+      const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+      startAnim([{ toIdx: finalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece, side, hlth }], 0, () => doHop(hi+1));
+    };
+    doHop(0);
+  };
+  processNext();
 }
 
 // Dry-run: returns the list of [fromI, toI] hops an obstacle chain would produce,
