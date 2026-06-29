@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- Checkers disc -->
+  <path d="M10,18 Q10,24 25,24 Q40,24 40,18 L40,21 Q40,27 25,27 Q10,27 10,21 Z" fill="#6a0e00"/>
+  <ellipse cx="25" cy="18" rx="15" ry="5" fill="#cc2200" stroke="#5a0000" stroke-width="1.2"/>
+  <ellipse cx="25" cy="18" rx="10" ry="3.5" fill="none" stroke="#ff4422" stroke-width="1.2"/>
+  <!-- Pawn -->
+  <circle cx="25" cy="36" r="6" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <path d="M18 44 Q25 40 32 44 L34 50 Q25 48 16 50 Z" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+</svg>

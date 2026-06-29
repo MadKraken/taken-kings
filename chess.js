@@ -1,4 +1,4 @@
-﻿const VERSION = "224";
+﻿const VERSION = "225";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -31,7 +31,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 25;
+  const total = 28;
   const logoImg = new Image();
   logoImg.src = "logo_0.png?v=1";
   logoImg.onload = () => {
@@ -55,22 +55,20 @@ function loadSprites() {
   chestImg.src = "sprites/chest.svg";
   chestImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["chest"] = chestImg;
-  const promImg = new Image();
-  promImg.src = "sprites/item_promoter.svg";
-  promImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["item_promoter"] = promImg;
-  const anyPromImg = new Image();
-  anyPromImg.src = "sprites/item_any_promoter.svg";
-  anyPromImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["item_any_promoter"] = anyPromImg;
-  const teleImg = new Image();
-  teleImg.src = "sprites/item_teleporter.svg";
-  teleImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["item_teleporter"] = teleImg;
-  const kingPromImg = new Image();
-  kingPromImg.src = "sprites/item_king_promoter.svg";
-  kingPromImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  spriteImages["item_king_promoter"] = kingPromImg;
+  for (const [key, file] of [
+    ["item_promoter_rook",     "sprites/item_promoter_rook.svg"],
+    ["item_promoter_knight",   "sprites/item_promoter_knight.svg"],
+    ["item_promoter_bishop",   "sprites/item_promoter_bishop.svg"],
+    ["item_promoter_queen",    "sprites/item_promoter_queen.svg"],
+    ["item_promoter_king",     "sprites/item_promoter_king.svg"],
+    ["item_promoter_checkers", "sprites/item_promoter_checkers.svg"],
+    ["item_teleporter",        "sprites/item_teleporter.svg"],
+  ]) {
+    const img = new Image();
+    img.src = file;
+    img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+    spriteImages[key] = img;
+  }
   const clonerImg = new Image();
   clonerImg.src = "sprites/item_cloner.svg";
   clonerImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
@@ -115,8 +113,17 @@ let replayAutoPlay = false;
 let replayAutoTimer = null;
 let _replayAnimBuffer = [];
 let _replayTransitions = [];
-const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
-const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb" };
+const ITEM_NONE = 0;
+const ITEM_PROMOTER_ROOK = 1, ITEM_PROMOTER_KNIGHT = 9, ITEM_PROMOTER_BISHOP = 10, ITEM_PROMOTER_QUEEN = 11, ITEM_PROMOTER_KING = 5, ITEM_PROMOTER_CHECKERS = 12;
+const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
+const PROMOTER_TYPES = [ITEM_PROMOTER_ROOK, ITEM_PROMOTER_KNIGHT, ITEM_PROMOTER_BISHOP, ITEM_PROMOTER_QUEEN, ITEM_PROMOTER_KING, ITEM_PROMOTER_CHECKERS];
+const PROMOTER_TARGET = { [ITEM_PROMOTER_ROOK]: ROOK, [ITEM_PROMOTER_KNIGHT]: KNIGHT, [ITEM_PROMOTER_BISHOP]: BISHOP, [ITEM_PROMOTER_QUEEN]: QUEEN, [ITEM_PROMOTER_KING]: KING, [ITEM_PROMOTER_CHECKERS]: CHECKERS };
+const ITEM_NAMES = {
+  [ITEM_PROMOTER_ROOK]: "Rook Promoter", [ITEM_PROMOTER_KNIGHT]: "Knight Promoter",
+  [ITEM_PROMOTER_BISHOP]: "Bishop Promoter", [ITEM_PROMOTER_QUEEN]: "Queen Promoter",
+  [ITEM_PROMOTER_KING]: "King Promoter", [ITEM_PROMOTER_CHECKERS]: "Checkers Promoter",
+  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb"
+};
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let _pendingDrag = null; // { slot, startX, startY, startMs } — promoted to dragSlot after threshold
@@ -128,15 +135,12 @@ let chestBobRunning = false;
 let voidDeathAnim = null; // {items:[{cx,cy,piece,side}], startMs, onDone}
 let explosionAnim = null; // {cx, cy, startMs}
 let pendingCaptures = {}; // boardIdx -> {piece, side} — removed from board but still rendered until hop arrives
-let promotingMode = false;
-let promotingPawnIdx = -1;
-let anyPromotingMode = false;
-let anyPromotingPieceIdx = -1;
+let pawnPromoterMode = false;
+let pawnPromoterTarget = NONE;
 let teleporterMode = false;
 let teleporterSelected = -1;
 let bombMode = false;
 let bombHoverIdx = -1;
-let kingPromotingMode = false;
 let clonerMode = false;
 let clonerSelected = -1;
 let upgraderMode = false;
@@ -153,19 +157,25 @@ let shopOffers = []; // reference to specialSpaces[shopSpaceIdx].offers
 let shopOnDone = null; // callback after shop closes
 
 const ITEM_SPRITE_KEYS = {
-  [ITEM_PROMOTER]: "item_promoter",
-  [ITEM_ANY_PROMOTER]: "item_any_promoter",
+  [ITEM_PROMOTER_ROOK]: "item_promoter_rook",
+  [ITEM_PROMOTER_KNIGHT]: "item_promoter_knight",
+  [ITEM_PROMOTER_BISHOP]: "item_promoter_bishop",
+  [ITEM_PROMOTER_QUEEN]: "item_promoter_queen",
+  [ITEM_PROMOTER_KING]: "item_promoter_king",
+  [ITEM_PROMOTER_CHECKERS]: "item_promoter_checkers",
   [ITEM_TELEPORTER]: "item_teleporter",
-  [ITEM_KING_PROMOTER]: "item_king_promoter",
   [ITEM_CLONER]: "item_cloner",
   [ITEM_UPGRADER]: "item_upgrader",
   [ITEM_BOMB]: "item_bomb"
 };
 const ITEM_PRICES = {
-  [ITEM_PROMOTER]: 20,
-  [ITEM_ANY_PROMOTER]: 45,
+  [ITEM_PROMOTER_ROOK]: 20,
+  [ITEM_PROMOTER_KNIGHT]: 20,
+  [ITEM_PROMOTER_BISHOP]: 20,
+  [ITEM_PROMOTER_QUEEN]: 30,
+  [ITEM_PROMOTER_KING]: 40,
+  [ITEM_PROMOTER_CHECKERS]: 35,
   [ITEM_TELEPORTER]: 30,
-  [ITEM_KING_PROMOTER]: 40,
   [ITEM_CLONER]: 45,
   [ITEM_UPGRADER]: 20,
   [ITEM_BOMB]: 35
@@ -416,6 +426,25 @@ function _animTick() {
   }
 }
 
+function _randomPromoterItem() {
+  const r = randInt(31);
+  if (r < 8) return ITEM_PROMOTER_ROOK;
+  if (r < 16) return ITEM_PROMOTER_KNIGHT;
+  if (r < 24) return ITEM_PROMOTER_BISHOP;
+  if (r < 28) return ITEM_PROMOTER_QUEEN;
+  if (r < 30) return ITEM_PROMOTER_KING;
+  return ITEM_PROMOTER_CHECKERS;
+}
+
+function _randomItem() {
+  const r = randInt(7);
+  if (r < 3) return _randomPromoterItem();
+  if (r === 3) return ITEM_TELEPORTER;
+  if (r === 4) return ITEM_CLONER;
+  if (r === 5) return ITEM_UPGRADER;
+  return ITEM_BOMB;
+}
+
 function addToInventory(item) {
   for (let i = 0; i < inventory.length; i++) {
     if (inventory[i] === ITEM_NONE) { inventory[i] = item; return true; }
@@ -584,11 +613,9 @@ function generateRowBonuses(wave) {
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
-      const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB];
-      bonuses.push({ type: 'item', col: x, item: items[randInt(items.length)] });
+      bonuses.push({ type: 'item', col: x, item: _randomItem() });
     } else if (type === 'shop') {
-      const all = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB];
-      const offers = [all[randInt(all.length)], all[randInt(all.length)], all[randInt(all.length)]];
+      const offers = [_randomItem(), _randomItem(), _randomItem()];
       bonuses.push({ type: 'shop', col: x, offers, sold: [false, false, false] });
     } else if (type === 'void') {
       bonuses.push({ type: 'void', col: x });
@@ -641,7 +668,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
+  inventory.fill(ITEM_NONE); pawnPromoterMode = false; pawnPromoterTarget = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -696,7 +723,7 @@ function rollSetup() {
 
   // One random item in inventory
   inventory.fill(ITEM_NONE);
-  inventory[0] = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)];
+  inventory[0] = _randomItem();
 }
 
 function startGame() {
@@ -1024,7 +1051,7 @@ function makeMove(fromI, toI, visual = false) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
-    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
+    addToInventory(_randomItem());
   }
 
   if (p === KING && s === W) {
@@ -1081,13 +1108,12 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode || bombMode;
+  return pawnPromoterMode || teleporterMode || clonerMode || upgraderMode || bombMode;
 }
 
 function cancelItemMode() {
-  promotingMode = false; anyPromotingMode = false; teleporterMode = false;
-  kingPromotingMode = false; clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
-  promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
+  pawnPromoterMode = false; pawnPromoterTarget = NONE; teleporterMode = false;
+  clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
@@ -1098,9 +1124,8 @@ function trashActiveItem() {
     removeFromInventory(inventory._activeSlot);
     delete inventory._activeSlot;
   }
-  promotingMode = false; anyPromotingMode = false; teleporterMode = false;
-  kingPromotingMode = false; clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
-  promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
+  pawnPromoterMode = false; pawnPromoterTarget = NONE; teleporterMode = false;
+  clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   teleporterSelected = -1; clonerSelected = -1;
   draw();
 }
@@ -1181,7 +1206,7 @@ function teamLeap() {
         if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
+        if (newBoard[ni] === CHEST) addToInventory(_randomItem());
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
       }
     } else {
@@ -1666,9 +1691,9 @@ function canItemAffectPiece(item, i) {
   const p = board[i];
   switch (item) {
     case ITEM_UPGRADER: return true;
-    case ITEM_PROMOTER: return p === PAWN;
-    case ITEM_ANY_PROMOTER: return p !== KING;
-    case ITEM_KING_PROMOTER: return p === PAWN;
+    case ITEM_PROMOTER_ROOK: case ITEM_PROMOTER_KNIGHT: case ITEM_PROMOTER_BISHOP:
+    case ITEM_PROMOTER_QUEEN: case ITEM_PROMOTER_KING: case ITEM_PROMOTER_CHECKERS:
+      return p === PAWN;
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
@@ -1717,17 +1742,9 @@ function activateItemSpace(item, i) {
       health[i]++;
       activeItemSpaceIdx = -1;
       return true;
-    case ITEM_KING_PROMOTER:
-      board[i] = KING;
-      activeItemSpaceIdx = -1;
-      return true;
-    case ITEM_PROMOTER:
-      // Skip pawn selection â€" piece is already known. Jump straight to chooser.
-      promotingPawnIdx = i;
-      draw();
-      return false;
-    case ITEM_ANY_PROMOTER:
-      anyPromotingPieceIdx = i;
+    case ITEM_PROMOTER_ROOK: case ITEM_PROMOTER_KNIGHT: case ITEM_PROMOTER_BISHOP:
+    case ITEM_PROMOTER_QUEEN: case ITEM_PROMOTER_KING: case ITEM_PROMOTER_CHECKERS:
+      pawnPromoterMode = true; pawnPromoterTarget = PROMOTER_TARGET[item];
       draw();
       return false;
     case ITEM_TELEPORTER:
@@ -1800,7 +1817,7 @@ function _applySpacesAfterAdvancePass2() {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
     if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
-    else if (item === ITEM_KING_PROMOTER) { board[i] = KING; itemSpaces[i] = ITEM_NONE; }
+    else if (PROMOTER_TARGET[item] !== undefined) { board[i] = PROMOTER_TARGET[item]; itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
 
@@ -1925,7 +1942,7 @@ function applySpecialSpace(startI) {
       if (moverSide === W) gold += GOLD_VALUE[board[destI]] ?? 0;
     }
     if (board[destI] === CHEST && moverSide === W) {
-      addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
+      addToInventory(_randomItem());
     }
     board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI];
     board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
@@ -2296,12 +2313,12 @@ for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
   if (img && img.complete) ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
 }
 
-// King Promoter highlight â€" highlight white pawns
-if (kingPromotingMode) {
+// Pawn promoter highlight
+if (pawnPromoterMode) {
   for (let i = 0; i < 64; i++) {
     if (board[i] === PAWN && sides[i] === W) {
       const [px, py] = xy(i);
-      ctx.fillStyle = "rgba(180,80,255,0.5)";
+      ctx.fillStyle = "rgba(200,150,50,0.5)";
       ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
     }
   }
@@ -2341,19 +2358,6 @@ if (upgraderMode) {
   }
 }
 
-// Promoting mode highlight
-if (promotingMode || anyPromotingMode) {
-  for (let i = 0; i < 64; i++) {
-    const eligible = anyPromotingMode
-      ? (sides[i] === W && board[i] !== NONE && board[i] !== KING)
-      : (board[i] === PAWN && sides[i] === W);
-    if (eligible) {
-      const [px, py] = xy(i);
-      ctx.fillStyle = "rgba(200,150,50,0.5)";
-      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-    }
-  }
-}
 
 // Bomb highlight — 3x3 blast zone around hovered square
 if (bombMode && bombHoverIdx >= 0) {
@@ -2456,7 +2460,7 @@ ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.
 ctx.strokeStyle = "#5a5a8e";
 ctx.lineWidth = 3;
 ctx.stroke();
-const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
+const invStatus = pawnPromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[pawnPromoterTarget] || ""}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
 ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
 ctx.font = "42px Canterbury";
 ctx.textAlign = "center";
@@ -2467,7 +2471,7 @@ for (let r = 0; r < INV_ROWS; r++) {
     const slotIdx = r * INV_COLS + c;
     const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
     const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-    const isActive = (promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
+    const isActive = (pawnPromoterMode || teleporterMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
     ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
     ctx.beginPath();
     ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
@@ -2477,42 +2481,9 @@ for (let r = 0; r < INV_ROWS; r++) {
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-    if (dragSlot === slotIdx) { /* skip â€" item is being dragged */ } else
-    if (inventory[slotIdx] === ITEM_PROMOTER) {
-      const img = spriteImages["item_promoter"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
-      const img = spriteImages["item_any_promoter"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_TELEPORTER) {
-      const img = spriteImages["item_teleporter"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
-      const img = spriteImages["item_king_promoter"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_CLONER) {
-      const img = spriteImages["item_cloner"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_UPGRADER) {
-      const img = spriteImages["item_upgrader"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
-    } else if (inventory[slotIdx] === ITEM_BOMB) {
-      const img = spriteImages["item_bomb"];
-      if (img && img.complete) {
-        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-      }
+    if (dragSlot !== slotIdx && inventory[slotIdx] !== ITEM_NONE) {
+      const img = spriteImages[ITEM_SPRITE_KEYS[inventory[slotIdx]]];
+      if (img && img.complete) ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
     }
   }
 }
@@ -2522,7 +2493,7 @@ for (let r = 0; r < INV_ROWS; r++) {
 // Floating drag item
 if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
   const item = inventory[dragSlot];
-  const key = item === ITEM_PROMOTER ? "item_promoter" : item === ITEM_ANY_PROMOTER ? "item_any_promoter" : item === ITEM_TELEPORTER ? "item_teleporter" : item === ITEM_KING_PROMOTER ? "item_king_promoter" : item === ITEM_CLONER ? "item_cloner" : "item_upgrader";
+  const key = ITEM_SPRITE_KEYS[item] || "item_bomb";
   const img = spriteImages[key];
   const ds = INV_SLOT;
   if (img && img.complete) ctx.drawImage(img, dragX - ds / 2, dragY - ds / 2, ds, ds);
@@ -2846,59 +2817,7 @@ if (voidDeathAnim) {
 
 }
 
-function drawPromoDialog() {
-// Promoter piece chooser overlay
-if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const targetIdx2 = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
-  const [ptx, pty] = xy(targetIdx2);
-  const pawnSX = MARGIN + ptx * TILE + TILE / 2;
-  const pawnSY = BOARD_Y + MARGIN + pty * TILE + TILE / 2;
-
-  const dlgW = 600, dlgH = 200, dlgGap = 18;
-  const dlgX = (canvas.width - dlgW) / 2;
-  // Place dialogue above pawn if pawn is in lower half, below if in upper half
-  const placeAbove = pty >= 4;
-  const dlgY = placeAbove
-    ? Math.max(LOGO_H, pawnSY - TILE / 2 - dlgGap - dlgH)
-    : Math.min(canvas.height - dlgH - 10, pawnSY + TILE / 2 + dlgGap);
-
-  // Arrow between dialogue and pawn
-  const arrowX = Math.max(dlgX + 20, Math.min(dlgX + dlgW - 20, pawnSX));
-  const arrowTailY = placeAbove ? dlgY + dlgH : dlgY;
-  const arrowTipY  = placeAbove ? pawnSY - TILE / 2 - 4 : pawnSY + TILE / 2 + 4;
-  const arrowDir   = placeAbove ? 1 : -1; // +1 = tip points down, -1 = tip points up
-  ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(arrowX, arrowTailY); ctx.lineTo(arrowX, arrowTipY); ctx.stroke();
-  ctx.fillStyle = "#aaa";
-  ctx.beginPath();
-  ctx.moveTo(arrowX, arrowTipY);
-  ctx.lineTo(arrowX - 8, arrowTipY - arrowDir * 14);
-  ctx.lineTo(arrowX + 8, arrowTipY - arrowDir * 14);
-  ctx.closePath(); ctx.fill();
-
-  ctx.fillStyle = "#2a2a4e";
-  ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
-  ctx.fillStyle = "#ddd";
-  ctx.font = "42px Canterbury";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 36);
-  const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-  const cpad = 16, csize = 100;
-  const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
-  for (let i = 0; i < choices.length; i++) {
-    const cx = startX + i * (csize + cpad);
-    const cy = dlgY + 70;
-    ctx.fillStyle = "#3a3a5e";
-    ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 8); ctx.fill();
-    const img = spriteImages[`${W}_${choices[i]}`];
-    if (img && img.complete) ctx.drawImage(img, cx + 8, cy + 8, csize - 16, csize - 16);
-  }
-}
-
-}
+function drawPromoDialog() {}
 
 function drawShopDialog() {
 // Shop dialogue
@@ -3102,20 +3021,10 @@ canvas.addEventListener("mouseup", (e) => {
     const i = idx(gx, gy);
     inventory._activeSlot = slot;
 
-    if (item === ITEM_PROMOTER && board[i] === PAWN && sides[i] === W) {
-      promotingMode = true; promotingPawnIdx = i;
-      selected = -1; validMoves = [];
-      dragConsumed = true; draw(); return;
-    }
-    if (item === ITEM_ANY_PROMOTER && sides[i] === W && board[i] !== NONE && board[i] !== KING) {
-      anyPromotingMode = true; anyPromotingPieceIdx = i;
-      selected = -1; validMoves = [];
-      dragConsumed = true; draw(); return;
-    }
-    if (item === ITEM_KING_PROMOTER && board[i] === PAWN && sides[i] === W) {
-      board[i] = KING;
+    if (PROMOTER_TARGET[item] !== undefined && board[i] === PAWN && sides[i] === W) {
+      board[i] = PROMOTER_TARGET[item];
       removeFromInventory(slot); delete inventory._activeSlot;
-      kingPromotingMode = false;
+      pawnPromoterMode = false; pawnPromoterTarget = NONE;
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_UPGRADER && sides[i] === W) {
@@ -3213,61 +3122,21 @@ function handleShopClick(cx, cy) {
   }
 }
 
-function handlePromoDialogClick(cx, cy) {
-  const targetIdx = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
-  const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-  const dlgW = 600, dlgH = 200, dlgGap = 18;
-  const dlgX = (canvas.width - dlgW) / 2;
-  const [ptx2, pty2] = xy(targetIdx);
-  const pawnSY2 = BOARD_Y + MARGIN + pty2 * TILE + TILE / 2;
-  const placeAbove2 = pty2 >= 4;
-  const dlgY = placeAbove2
-    ? Math.max(LOGO_H, pawnSY2 - TILE / 2 - dlgGap - dlgH)
-    : Math.min(canvas.height - dlgH - 10, pawnSY2 + TILE / 2 + dlgGap);
-  const cpad = 16, csize = 100;
-  const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
-  for (let i = 0; i < choices.length; i++) {
-    const bx = startX + i * (csize + cpad);
-    const by = dlgY + 70;
-    if (cx >= bx && cx <= bx + csize && cy >= by && cy <= by + csize) {
-      board[targetIdx] = choices[i];
-      if (inventory._activeSlot !== undefined) {
-        removeFromInventory(inventory._activeSlot);
-        delete inventory._activeSlot;
-      }
-      const fromSpace = activeItemSpaceIdx >= 0;
-      activeItemSpaceIdx = -1;
-      promotingPawnIdx = -1; promotingMode = false;
-      anyPromotingPieceIdx = -1; anyPromotingMode = false;
-      if (fromSpace) { processNextQueuedItem(); } else { draw(); }
-      return;
-    }
-  }
-  const fromSpaceCancel = activeItemSpaceIdx >= 0;
-  activeItemSpaceIdx = -1;
-  promotingPawnIdx = -1; promotingMode = false;
-  anyPromotingPieceIdx = -1; anyPromotingMode = false;
-  if (fromSpaceCancel) { processNextQueuedItem(); } else { draw(); }
-}
-
-function handlePromotingModeClick(cx, cy) {
+function handlePawnPromoterClick(cx, cy) {
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
-    promotingPawnIdx = idx(gx, gy);
-    draw(); return;
+    board[idx(gx, gy)] = pawnPromoterTarget;
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+    const fromSpace = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1;
+    pawnPromoterMode = false; pawnPromoterTarget = NONE;
+    if (fromSpace) { processNextQueuedItem(); } else { draw(); }
+    return;
   }
-  promotingMode = false; draw();
-}
-
-function handleAnyPromotingModeClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W && board[idx(gx, gy)] !== NONE && board[idx(gx, gy)] !== KING) {
-    anyPromotingPieceIdx = idx(gx, gy);
-    draw(); return;
-  }
-  anyPromotingMode = false; draw();
+  pawnPromoterMode = false; pawnPromoterTarget = NONE;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  draw();
 }
 
 function handleUpgraderClick(cx, cy) {
@@ -3308,7 +3177,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
-        if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
+        if (board[i] === CHEST) addToInventory(_randomItem());
         board[i] = board[clonerSelected]; sides[i] = W; health[i] = health[clonerSelected];
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
@@ -3326,18 +3195,6 @@ function handleClonerClick(cx, cy) {
   if (clonerCancelSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
-function handleKingPromoterClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && board[idx(gx, gy)] === PAWN && sides[idx(gx, gy)] === W) {
-    board[idx(gx, gy)] = KING;
-    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    kingPromotingMode = false; draw(); return;
-  }
-  kingPromotingMode = false;
-  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  draw();
-}
 
 function handleTeleporterClick(cx, cy) {
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
@@ -3348,7 +3205,7 @@ function handleTeleporterClick(cx, cy) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
       if (board[i] === NONE || board[i] === CHEST) {
-        if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_UPGRADER][randInt(4)]);
+        if (board[i] === CHEST) addToInventory(_randomItem());
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
@@ -3435,14 +3292,12 @@ function handleInventoryClick(cx, cy) {
       const item = inventory[slotIdx];
       if (item === ITEM_NONE) continue;
       const modeMap = {
-        [ITEM_PROMOTER]:     () => { promotingMode = true; },
-        [ITEM_ANY_PROMOTER]: () => { anyPromotingMode = true; },
         [ITEM_TELEPORTER]:   () => { teleporterMode = true; teleporterSelected = -1; },
         [ITEM_CLONER]:       () => { clonerMode = true; clonerSelected = -1; },
-        [ITEM_KING_PROMOTER]:() => { kingPromotingMode = true; },
         [ITEM_UPGRADER]:     () => { upgraderMode = true; },
         [ITEM_BOMB]:         () => { bombMode = true; bombHoverIdx = -1; },
       };
+      for (const pt of PROMOTER_TYPES) modeMap[pt] = () => { pawnPromoterMode = true; pawnPromoterTarget = PROMOTER_TARGET[pt]; };
       if (modeMap[item]) {
         modeMap[item]();
         selected = -1; validMoves = [];
@@ -3578,13 +3433,10 @@ canvas.addEventListener("click", (e) => {
   if (anim) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (shopMode) { handleShopClick(cx, cy); return; }
-  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) { handlePromoDialogClick(cx, cy); return; }
-  if (promotingMode) { handlePromotingModeClick(cx, cy); return; }
-  if (anyPromotingMode) { handleAnyPromotingModeClick(cx, cy); return; }
+  if (pawnPromoterMode) { handlePawnPromoterClick(cx, cy); return; }
   if (upgraderMode) { handleUpgraderClick(cx, cy); return; }
   if (bombMode) { handleBombClick(cx, cy); return; }
   if (clonerMode) { handleClonerClick(cx, cy); return; }
-  if (kingPromotingMode) { handleKingPromoterClick(cx, cy); return; }
   if (teleporterMode) { handleTeleporterClick(cx, cy); return; }
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
