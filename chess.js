@@ -2451,11 +2451,14 @@ function draw() {
     ctx.fillStyle = "rgba(20,10,10,0.92)";
     ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
     ctx.font = "bold 32px sans-serif";
-    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.textBaseline = "middle"; ctx.textAlign = "left";
     ctx.fillStyle = "#fff";
-    const labelX = MARGIN + 20;
-    ctx.fillText("Are you sure?", labelX, midY);
-    const yesX = labelX + ctx.measureText("Are you sure?  ").width;
+    const labelText = "Are you sure?";
+    const labelW = ctx.measureText(labelText + "  ").width;
+    const totalW = labelW + btnW + gap + btnW;
+    const startX = MARGIN + (BOARD_PX - totalW) / 2;
+    ctx.fillText(labelText, startX, midY);
+    const yesX = startX + labelW;
     const noX = yesX + btnW + gap;
     ctx.fillStyle = "#993333";
     ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
@@ -3085,13 +3088,14 @@ canvas.addEventListener("click", (e) => {
 
   // Resign confirm dialog
   if (resignConfirm) {
-    const confirmY = GRAVE_Y + GRAVE_H + 16;
-    const panelH = 60, btnW = 90, btnH = 44, gap = 16;
+    const confirmY = GRAVE_Y + GRAVE_H + 12;
+    const panelH = 72, btnW = 100, btnH = 52, gap = 16;
     const midY = confirmY + panelH / 2;
     const btnY = midY - btnH / 2;
-    // Approximate label width at 32px bold ("Are you sure?  " ~= 380px)
-    const labelW = 380;
-    const yesX = MARGIN + 20 + labelW;
+    // Mirror draw code: label ~= 370px at 32px bold + spacing
+    const labelW = 370;
+    const totalW = labelW + btnW + gap + btnW;
+    const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
     const noX  = yesX + btnW + gap;
     if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
       resignConfirm = false;
