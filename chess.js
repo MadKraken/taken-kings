@@ -1303,7 +1303,30 @@ function canItemAffectPiece(item, i) {
     case ITEM_KING_PROMOTER: return p === PAWN;
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
+    case ITEM_BOMB: return true;
     default: return false;
+  }
+}
+
+function detonateBomb(centerI) {
+  const [gx, gy] = xy(centerI);
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const nx = gx + dx, ny = gy + dy;
+    if (!inB(nx, ny)) continue;
+    const i = idx(nx, ny);
+    if (board[i] !== NONE) {
+      if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+      if (sides[i] === B && board[i] === KING) score++;
+      if (sides[i] === B) gold += GOLD_VALUE[board[i]] ?? 0;
+      const bp = board[i], bs = sides[i];
+      const isPlayerPiece = bs === W;
+      const pool = isPlayerPiece ? playerDead : enemyDead;
+      const [tgx, tgy] = graveSlotPos(isPlayerPiece, bp);
+      startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
+      board[i] = NONE; sides[i] = 0; health[i] = 1;
+    }
+    if (specialSpaces[i]?.type === 'block' || specialSpaces[i]?.type === 'shop') specialSpaces[i] = null;
+    itemSpaces[i] = ITEM_NONE;
   }
 }
 
@@ -1343,6 +1366,10 @@ function activateItemSpace(item, i) {
       clonerMode = true;
       draw();
       return false;
+    case ITEM_BOMB:
+      detonateBomb(i);
+      activeItemSpaceIdx = -1;
+      return true;
   }
   activeItemSpaceIdx = -1;
   return true;
@@ -2681,25 +2708,7 @@ canvas.addEventListener("click", (e) => {
     bombMode = false; bombHoverIdx = -1;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     if (inB(gx, gy)) {
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const nx = gx + dx, ny = gy + dy;
-        if (!inB(nx, ny)) continue;
-        const i = idx(nx, ny);
-        if (board[i] !== NONE) {
-          if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-          if (sides[i] === B && board[i] === KING) score++;
-          if (sides[i] === W) gold += 0; // no gold for own pieces
-          else gold += GOLD_VALUE[board[i]] ?? 0;
-          const bp = board[i], bs = sides[i];
-          const isPlayerPiece = bs === W;
-          const pool = isPlayerPiece ? playerDead : enemyDead;
-          const [tgx, tgy] = graveSlotPos(isPlayerPiece, bp);
-          startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
-          board[i] = NONE; sides[i] = 0; health[i] = 1;
-        }
-        if (specialSpaces[i]?.type === 'block' || specialSpaces[i]?.type === 'shop') specialSpaces[i] = null;
-        itemSpaces[i] = ITEM_NONE;
-      }
+      detonateBomb(idx(gx, gy));
       firstMoveMade = true; recordPosition();
       if (!gameOver) endWhiteTurn(); else draw();
     } else { draw(); }
