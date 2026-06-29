@@ -2029,7 +2029,7 @@ function draw() {
       const key = `${drawSide}_${board[i]}`;
       const img = spriteImages[key];
       if (img && img.complete) {
-        if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(2.2)';
+        if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(3.5)';
         ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
         if (sides[i] === N) ctx.filter = 'none';
       }
@@ -2171,7 +2171,7 @@ function draw() {
         const key = `${animDrawSide}_${ap.piece}`;
         const img = spriteImages[key];
         if (img && img.complete) {
-          if (ap.side === N) ctx.filter = 'grayscale(1) brightness(2.2)';
+          if (ap.side === N) ctx.filter = 'grayscale(1) brightness(3.5)';
           ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
           if (ap.side === N) ctx.filter = 'none';
         }
