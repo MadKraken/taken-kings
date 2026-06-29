@@ -698,9 +698,7 @@ let _conquestGifActive = false;
 function playConquestGif() {
   const gif = document.getElementById('conquest-gif');
   if (!gif) { startGame(); return; }
-  const src = gif.src;
-  gif.src = '';
-  gif.src = src;
+  gif.src = 'begin conquest.gif?' + Date.now();
   _conquestGifActive = true;
   draw();
   gif.style.display = 'block';
