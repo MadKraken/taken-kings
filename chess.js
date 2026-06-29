@@ -2444,25 +2444,26 @@ function draw() {
   // Resign confirm — drawn after graveyard so it sits on top
   if (!gameOver && resignConfirm) {
     const confirmY = GRAVE_Y + GRAVE_H + 16;
-    const panelW = BOARD_PX, panelH = 120;
+    const panelH = 60;
     ctx.fillStyle = "rgba(20,10,10,0.92)";
-    ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, panelW, panelH, 8); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 38px sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Resign? Are you sure?", MARGIN + panelW / 2, confirmY + 36);
-    const btnW = 160, btnH = 52, gap = 24;
-    const yesX = MARGIN + panelW / 2 - btnW - gap / 2;
-    const noX  = MARGIN + panelW / 2 + gap / 2;
-    const btnY = confirmY + panelH - btnH - 12;
+    ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
+    ctx.font = "bold 32px sans-serif";
+    ctx.textBaseline = "middle";
+    const midY = confirmY + panelH / 2;
+    const btnW = 90, btnH = 44, gap = 16;
+    const labelX = MARGIN + 20;
+    ctx.fillStyle = "#fff"; ctx.textAlign = "left";
+    ctx.fillText("Are you sure?", labelX, midY);
+    const afterLabel = labelX + ctx.measureText("Are you sure?  ").width;
+    const yesX = afterLabel, noX = afterLabel + btnW + gap;
+    const btnY = midY - btnH / 2;
     ctx.fillStyle = "#993333";
     ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
     ctx.fillStyle = "#444";
     ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 32px sans-serif";
-    ctx.fillText("YES", yesX + btnW / 2, btnY + btnH / 2);
-    ctx.fillText("NO",  noX  + btnW / 2, btnY + btnH / 2);
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+    ctx.fillText("YES", yesX + btnW / 2, midY);
+    ctx.fillText("NO",  noX  + btnW / 2, midY);
   }
 
   // Flying pieces (captured pieces arcing to graveyard)
@@ -3084,10 +3085,13 @@ canvas.addEventListener("click", (e) => {
   // Resign confirm dialog
   if (resignConfirm) {
     const confirmY = GRAVE_Y + GRAVE_H + 16;
-    const panelW = BOARD_PX, btnW = 160, btnH = 52, gap = 24, panelH = 120;
-    const yesX = MARGIN + panelW / 2 - btnW - gap / 2;
-    const noX  = MARGIN + panelW / 2 + gap / 2;
-    const btnY = confirmY + panelH - btnH - 12;
+    const panelH = 60, btnW = 90, btnH = 44, gap = 16;
+    const midY = confirmY + panelH / 2;
+    const btnY = midY - btnH / 2;
+    // Approximate label width at 32px bold ("Are you sure?  " ~= 380px)
+    const labelW = 380;
+    const yesX = MARGIN + 20 + labelW;
+    const noX  = yesX + btnW + gap;
     if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
       resignConfirm = false;
       gameOver = true;
