@@ -1866,332 +1866,467 @@ const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
 // --- Draw ---
 
-function draw() {
-  const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / ANIM_MS)) : 1;
-  const _animToSet = (anim && anim.pieces && _animT < 1) ? new Set(anim.pieces.map(p => p.toIdx)) : new Set();
-  const _fieldAnim = anim && anim.boardDy !== 0 && _animT < 1;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#1a1a2e";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Ground texture — tiles vertically, scrolls with the field
-  const groundEl = spriteImages["ground"];
-  if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
-    const gw = groundEl.naturalWidth, gh = groundEl.naturalHeight;
-    const scale = canvas.width / gw;
-    const tileH = gh * scale;
-    const animScrollDy = _fieldAnim ? -anim.boardDy * (1 - _animT) : 0;
-    const rawOffset = -leapCount * TILE + animScrollDy;
-    const startY = -((rawOffset % tileH) + tileH) % tileH;
-    for (let ty = startY; ty < canvas.height; ty += tileH) {
-      ctx.drawImage(groundEl, 0, ty, canvas.width, tileH);
-    }
+function drawBackground(_fieldAnim, _animT) {
+// Ground texture — tiles vertically, scrolls with the field
+const groundEl = spriteImages["ground"];
+if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
+  const gw = groundEl.naturalWidth, gh = groundEl.naturalHeight;
+  const scale = canvas.width / gw;
+  const tileH = gh * scale;
+  const animScrollDy = _fieldAnim ? -anim.boardDy * (1 - _animT) : 0;
+  const rawOffset = -leapCount * TILE + animScrollDy;
+  const startY = -((rawOffset % tileH) + tileH) % tileH;
+  for (let ty = startY; ty < canvas.height; ty += tileH) {
+    ctx.drawImage(groundEl, 0, ty, canvas.width, tileH);
   }
+}
 
-  // Logo
-  const logoEl = spriteImages["logo"];
-  if (logoEl && logoEl.width > 0) {
-    const maxW = canvas.width - MARGIN * 2;
-    const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
-    const lw = logoEl.width * scale, lh = logoEl.height * scale;
-    ctx.drawImage(logoEl, MARGIN + BOARD_PX - lw, (LOGO_H - lh) / 2, lw, lh);
-  }
+// Logo
+const logoEl = spriteImages["logo"];
+if (logoEl && logoEl.width > 0) {
+  const maxW = canvas.width - MARGIN * 2;
+  const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
+  const lw = logoEl.width * scale, lh = logoEl.height * scale;
+  ctx.drawImage(logoEl, MARGIN + BOARD_PX - lw, (LOGO_H - lh) / 2, lw, lh);
+}
 
-  // Stats â€" left and right of logo, in the logo area
-  {
-    const statsY = LOGO_H * 0.55;
-    ctx.font = "42px Canterbury";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-    ctx.fillStyle = "#fff";
-    ctx.fillText(`Taken Kings: ${score}`, MARGIN, LOGO_H * 0.35);
-    ctx.fillText(`Gold: ${gold}`, MARGIN, LOGO_H * 0.70);
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  }
-
-  ctx.save();
-  ctx.translate(0, BOARD_Y);
-
-  // Labels
+// Stats â€" left and right of logo, in the logo area
+{
+  const statsY = LOGO_H * 0.55;
   ctx.font = "42px Canterbury";
-  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.shadowColor = "rgba(0,0,0,0.9)";
-  ctx.shadowBlur = 6;
-  ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.textAlign = "left";
+  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
   ctx.fillStyle = "#fff";
-  for (let i = 0; i < 8; i++) {
-    ctx.fillText("abcdefgh"[i], MARGIN + i * TILE + TILE / 2, MARGIN + BOARD_PX + 36);
-    ctx.fillText(8 + leapCount - i, MARGIN - 26, MARGIN + i * TILE + TILE / 2);
-  }
+  ctx.fillText(`Taken Kings: ${score}`, MARGIN, LOGO_H * 0.35);
+  ctx.fillText(`Gold: ${gold}`, MARGIN, LOGO_H * 0.70);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+}
+}
 
-  // During Field Advance animation: clip to the fog row and below so content above the fog
-  // stays invisible (darkness), while the incoming row slides through the fog into the board.
-  if (_fieldAnim) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(-MARGIN, MARGIN - TILE, canvas.width + MARGIN * 2, BOARD_PX + TILE);
-    ctx.clip();
-    ctx.translate(0, anim.boardDy * (1 - _animT));
-  }
+function drawBoardArea(_animT, _animToSet, _fieldAnim) {
+ctx.save();
+ctx.translate(0, BOARD_Y);
 
-  // Board squares (live rows 0-7) — semi-transparent so ground shows through
-  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    if ((x + y) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(px, py, TILE, TILE); }
-  }
+// Labels
+ctx.font = "42px Canterbury";
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.shadowColor = "rgba(0,0,0,0.9)";
+ctx.shadowBlur = 6;
+ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+ctx.fillStyle = "#fff";
+for (let i = 0; i < 8; i++) {
+  ctx.fillText("abcdefgh"[i], MARGIN + i * TILE + TILE / 2, MARGIN + BOARD_PX + 36);
+  ctx.fillText(8 + leapCount - i, MARGIN - 26, MARGIN + i * TILE + TILE / 2);
+}
+ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
-  // Flash red fog on bottom row when field advance is 1 turn away
-  if (shiftCountdown === 1 && !anim) {
-    const pulse = 0.18 + 0.22 * Math.abs(Math.sin(performance.now() / 250));
-    ctx.fillStyle = `rgba(220,30,30,${pulse.toFixed(3)})`;
-    ctx.fillRect(MARGIN, MARGIN + 7 * TILE, 8 * TILE, TILE);
-    if (!warnFlashRunning) { warnFlashRunning = true; requestAnimationFrame(_warnFlashTick); }
-  }
+// During Field Advance animation: clip to the fog row and below so content above the fog
+// stays invisible (darkness), while the incoming row slides through the fog into the board.
+if (_fieldAnim) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(-MARGIN, MARGIN - TILE, canvas.width + MARGIN * 2, BOARD_PX + TILE);
+  ctx.clip();
+  ctx.translate(0, anim.boardDy * (1 - _animT));
+}
 
-  // Preview row â€" always drawn one row above the live board, scrolls with the board.
-  // In normal play: shows nextWave (the upcoming row) underneath the fog overlay.
-  // During Field Advance: nextWave is already updated to wave B, so wave B sits here;
-  // the -TILE shift places it above the clip boundary at t=0 and slides it into the
-  // fog position by t=1, while wave A (board row 0) slides out of fog into the live board.
-  for (let x = 0; x < 8; x++) {
-    if ((x + 1) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE); }
-  }
-  const prevPad = 6;
-  for (const w of nextWave) {
-    const wimg = spriteImages[`${B}_${w.piece}`];
-    if (wimg && wimg.complete)
-      ctx.drawImage(wimg, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
-  }
-  for (const b of nextBonuses) {
-    const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
-    if (b.type === 'chest') {
-      const bimg = spriteImages["chest"];
-      if (bimg && bimg.complete) ctx.drawImage(bimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
-    } else if (b.type === 'item') {
-      const iimg = spriteImages[ITEM_SPRITE_KEYS[b.item]];
-      if (iimg && iimg.complete) {
-        ctx.fillStyle = "rgba(255,220,80,0.22)";
-        ctx.fillRect(bpx, bpy, TILE, TILE);
-        const sz2 = TILE * 0.7, off2 = (TILE - sz2) / 2;
-        const bob2 = Math.sin(performance.now() * 0.002 + b.col * 0.7) * 6;
-        const shadowAlpha2 = 0.3 - 0.1 * ((bob2 + 6) / 12);
-        ctx.save();
-        ctx.globalAlpha = shadowAlpha2;
-        ctx.beginPath();
-        ctx.ellipse(bpx + TILE / 2, bpy + TILE - 10, sz2 * 0.35, 5, 0, 0, Math.PI * 2);
-        ctx.fillStyle = "#000"; ctx.fill();
-        ctx.restore();
-        ctx.globalAlpha = 0.9;
-        ctx.drawImage(iimg, bpx + off2, bpy + off2 + bob2, sz2, sz2);
-        ctx.globalAlpha = 1.0;
-      }
-    } else if (b.type === 'obstacle') {
-      ctx.fillStyle = "rgba(80,200,255,0.18)";
+// Board squares (live rows 0-7) — semi-transparent so ground shows through
+for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+  if ((x + y) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(px, py, TILE, TILE); }
+}
+
+// Flash red fog on bottom row when field advance is 1 turn away
+if (shiftCountdown === 1 && !anim) {
+  const pulse = 0.18 + 0.22 * Math.abs(Math.sin(performance.now() / 250));
+  ctx.fillStyle = `rgba(220,30,30,${pulse.toFixed(3)})`;
+  ctx.fillRect(MARGIN, MARGIN + 7 * TILE, 8 * TILE, TILE);
+  if (!warnFlashRunning) { warnFlashRunning = true; requestAnimationFrame(_warnFlashTick); }
+}
+
+// Preview row â€" always drawn one row above the live board, scrolls with the board.
+// In normal play: shows nextWave (the upcoming row) underneath the fog overlay.
+// During Field Advance: nextWave is already updated to wave B, so wave B sits here;
+// the -TILE shift places it above the clip boundary at t=0 and slides it into the
+// fog position by t=1, while wave A (board row 0) slides out of fog into the live board.
+for (let x = 0; x < 8; x++) {
+  if ((x + 1) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN - TILE, TILE, TILE); }
+}
+const prevPad = 6;
+for (const w of nextWave) {
+  const wimg = spriteImages[`${B}_${w.piece}`];
+  if (wimg && wimg.complete)
+    ctx.drawImage(wimg, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+}
+for (const b of nextBonuses) {
+  const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
+  if (b.type === 'chest') {
+    const bimg = spriteImages["chest"];
+    if (bimg && bimg.complete) ctx.drawImage(bimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+  } else if (b.type === 'item') {
+    const iimg = spriteImages[ITEM_SPRITE_KEYS[b.item]];
+    if (iimg && iimg.complete) {
+      ctx.fillStyle = "rgba(255,220,80,0.22)";
       ctx.fillRect(bpx, bpy, TILE, TILE);
-      const pocx = bpx + TILE / 2, pocy = bpy + TILE / 2;
-      const pAngle = Math.atan2(b.dy, b.dx), pLen = TILE * 0.32;
-      const ptx = pocx + Math.cos(pAngle) * pLen, pty = pocy + Math.sin(pAngle) * pLen;
-      const pbx = pocx - Math.cos(pAngle) * pLen * 0.55, pby = pocy - Math.sin(pAngle) * pLen * 0.55;
-      ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(pbx, pby); ctx.lineTo(ptx, pty); ctx.stroke();
-      ctx.fillStyle = "rgba(120,230,255,0.9)";
-      ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
-      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
-      ctx.restore();
-    } else if (b.type === 'shop') {
-      ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
-      ctx.fillRect(bpx, bpy, TILE, TILE);
-      ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(bpx + 1, bpy + 1, TILE - 2, TILE - 2);
-      drawShopTile(ctx, bpx, bpy, TILE);
-    } else if (b.type === 'void') {
-      const vcx = bpx + TILE / 2, vcy = bpy + TILE / 2;
+      const sz2 = TILE * 0.7, off2 = (TILE - sz2) / 2;
+      const bob2 = Math.sin(performance.now() * 0.002 + b.col * 0.7) * 6;
+      const shadowAlpha2 = 0.3 - 0.1 * ((bob2 + 6) / 12);
       ctx.save();
-      ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2);
-      ctx.fillStyle = "#000000"; ctx.fill();
-      ctx.strokeStyle = "rgba(140,0,220,0.6)";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    } else if (b.type === 'block') {
-      drawBlockTile(ctx, bpx, bpy, TILE);
-    } else if (b.type === 'neutral') {
-      const nimg = spriteImages[`${B}_${b.piece}`];
-      if (nimg && nimg.complete) {
-        ctx.filter = 'grayscale(1) brightness(3.5)';
-        ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
-        ctx.filter = 'none';
-      }
-    }
-  }
-
-  // Exit row â€" only during Field Advance animation. Drawn at y=8 (one below the live board)
-  // so it starts at its original position and slides down behind the bottom border.
-  if (_fieldAnim && anim.exitRow) {
-    const erPad = 6;
-    for (let x = 0; x < 8; x++) {
-      if ((x + 8) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE); }
-    }
-    for (const ep of anim.exitRow) {
-      if (ep.piece === NONE) continue;
-      const ekey = ep.piece === CHEST ? "chest" : `${ep.side}_${ep.piece}`;
-      const eimg = spriteImages[ekey];
-      if (eimg && eimg.complete)
-        ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
-      if (ep.side === W && ep.hlth > 1) {
-        const bx = MARGIN + ep.x * TILE + TILE - 32, by = MARGIN + BOARD_PX + 2, sz = 30;
-        const shieldImg = spriteImages["item_upgrader"];
-        if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-        ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-        ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
-        ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
-      }
-    }
-  }
-
-  // Selected
-  if (selected >= 0) {
-    const [sx, sy] = xy(selected);
-    ctx.fillStyle = SEL_COLOR;
-    ctx.fillRect(MARGIN + sx * TILE, MARGIN + sy * TILE, TILE, TILE);
-  }
-
-  // Valid moves
-  for (const m of validMoves) {
-    const [mx, my] = xy(m);
-    ctx.fillStyle = MOVE_COLOR;
-    ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
-  }
-
-  // Item spaces (rendered before pieces so pieces show on top)
-  for (let i = 0; i < 64; i++) {
-    if (itemSpaces[i] === ITEM_NONE) continue;
-    const [x, y] = xy(i);
-    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    ctx.fillStyle = "rgba(255,220,80,0.22)";
-    ctx.fillRect(px, py, TILE, TILE);
-    ctx.strokeStyle = "rgba(255,200,50,0.55)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
-    const key = ITEM_SPRITE_KEYS[itemSpaces[i]];
-    const img = spriteImages[key];
-    if (img && img.complete) {
-      const sz = TILE * 0.7;
-      const offX = (TILE - sz) / 2;
-      const baseOffY = (TILE - sz) / 2;
-      const bob = Math.sin(performance.now() * 0.002 + i * 0.7) * 6;
-      // shadow
-      const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
-      ctx.save();
-      ctx.globalAlpha = shadowAlpha;
+      ctx.globalAlpha = shadowAlpha2;
       ctx.beginPath();
-      ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#000";
-      ctx.fill();
+      ctx.ellipse(bpx + TILE / 2, bpy + TILE - 10, sz2 * 0.35, 5, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#000"; ctx.fill();
       ctx.restore();
       ctx.globalAlpha = 0.9;
-      ctx.drawImage(img, px + offX, py + baseOffY + bob, sz, sz);
+      ctx.drawImage(iimg, bpx + off2, bpy + off2 + bob2, sz2, sz2);
       ctx.globalAlpha = 1.0;
     }
-  }
-
-  // Shop spaces
-  for (let i = 0; i < 64; i++) {
-    const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'shop') continue;
-    const [x, y] = xy(i);
-    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
-    ctx.fillRect(px, py, TILE, TILE);
-    ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
-    drawShopTile(ctx, px, py, TILE);
-  }
-
-  // Arrow spaces
-  for (let i = 0; i < 64; i++) {
-    const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'obstacle') continue;
-    const [x, y] = xy(i);
-    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    const cx = px + TILE / 2, cy = py + TILE / 2;
+  } else if (b.type === 'obstacle') {
     ctx.fillStyle = "rgba(80,200,255,0.18)";
-    ctx.fillRect(px, py, TILE, TILE);
-    const angle = Math.atan2(sp.dy, sp.dx);
-    const len = TILE * 0.32;
-    const tx2 = cx + Math.cos(angle) * len, ty2 = cy + Math.sin(angle) * len;
-    const bx2 = cx - Math.cos(angle) * len * 0.55, by2 = cy - Math.sin(angle) * len * 0.55;
-    ctx.strokeStyle = "rgba(120,230,255,0.9)";
-    ctx.lineWidth = 3; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(tx2, ty2); ctx.stroke();
+    ctx.fillRect(bpx, bpy, TILE, TILE);
+    const pocx = bpx + TILE / 2, pocy = bpy + TILE / 2;
+    const pAngle = Math.atan2(b.dy, b.dx), pLen = TILE * 0.32;
+    const ptx = pocx + Math.cos(pAngle) * pLen, pty = pocy + Math.sin(pAngle) * pLen;
+    const pbx = pocx - Math.cos(pAngle) * pLen * 0.55, pby = pocy - Math.sin(pAngle) * pLen * 0.55;
+    ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(pbx, pby); ctx.lineTo(ptx, pty); ctx.stroke();
     ctx.fillStyle = "rgba(120,230,255,0.9)";
-    ctx.save(); ctx.translate(tx2, ty2); ctx.rotate(angle);
+    ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
     ctx.restore();
-  }
-
-  // Void spaces
-  let hasVoid = false;
-  for (let i = 0; i < 64; i++) {
-    const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'void') continue;
-    hasVoid = true;
-    const [x, y] = xy(i);
-    const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-    const cx = px + TILE / 2, cy = py + TILE / 2;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2);
-    ctx.fillStyle = "#000000"; ctx.fill();
-    const pulse = 0.45 + 0.25 * Math.abs(Math.sin(performance.now() / 700 + i));
-    ctx.strokeStyle = `rgba(140,0,220,${pulse.toFixed(2)})`;
+  } else if (b.type === 'shop') {
+    ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
+    ctx.fillRect(bpx, bpy, TILE, TILE);
+    ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeRect(bpx + 1, bpy + 1, TILE - 2, TILE - 2);
+    drawShopTile(ctx, bpx, bpy, TILE);
+  } else if (b.type === 'void') {
+    const vcx = bpx + TILE / 2, vcy = bpy + TILE / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2);
+    ctx.fillStyle = "#000000"; ctx.fill();
+    ctx.strokeStyle = "rgba(140,0,220,0.6)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
+  } else if (b.type === 'block') {
+    drawBlockTile(ctx, bpx, bpy, TILE);
+  } else if (b.type === 'neutral') {
+    const nimg = spriteImages[`${B}_${b.piece}`];
+    if (nimg && nimg.complete) {
+      ctx.filter = 'grayscale(1) brightness(3.5)';
+      ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+      ctx.filter = 'none';
+    }
   }
-  if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
-  const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item');
-  if (hasItemSpace && !chestBobRunning && !anim) { chestBobRunning = true; requestAnimationFrame(_chestBobTick); }
+}
 
-  // Block spaces
-  for (let i = 0; i < 64; i++) {
-    const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'block') continue;
-    const [x, y] = xy(i);
-    drawBlockTile(ctx, MARGIN + x * TILE, MARGIN + y * TILE, TILE);
+// Exit row â€" only during Field Advance animation. Drawn at y=8 (one below the live board)
+// so it starts at its original position and slides down behind the bottom border.
+if (_fieldAnim && anim.exitRow) {
+  const erPad = 6;
+  for (let x = 0; x < 8; x++) {
+    if ((x + 8) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE); }
   }
+  for (const ep of anim.exitRow) {
+    if (ep.piece === NONE) continue;
+    const ekey = ep.piece === CHEST ? "chest" : `${ep.side}_${ep.piece}`;
+    const eimg = spriteImages[ekey];
+    if (eimg && eimg.complete)
+      ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
+    if (ep.side === W && ep.hlth > 1) {
+      const bx = MARGIN + ep.x * TILE + TILE - 32, by = MARGIN + BOARD_PX + 2, sz = 30;
+      const shieldImg = spriteImages["item_upgrader"];
+      if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
+      ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
+      ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+      ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+    }
+  }
+}
 
-  // Pieces and chests
-  const pad = 6;
+// Selected
+if (selected >= 0) {
+  const [sx, sy] = xy(selected);
+  ctx.fillStyle = SEL_COLOR;
+  ctx.fillRect(MARGIN + sx * TILE, MARGIN + sy * TILE, TILE, TILE);
+}
+
+// Valid moves
+for (const m of validMoves) {
+  const [mx, my] = xy(m);
+  ctx.fillStyle = MOVE_COLOR;
+  ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
+}
+
+// Item spaces (rendered before pieces so pieces show on top)
+for (let i = 0; i < 64; i++) {
+  if (itemSpaces[i] === ITEM_NONE) continue;
+  const [x, y] = xy(i);
+  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+  ctx.fillStyle = "rgba(255,220,80,0.22)";
+  ctx.fillRect(px, py, TILE, TILE);
+  ctx.strokeStyle = "rgba(255,200,50,0.55)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
+  const key = ITEM_SPRITE_KEYS[itemSpaces[i]];
+  const img = spriteImages[key];
+  if (img && img.complete) {
+    const sz = TILE * 0.7;
+    const offX = (TILE - sz) / 2;
+    const baseOffY = (TILE - sz) / 2;
+    const bob = Math.sin(performance.now() * 0.002 + i * 0.7) * 6;
+    // shadow
+    const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
+    ctx.save();
+    ctx.globalAlpha = shadowAlpha;
+    ctx.beginPath();
+    ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#000";
+    ctx.fill();
+    ctx.restore();
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(img, px + offX, py + baseOffY + bob, sz, sz);
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+// Shop spaces
+for (let i = 0; i < 64; i++) {
+  const sp = specialSpaces[i];
+  if (!sp || sp.type !== 'shop') continue;
+  const [x, y] = xy(i);
+  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+  ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
+  ctx.fillRect(px, py, TILE, TILE);
+  ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
+  drawShopTile(ctx, px, py, TILE);
+}
+
+// Arrow spaces
+for (let i = 0; i < 64; i++) {
+  const sp = specialSpaces[i];
+  if (!sp || sp.type !== 'obstacle') continue;
+  const [x, y] = xy(i);
+  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+  const cx = px + TILE / 2, cy = py + TILE / 2;
+  ctx.fillStyle = "rgba(80,200,255,0.18)";
+  ctx.fillRect(px, py, TILE, TILE);
+  const angle = Math.atan2(sp.dy, sp.dx);
+  const len = TILE * 0.32;
+  const tx2 = cx + Math.cos(angle) * len, ty2 = cy + Math.sin(angle) * len;
+  const bx2 = cx - Math.cos(angle) * len * 0.55, by2 = cy - Math.sin(angle) * len * 0.55;
+  ctx.strokeStyle = "rgba(120,230,255,0.9)";
+  ctx.lineWidth = 3; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(tx2, ty2); ctx.stroke();
+  ctx.fillStyle = "rgba(120,230,255,0.9)";
+  ctx.save(); ctx.translate(tx2, ty2); ctx.rotate(angle);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// Void spaces
+let hasVoid = false;
+for (let i = 0; i < 64; i++) {
+  const sp = specialSpaces[i];
+  if (!sp || sp.type !== 'void') continue;
+  hasVoid = true;
+  const [x, y] = xy(i);
+  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
+  const cx = px + TILE / 2, cy = py + TILE / 2;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2);
+  ctx.fillStyle = "#000000"; ctx.fill();
+  const pulse = 0.45 + 0.25 * Math.abs(Math.sin(performance.now() / 700 + i));
+  ctx.strokeStyle = `rgba(140,0,220,${pulse.toFixed(2)})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
+const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item');
+if (hasItemSpace && !chestBobRunning && !anim) { chestBobRunning = true; requestAnimationFrame(_chestBobTick); }
+
+// Block spaces
+for (let i = 0; i < 64; i++) {
+  const sp = specialSpaces[i];
+  if (!sp || sp.type !== 'block') continue;
+  const [x, y] = xy(i);
+  drawBlockTile(ctx, MARGIN + x * TILE, MARGIN + y * TILE, TILE);
+}
+
+// Pieces and chests
+const pad = 6;
+for (let i = 0; i < 64; i++) {
+  if (board[i] === NONE) continue;
+  if (_animToSet.has(i)) continue; // drawn by animation overlay at interpolated position
+  const [x, y] = xy(i);
+  if (board[i] === CHEST) {
+    const img = spriteImages["chest"];
+    if (img && img.complete) {
+      ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+    }
+  } else {
+    const drawSide = sides[i] === N ? B : sides[i];
+    const key = `${drawSide}_${board[i]}`;
+    const img = spriteImages[key];
+    if (img && img.complete) {
+      if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(3.5)';
+      ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+      if (sides[i] === N) ctx.filter = 'none';
+    }
+  }
+  // Shield badge: shows number of shields (health - 1) using the shield sprite
+  if (sides[i] === W && health[i] > 1) {
+    const shields = health[i] - 1;
+    const sz = 45;
+    const bx = MARGIN + x * TILE + TILE - sz - 2, by = MARGIN + y * TILE + 2;
+    const shieldImg = spriteImages["item_upgrader"];
+    if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "rgba(0,0,0,0.7)";
+    ctx.lineWidth = 2.5;
+    ctx.font = "42px Canterbury";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
+    ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
+  }
+}
+
+// Pending captures: pieces removed from board but not yet visually taken (waiting for hop anim)
+for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
+  const i = Number(idxStr);
+  const [x, y] = xy(i);
+  const key = `${cap.side}_${cap.piece}`;
+  const img = spriteImages[key];
+  if (img && img.complete) ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+}
+
+// King Promoter highlight â€" highlight white pawns
+if (kingPromotingMode) {
   for (let i = 0; i < 64; i++) {
-    if (board[i] === NONE) continue;
-    if (_animToSet.has(i)) continue; // drawn by animation overlay at interpolated position
-    const [x, y] = xy(i);
-    if (board[i] === CHEST) {
-      const img = spriteImages["chest"];
-      if (img && img.complete) {
-        ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+    if (board[i] === PAWN && sides[i] === W) {
+      const [px, py] = xy(i);
+      ctx.fillStyle = "rgba(180,80,255,0.5)";
+      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+    }
+  }
+}
+
+// Cloner highlight
+if (clonerMode) {
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== W) continue;
+    const [px, py] = xy(i);
+    if (clonerSelected < 0) {
+      if (adjacentClonerDests(i).length > 0) {
+        ctx.fillStyle = "rgba(50,220,120,0.45)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      }
+    } else if (i === clonerSelected) {
+      ctx.fillStyle = "rgba(50,220,120,0.7)";
+      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+    }
+  }
+  if (clonerSelected >= 0) {
+    for (const di of adjacentClonerDests(clonerSelected)) {
+      const [px, py] = xy(di);
+      ctx.fillStyle = "rgba(50,220,120,0.4)";
+      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+    }
+  }
+}
+
+// Upgrader highlight â€" all white pieces selectable
+if (upgraderMode) {
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== W) continue;
+    const [px, py] = xy(i);
+    ctx.fillStyle = "rgba(255,200,50,0.5)";
+    ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+  }
+}
+
+// Promoting mode highlight
+if (promotingMode || anyPromotingMode) {
+  for (let i = 0; i < 64; i++) {
+    const eligible = anyPromotingMode
+      ? (sides[i] === W && board[i] !== NONE && board[i] !== KING)
+      : (board[i] === PAWN && sides[i] === W);
+    if (eligible) {
+      const [px, py] = xy(i);
+      ctx.fillStyle = "rgba(200,150,50,0.5)";
+      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+    }
+  }
+}
+
+// Bomb highlight — 3x3 blast zone around hovered square
+if (bombMode && bombHoverIdx >= 0) {
+  const [hx, hy] = xy(bombHoverIdx);
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const nx = hx + dx, ny = hy + dy;
+    if (!inB(nx, ny)) continue;
+    ctx.fillStyle = dx === 0 && dy === 0 ? "rgba(255,80,0,0.55)" : "rgba(255,160,0,0.35)";
+    ctx.fillRect(MARGIN + nx * TILE, MARGIN + ny * TILE, TILE, TILE);
+  }
+}
+
+// Teleporter highlight
+if (teleporterMode) {
+  for (let i = 0; i < 64; i++) {
+    const [px, py] = xy(i);
+    if (teleporterSelected < 0) {
+      // Highlight selectable white pieces
+      if (sides[i] === W) {
+        ctx.fillStyle = "rgba(80,180,255,0.45)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
       }
     } else {
-      const drawSide = sides[i] === N ? B : sides[i];
-      const key = `${drawSide}_${board[i]}`;
-      const img = spriteImages[key];
-      if (img && img.complete) {
-        if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(3.5)';
-        ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
-        if (sides[i] === N) ctx.filter = 'none';
+      // Highlight selected piece
+      if (i === teleporterSelected) {
+        ctx.fillStyle = "rgba(80,180,255,0.7)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+      } else if (board[i] === NONE || board[i] === CHEST) {
+        // Highlight valid destinations
+        ctx.fillStyle = "rgba(80,255,180,0.4)";
+        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
       }
     }
-    // Shield badge: shows number of shields (health - 1) using the shield sprite
-    if (sides[i] === W && health[i] > 1) {
-      const shields = health[i] - 1;
-      const sz = 45;
-      const bx = MARGIN + x * TILE + TILE - sz - 2, by = MARGIN + y * TILE + 2;
+  }
+}
+
+if (_fieldAnim) ctx.restore(); // remove clip + field-advance shift
+ctx.restore(); // remove board translate
+
+// Animation overlay: draw moving pieces at interpolated canvas positions
+if (anim && anim.pieces && _animT < 1) {
+  const apad = 6;
+  for (const ap of anim.pieces) {
+    const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
+    const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT;
+    if (ap.piece === CHEST) {
+      const img = spriteImages["chest"];
+      if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+    } else {
+      const animDrawSide = ap.side === N ? B : ap.side;
+      const key = `${animDrawSide}_${ap.piece}`;
+      const img = spriteImages[key];
+      if (img && img.complete) {
+        if (ap.side === N) ctx.filter = 'grayscale(1) brightness(3.5)';
+        ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+        if (ap.side === N) ctx.filter = 'none';
+      }
+    }
+    if (ap.side === W && ap.hlth > 1) {
+      const shields = ap.hlth - 1;
+      const sz = 45; const bx = acx + TILE - sz - 2, by = acy + 2;
       const shieldImg = spriteImages["item_upgrader"];
       if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
       ctx.fillStyle = "#ffffff";
@@ -2203,666 +2338,583 @@ function draw() {
       ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
     }
   }
+}
+}
 
-  // Pending captures: pieces removed from board but not yet visually taken (waiting for hop anim)
-  for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
-    const i = Number(idxStr);
-    const [x, y] = xy(i);
-    const key = `${cap.side}_${cap.piece}`;
-    const img = spriteImages[key];
-    if (img && img.complete) ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
-  }
+function drawFogWindow() {
+// Static fog window â€" completely independent of the board. Always at the same canvas
+// position. Board content (including the preview row) scrolls underneath it.
+const previewRowNum = 8 + leapCount + 1;
+ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
+ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
+ctx.font = "42px Canterbury";
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+ctx.fillStyle = "#fff";
+ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
+}
 
-  // King Promoter highlight â€" highlight white pawns
-  if (kingPromotingMode) {
-    for (let i = 0; i < 64; i++) {
-      if (board[i] === PAWN && sides[i] === W) {
-        const [px, py] = xy(i);
-        ctx.fillStyle = "rgba(180,80,255,0.5)";
-        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
+function drawInventoryPanel() {
+// Inventory panel
+const invY = INV_PANEL_TOP + 50;
+ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 16; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 6;
+ctx.fillStyle = "#2a2a4e";
+ctx.beginPath();
+ctx.roundRect(INV_X, invY - 50, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 58, 8);
+ctx.fill();
+ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+ctx.strokeStyle = "#5a5a8e";
+ctx.lineWidth = 3;
+ctx.stroke();
+const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
+ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
+ctx.font = "42px Canterbury";
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.fillText(invStatus || "Inventory", INV_X + INV_W / 2, invY - 25);
+for (let r = 0; r < INV_ROWS; r++) {
+  for (let c = 0; c < INV_COLS; c++) {
+    const slotIdx = r * INV_COLS + c;
+    const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+    const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+    const isActive = (promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
+    ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
+    ctx.beginPath();
+    ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
+    ctx.fill();
+    if (isActive) {
+      ctx.strokeStyle = "#e8a735";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    if (dragSlot === slotIdx) { /* skip â€" item is being dragged */ } else
+    if (inventory[slotIdx] === ITEM_PROMOTER) {
+      const img = spriteImages["item_promoter"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
+      const img = spriteImages["item_any_promoter"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_TELEPORTER) {
+      const img = spriteImages["item_teleporter"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
+      const img = spriteImages["item_king_promoter"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_CLONER) {
+      const img = spriteImages["item_cloner"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_UPGRADER) {
+      const img = spriteImages["item_upgrader"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+      }
+    } else if (inventory[slotIdx] === ITEM_BOMB) {
+      const img = spriteImages["item_bomb"];
+      if (img && img.complete) {
+        ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
       }
     }
   }
+}
 
-  // Cloner highlight
-  if (clonerMode) {
-    for (let i = 0; i < 64; i++) {
-      if (sides[i] !== W) continue;
-      const [px, py] = xy(i);
-      if (clonerSelected < 0) {
-        if (adjacentClonerDests(i).length > 0) {
-          ctx.fillStyle = "rgba(50,220,120,0.45)";
-          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-        }
-      } else if (i === clonerSelected) {
-        ctx.fillStyle = "rgba(50,220,120,0.7)";
-        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-      }
-    }
-    if (clonerSelected >= 0) {
-      for (const di of adjacentClonerDests(clonerSelected)) {
-        const [px, py] = xy(di);
-        ctx.fillStyle = "rgba(50,220,120,0.4)";
-        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-      }
-    }
+
+
+// Floating drag item
+if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
+  const item = inventory[dragSlot];
+  const key = item === ITEM_PROMOTER ? "item_promoter" : item === ITEM_ANY_PROMOTER ? "item_any_promoter" : item === ITEM_TELEPORTER ? "item_teleporter" : item === ITEM_KING_PROMOTER ? "item_king_promoter" : item === ITEM_CLONER ? "item_cloner" : "item_upgrader";
+  const img = spriteImages[key];
+  const ds = INV_SLOT;
+  if (img && img.complete) ctx.drawImage(img, dragX - ds / 2, dragY - ds / 2, ds, ds);
+}
+}
+
+function drawActionButtons() {
+// Buttons
+ctx.font = "42px Canterbury";
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+
+if (!gameOver && isItemActive()) {
+  // Cancel and Trash buttons replace all other controls while an item is being used
+  const halfW = BOARD_PX / 2 - BTN_GAP / 2;
+  const btnH = 80;
+  // Cancel (X)
+  ctx.fillStyle = "#5a2a2a";
+  ctx.beginPath(); ctx.roundRect(MARGIN, BTN_Y, halfW, btnH, 8); ctx.fill();
+  ctx.fillStyle = "#ff8888";
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("✕  Cancel", MARGIN + halfW / 2, BTN_Y + btnH / 2);
+  // Trash
+  ctx.fillStyle = "#2a2a2a";
+  ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
+  ctx.fillStyle = "#aaa";
+  ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
+} else if (!gameOver && gamePhase === 'setup') {
+  // Die button (left) and Go button (right)
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+  ctx.fillStyle = "#4a3a7a";
+  ctx.beginPath(); ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6); ctx.fill();
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+  ctx.fillStyle = "#2a6e3f";
+  ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
+  ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+} else if (!gameOver && gamePhase === 'playing') {
+  const shiftUrgent = shiftCountdown <= 3;
+  if (!replayMode) {
+    // Team Leap
+    const canLeap = canTeamLeap();
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
+    ctx.beginPath();
+    ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
+    ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = canLeap ? "#fff" : "#999";
+    ctx.font = "42px Canterbury";
+    ctx.fillText("Team Advance", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+
+    // Pitch Shift
+    const canShift = canManualPitchShift();
+    const shiftHighlight = hintMove === "leap";
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
+    ctx.beginPath();
+    ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
+    ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = canShift ? "#fff" : "#999";
+    ctx.font = "42px Canterbury";
+    ctx.fillText("Field Advance", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
   }
-
-  // Upgrader highlight â€" all white pieces selectable
-  if (upgraderMode) {
-    for (let i = 0; i < 64; i++) {
-      if (sides[i] !== W) continue;
-      const [px, py] = xy(i);
-      ctx.fillStyle = "rgba(255,200,50,0.5)";
-      ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-    }
-  }
-
-  // Promoting mode highlight
-  if (promotingMode || anyPromotingMode) {
-    for (let i = 0; i < 64; i++) {
-      const eligible = anyPromotingMode
-        ? (sides[i] === W && board[i] !== NONE && board[i] !== KING)
-        : (board[i] === PAWN && sides[i] === W);
-      if (eligible) {
-        const [px, py] = xy(i);
-        ctx.fillStyle = "rgba(200,150,50,0.5)";
-        ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-      }
-    }
-  }
-
-  // Bomb highlight — 3x3 blast zone around hovered square
-  if (bombMode && bombHoverIdx >= 0) {
-    const [hx, hy] = xy(bombHoverIdx);
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const nx = hx + dx, ny = hy + dy;
-      if (!inB(nx, ny)) continue;
-      ctx.fillStyle = dx === 0 && dy === 0 ? "rgba(255,80,0,0.55)" : "rgba(255,160,0,0.35)";
-      ctx.fillRect(MARGIN + nx * TILE, MARGIN + ny * TILE, TILE, TILE);
-    }
-  }
-
-  // Teleporter highlight
-  if (teleporterMode) {
-    for (let i = 0; i < 64; i++) {
-      const [px, py] = xy(i);
-      if (teleporterSelected < 0) {
-        // Highlight selectable white pieces
-        if (sides[i] === W) {
-          ctx.fillStyle = "rgba(80,180,255,0.45)";
-          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-        }
-      } else {
-        // Highlight selected piece
-        if (i === teleporterSelected) {
-          ctx.fillStyle = "rgba(80,180,255,0.7)";
-          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-        } else if (board[i] === NONE || board[i] === CHEST) {
-          // Highlight valid destinations
-          ctx.fillStyle = "rgba(80,255,180,0.4)";
-          ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-        }
-      }
-    }
-  }
-
-  if (_fieldAnim) ctx.restore(); // remove clip + field-advance shift
-  ctx.restore(); // remove board translate
-
-  // Animation overlay: draw moving pieces at interpolated canvas positions
-  if (anim && anim.pieces && _animT < 1) {
-    const apad = 6;
-    for (const ap of anim.pieces) {
-      const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
-      const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT;
-      if (ap.piece === CHEST) {
-        const img = spriteImages["chest"];
-        if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
-      } else {
-        const animDrawSide = ap.side === N ? B : ap.side;
-        const key = `${animDrawSide}_${ap.piece}`;
-        const img = spriteImages[key];
-        if (img && img.complete) {
-          if (ap.side === N) ctx.filter = 'grayscale(1) brightness(3.5)';
-          ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
-          if (ap.side === N) ctx.filter = 'none';
-        }
-      }
-      if (ap.side === W && ap.hlth > 1) {
-        const shields = ap.hlth - 1;
-        const sz = 45; const bx = acx + TILE - sz - 2, by = acy + 2;
-        const shieldImg = spriteImages["item_upgrader"];
-        if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-        ctx.fillStyle = "#ffffff";
-        ctx.strokeStyle = "rgba(0,0,0,0.7)";
-        ctx.lineWidth = 2.5;
-        ctx.font = "42px Canterbury";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
-        ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
-      }
-    }
-  }
-
-  // Static fog window â€" completely independent of the board. Always at the same canvas
-  // position. Board content (including the preview row) scrolls underneath it.
-  const previewRowNum = 8 + leapCount + 1;
-  ctx.fillStyle = "rgba(15, 15, 40, 0.58)";
-  ctx.fillRect(MARGIN, BOARD_Y + MARGIN - TILE, 8 * TILE, TILE);
+  // Auto-advance countdown — flush under inventory in replay, normal position otherwise
+  const cdY = replayMode ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
   ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
+  const cdText = `Field Auto-Advances In ${shiftCountdown} ${shiftCountdown === 1 ? 'Turn' : 'Turns'}`;
+  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = shiftUrgent ? "#ff6666" : "#88bbff";
+  ctx.fillText(cdText, MARGIN + BOARD_PX / 2, cdY);
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+
+  if (!replayMode) {
+    // Resign
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = "#993333";
+    ctx.beginPath();
+    ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
+    ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Resign", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
+  }
+}
+}
+
+function drawGameOverOverlay() {
+// Game over overlay
+if (gameOver && !replayMode) {
+  const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "82px Canterbury";
+  ctx.fillStyle = "#cc1111";
+  ctx.fillText("Game Over", boardCX, boardCY - 40);
+  ctx.font = "82px Canterbury";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
+  const btnW = 280, btnH = 70, btnGap = 24;
+  const totalW = btnW * 2 + btnGap;
+  const soY = boardCY + 120;
+  const soX = boardCX - totalW / 2;
+  const repX = soX + btnW + btnGap;
+  ctx.font = "44px Canterbury";
+  ctx.fillStyle = "#2a6e3f";
+  ctx.beginPath(); ctx.roundRect(soX, soY, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText("Start Over", soX + btnW / 2, soY + btnH / 2);
+  ctx.fillStyle = replaySnapshots.length > 0 ? "#1a4a8a" : "#333";
+  ctx.beginPath(); ctx.roundRect(repX, soY, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText("Replay", repX + btnW / 2, soY + btnH / 2);
+  ctx.textBaseline = "alphabetic";
+}
+}
+
+function drawReplayControls() {
+if (replayMode) {
+  // Replay nav controls — placed right below the countdown label
+  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+  const ctrlW = BOARD_PX, ctrlH = 130;
+  ctx.fillStyle = "rgba(10,10,40,0.93)";
+  ctx.beginPath(); ctx.roundRect(ctrlX, ctrlY, ctrlW, ctrlH, 10); ctx.fill();
+  const midX = ctrlX + ctrlW / 2;
+  const rowY1 = ctrlY + 28;
+  // Step label
+  ctx.font = "30px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#aac";
+  ctx.fillText(`Step ${replayIdx + 1} of ${replaySnapshots.length}`, midX, rowY1);
+  // Buttons row
+  const bW = 140, bH = 52, bGap = 14;
+  const totalBW = 4 * bW + 3 * bGap;
+  let bx = midX - totalBW / 2;
+  const by = ctrlY + ctrlH - bH - 14;
+  const btns = [
+    { label: "◀ Prev", id: 'prev', enabled: replayIdx > 0, color: "#334" },
+    { label: "Next ▶", id: 'next', enabled: replayIdx < replaySnapshots.length - 1, color: "#334" },
+    { label: replayAutoPlay ? "⏸ Pause" : "▶ Auto", id: 'auto', enabled: true, color: "#1a4a8a" },
+    { label: "✕ Exit", id: 'exit', enabled: true, color: "#5a1a1a" },
+  ];
+  ctx.font = "32px Canterbury";
+  for (const btn of btns) {
+    ctx.fillStyle = btn.enabled ? btn.color : "#222";
+    ctx.beginPath(); ctx.roundRect(bx, by, bW, bH, 8); ctx.fill();
+    ctx.fillStyle = btn.enabled ? "#fff" : "#555";
+    ctx.fillText(btn.label, bx + bW / 2, by + bH / 2);
+    bx += bW + bGap;
+  }
+}
+}
+
+function drawGraveyardPanels() {
+// Graveyard panels (hidden while using an item or in replay mode)
+if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+  const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
   ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
   ctx.fillStyle = "#fff";
-  ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
+  ctx.fillText(isPlayer ? "Fallen" : "Slain", gx + GRAVE_W / 2, GRAVE_Y - 6);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-
-  // Inventory panel
-  const invY = INV_PANEL_TOP + 50;
-  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 16; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 6;
-  ctx.fillStyle = "#2a2a4e";
-  ctx.beginPath();
-  ctx.roundRect(INV_X, invY - 50, INV_W, INV_ROWS * (INV_SLOT + INV_PAD) + INV_PAD + 58, 8);
-  ctx.fill();
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.strokeStyle = "#5a5a8e";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
-  ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
-  ctx.font = "42px Canterbury";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(invStatus || "Inventory", INV_X + INV_W / 2, invY - 25);
-  for (let r = 0; r < INV_ROWS; r++) {
-    for (let c = 0; c < INV_COLS; c++) {
-      const slotIdx = r * INV_COLS + c;
-      const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
-      const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-      const isActive = (promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
-      ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
-      ctx.beginPath();
-      ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
-      ctx.fill();
-      if (isActive) {
-        ctx.strokeStyle = "#e8a735";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-      if (dragSlot === slotIdx) { /* skip â€" item is being dragged */ } else
-      if (inventory[slotIdx] === ITEM_PROMOTER) {
-        const img = spriteImages["item_promoter"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_ANY_PROMOTER) {
-        const img = spriteImages["item_any_promoter"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_TELEPORTER) {
-        const img = spriteImages["item_teleporter"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_KING_PROMOTER) {
-        const img = spriteImages["item_king_promoter"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_CLONER) {
-        const img = spriteImages["item_cloner"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_UPGRADER) {
-        const img = spriteImages["item_upgrader"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      } else if (inventory[slotIdx] === ITEM_BOMB) {
-        const img = spriteImages["item_bomb"];
-        if (img && img.complete) {
-          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
-        }
-      }
-    }
-  }
-
-
-
-  // Floating drag item
-  if (dragSlot >= 0 && inventory[dragSlot] !== ITEM_NONE) {
-    const item = inventory[dragSlot];
-    const key = item === ITEM_PROMOTER ? "item_promoter" : item === ITEM_ANY_PROMOTER ? "item_any_promoter" : item === ITEM_TELEPORTER ? "item_teleporter" : item === ITEM_KING_PROMOTER ? "item_king_promoter" : item === ITEM_CLONER ? "item_cloner" : "item_upgrader";
-    const img = spriteImages[key];
-    const ds = INV_SLOT;
-    if (img && img.complete) ctx.drawImage(img, dragX - ds / 2, dragY - ds / 2, ds, ds);
-  }
-
-  // Buttons
-  ctx.font = "42px Canterbury";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  if (!gameOver && isItemActive()) {
-    // Cancel and Trash buttons replace all other controls while an item is being used
-    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
-    const btnH = 80;
-    // Cancel (X)
-    ctx.fillStyle = "#5a2a2a";
-    ctx.beginPath(); ctx.roundRect(MARGIN, BTN_Y, halfW, btnH, 8); ctx.fill();
-    ctx.fillStyle = "#ff8888";
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("✕  Cancel", MARGIN + halfW / 2, BTN_Y + btnH / 2);
-    // Trash
-    ctx.fillStyle = "#2a2a2a";
-    ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
-    ctx.fillStyle = "#aaa";
-    ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
-  } else if (!gameOver && gamePhase === 'setup') {
-    // Die button (left) and Go button (right)
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#4a3a7a";
-    ctx.beginPath(); ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
-
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#2a6e3f";
-    ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
-    ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
-  } else if (!gameOver && gamePhase === 'playing') {
-    const shiftUrgent = shiftCountdown <= 3;
-    if (!replayMode) {
-      // Team Leap
-      const canLeap = canTeamLeap();
-      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-      ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
-      ctx.beginPath();
-      ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
-      ctx.fill();
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = canLeap ? "#fff" : "#999";
-      ctx.font = "42px Canterbury";
-      ctx.fillText("Team Advance", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
-
-      // Pitch Shift
-      const canShift = canManualPitchShift();
-      const shiftHighlight = hintMove === "leap";
-      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-      ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
-      ctx.beginPath();
-      ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
-      ctx.fill();
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = canShift ? "#fff" : "#999";
-      ctx.font = "42px Canterbury";
-      ctx.fillText("Field Advance", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
-    }
-    // Auto-advance countdown — flush under inventory in replay, normal position otherwise
-    const cdY = replayMode ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center";
-    const cdText = `Field Auto-Advances In ${shiftCountdown} ${shiftCountdown === 1 ? 'Turn' : 'Turns'}`;
-    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-    ctx.fillStyle = shiftUrgent ? "#ff6666" : "#88bbff";
-    ctx.fillText(cdText, MARGIN + BOARD_PX / 2, cdY);
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-
-    if (!replayMode) {
-      // Resign
-      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-      ctx.fillStyle = "#993333";
-      ctx.beginPath();
-      ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
-      ctx.fill();
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = "#fff";
-      ctx.fillText("Resign", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
-    }
-  }
-
-
-  // Game over overlay
-  if (gameOver && !replayMode) {
-    const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "82px Canterbury";
-    ctx.fillStyle = "#cc1111";
-    ctx.fillText("Game Over", boardCX, boardCY - 40);
-    ctx.font = "82px Canterbury";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
-    const btnW = 280, btnH = 70, btnGap = 24;
-    const totalW = btnW * 2 + btnGap;
-    const soY = boardCY + 120;
-    const soX = boardCX - totalW / 2;
-    const repX = soX + btnW + btnGap;
-    ctx.font = "44px Canterbury";
-    ctx.fillStyle = "#2a6e3f";
-    ctx.beginPath(); ctx.roundRect(soX, soY, btnW, btnH, 8); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Start Over", soX + btnW / 2, soY + btnH / 2);
-    ctx.fillStyle = replaySnapshots.length > 0 ? "#1a4a8a" : "#333";
-    ctx.beginPath(); ctx.roundRect(repX, soY, btnW, btnH, 8); ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Replay", repX + btnW / 2, soY + btnH / 2);
-    ctx.textBaseline = "alphabetic";
-  }
-  if (replayMode) {
-    // Replay nav controls — placed right below the countdown label
-    const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
-    const ctrlW = BOARD_PX, ctrlH = 130;
-    ctx.fillStyle = "rgba(10,10,40,0.93)";
-    ctx.beginPath(); ctx.roundRect(ctrlX, ctrlY, ctrlW, ctrlH, 10); ctx.fill();
-    const midX = ctrlX + ctrlW / 2;
-    const rowY1 = ctrlY + 28;
-    // Step label
-    ctx.font = "30px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillStyle = "#aac";
-    ctx.fillText(`Step ${replayIdx + 1} of ${replaySnapshots.length}`, midX, rowY1);
-    // Buttons row
-    const bW = 140, bH = 52, bGap = 14;
-    const totalBW = 4 * bW + 3 * bGap;
-    let bx = midX - totalBW / 2;
-    const by = ctrlY + ctrlH - bH - 14;
-    const btns = [
-      { label: "◀ Prev", id: 'prev', enabled: replayIdx > 0, color: "#334" },
-      { label: "Next ▶", id: 'next', enabled: replayIdx < replaySnapshots.length - 1, color: "#334" },
-      { label: replayAutoPlay ? "⏸ Pause" : "▶ Auto", id: 'auto', enabled: true, color: "#1a4a8a" },
-      { label: "✕ Exit", id: 'exit', enabled: true, color: "#5a1a1a" },
-    ];
-    ctx.font = "32px Canterbury";
-    for (const btn of btns) {
-      ctx.fillStyle = btn.enabled ? btn.color : "#222";
-      ctx.beginPath(); ctx.roundRect(bx, by, bW, bH, 8); ctx.fill();
-      ctx.fillStyle = btn.enabled ? "#fff" : "#555";
-      ctx.fillText(btn.label, bx + bW / 2, by + bH / 2);
-      bx += bW + bGap;
-    }
-  }
-  // Graveyard panels (hidden while using an item or in replay mode)
-  if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
-    const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-    ctx.fillStyle = "#fff";
-    ctx.fillText(isPlayer ? "Fallen" : "Slain", gx + GRAVE_W / 2, GRAVE_Y - 6);
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
-    const sideVal = isPlayer ? W : B;
-    const slotW = GRAVE_W / GRAVE_TYPES.length;
-    const pieceSz = 80;
-    const pieceCY = GRAVE_Y + 10 + pieceSz / 2;
-    for (let si = 0; si < GRAVE_TYPES.length; si++) {
-      const pt = GRAVE_TYPES[si];
-      const count = pool[pt] || 0;
-      const [cx] = graveSlotPos(isPlayer, pt);
-      const cy = pieceCY;
-      const isKing = pt === KING;
-      const img = spriteImages[`${sideVal}_${pt}`];
-      if (count === 0) {
-        ctx.globalAlpha = 0.15;
-        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
-        ctx.globalAlpha = 1;
-      } else {
-        if (isKing) {
-          ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
-          ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
-        }
-        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
-        ctx.font = "28px Canterbury";
-        ctx.fillStyle = "#fff";
-        ctx.textAlign = "center"; ctx.textBaseline = "top";
-        ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
-      }
-    }
-  }
-
-  // Resign confirm — drawn after graveyard so it sits on top
-  if (!gameOver && resignConfirm) {
-    const confirmY = GRAVE_Y + GRAVE_H + 12;
-    const panelH = 72, btnW = 100, btnH = 52, gap = 16;
-    const midY = confirmY + panelH / 2;
-    const btnY = midY - btnH / 2;
-    ctx.save();
-    ctx.fillStyle = "rgba(20,10,10,0.92)";
-    ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
-    ctx.font = "37px Canterbury";
-    ctx.textBaseline = "middle"; ctx.textAlign = "left";
-    ctx.fillStyle = "#fff";
-    const labelText = "Are you sure?";
-    const labelW = ctx.measureText(labelText + "  ").width;
-    const totalW = labelW + btnW + gap + btnW;
-    const startX = MARGIN + (BOARD_PX - totalW) / 2;
-    ctx.fillText(labelText, startX, midY);
-    const yesX = startX + labelW;
-    const noX = yesX + btnW + gap;
-    ctx.fillStyle = "#993333";
-    ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#444";
-    ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("YES", yesX + btnW / 2, midY);
-    ctx.fillText("NO",  noX  + btnW / 2, midY);
-    ctx.restore();
-  }
-
-  // Flying pieces (captured pieces arcing to graveyard)
-  {
-    const now = performance.now();
-    for (const f of flyAnims) {
-      const t = Math.min(1, (now - f.startMs) / f.dur);
-      const cx2 = f.sx + (f.tx - f.sx) * t;
-      const cy2 = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 160;
-      const angle = t * Math.PI * 5;
-      const sz = 36;
-      const img = spriteImages[`${f.side}_${f.piece}`];
-      if (img && img.complete) {
-        ctx.save();
-        ctx.translate(cx2, cy2);
-        ctx.rotate(angle);
-        ctx.globalAlpha = t > 0.85 ? 1 - (t - 0.85) / 0.15 * 0.6 : 1;
-        ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
-        ctx.globalAlpha = 1;
-        ctx.restore();
-      }
-    }
-  }
-
-  // Shield pop effects
-  if (shieldPops.length > 0) {
-    const now = performance.now();
-    for (const sp of shieldPops) {
-      const t = Math.min(1, (now - sp.startMs) / sp.dur);
-      const radius = 16 + t * 32;
-      ctx.globalAlpha = (1 - t) * 0.85;
-      ctx.strokeStyle = "#88ccff";
-      ctx.lineWidth = 3 - t * 2;
-      ctx.beginPath();
-      ctx.arc(sp.cx, sp.cy, radius, 0, Math.PI * 2);
-      ctx.stroke();
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
+  const sideVal = isPlayer ? W : B;
+  const slotW = GRAVE_W / GRAVE_TYPES.length;
+  const pieceSz = 80;
+  const pieceCY = GRAVE_Y + 10 + pieceSz / 2;
+  for (let si = 0; si < GRAVE_TYPES.length; si++) {
+    const pt = GRAVE_TYPES[si];
+    const count = pool[pt] || 0;
+    const [cx] = graveSlotPos(isPlayer, pt);
+    const cy = pieceCY;
+    const isKing = pt === KING;
+    const img = spriteImages[`${sideVal}_${pt}`];
+    if (count === 0) {
+      ctx.globalAlpha = 0.15;
+      if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
       ctx.globalAlpha = 1;
+    } else {
+      if (isKing) {
+        ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
+        ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
+      }
+      if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+      ctx.font = "28px Canterbury";
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
     }
   }
+}
 
-  // Explosion flash
-  if (explosionAnim) {
-    const t = Math.min(1, (performance.now() - explosionAnim.startMs) / EXPLOSION_MS);
-    const img = spriteImages["explosion"];
+}
+
+function drawResignConfirm() {
+// Resign confirm — drawn after graveyard so it sits on top
+if (!gameOver && resignConfirm) {
+  const confirmY = GRAVE_Y + GRAVE_H + 12;
+  const panelH = 72, btnW = 100, btnH = 52, gap = 16;
+  const midY = confirmY + panelH / 2;
+  const btnY = midY - btnH / 2;
+  ctx.save();
+  ctx.fillStyle = "rgba(20,10,10,0.92)";
+  ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
+  ctx.font = "37px Canterbury";
+  ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  ctx.fillStyle = "#fff";
+  const labelText = "Are you sure?";
+  const labelW = ctx.measureText(labelText + "  ").width;
+  const totalW = labelW + btnW + gap + btnW;
+  const startX = MARGIN + (BOARD_PX - totalW) / 2;
+  ctx.fillText(labelText, startX, midY);
+  const yesX = startX + labelW;
+  const noX = yesX + btnW + gap;
+  ctx.fillStyle = "#993333";
+  ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
+  ctx.fillStyle = "#444";
+  ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 6); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("YES", yesX + btnW / 2, midY);
+  ctx.fillText("NO",  noX  + btnW / 2, midY);
+  ctx.restore();
+}
+
+}
+
+function drawFlyAnims() {
+// Flying pieces (captured pieces arcing to graveyard)
+{
+  const now = performance.now();
+  for (const f of flyAnims) {
+    const t = Math.min(1, (now - f.startMs) / f.dur);
+    const cx2 = f.sx + (f.tx - f.sx) * t;
+    const cy2 = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 160;
+    const angle = t * Math.PI * 5;
+    const sz = 36;
+    const img = spriteImages[`${f.side}_${f.piece}`];
     if (img && img.complete) {
-      const sz = TILE * 3.2 * (0.4 + 0.6 * Math.sin(t * Math.PI)); // grows then shrinks
       ctx.save();
-      ctx.globalAlpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
-      ctx.translate(explosionAnim.cx, explosionAnim.cy);
-      ctx.rotate(t * 0.4);
+      ctx.translate(cx2, cy2);
+      ctx.rotate(angle);
+      ctx.globalAlpha = t > 0.85 ? 1 - (t - 0.85) / 0.15 * 0.6 : 1;
       ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
       ctx.globalAlpha = 1;
       ctx.restore();
     }
   }
+}
 
-  // Void death spiral
-  if (voidDeathAnim) {
-    const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
-    const img = spriteImages[`${voidDeathAnim.side}_${voidDeathAnim.piece}`];
-    if (img && img.complete) {
-      const scale = (1 - t) * (1 - t);
-      const angle = t * Math.PI * 6;
-      const sz = TILE * 0.75;
-      ctx.save();
-      ctx.translate(voidDeathAnim.cx, voidDeathAnim.cy);
-      ctx.rotate(angle);
-      ctx.globalAlpha = 1 - t * 0.5;
-      ctx.drawImage(img, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-  }
+}
 
-  // Promoter piece chooser overlay
-  if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const targetIdx2 = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
-    const [ptx, pty] = xy(targetIdx2);
-    const pawnSX = MARGIN + ptx * TILE + TILE / 2;
-    const pawnSY = BOARD_Y + MARGIN + pty * TILE + TILE / 2;
-
-    const dlgW = 600, dlgH = 200, dlgGap = 18;
-    const dlgX = (canvas.width - dlgW) / 2;
-    // Place dialogue above pawn if pawn is in lower half, below if in upper half
-    const placeAbove = pty >= 4;
-    const dlgY = placeAbove
-      ? Math.max(LOGO_H, pawnSY - TILE / 2 - dlgGap - dlgH)
-      : Math.min(canvas.height - dlgH - 10, pawnSY + TILE / 2 + dlgGap);
-
-    // Arrow between dialogue and pawn
-    const arrowX = Math.max(dlgX + 20, Math.min(dlgX + dlgW - 20, pawnSX));
-    const arrowTailY = placeAbove ? dlgY + dlgH : dlgY;
-    const arrowTipY  = placeAbove ? pawnSY - TILE / 2 - 4 : pawnSY + TILE / 2 + 4;
-    const arrowDir   = placeAbove ? 1 : -1; // +1 = tip points down, -1 = tip points up
-    ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(arrowX, arrowTailY); ctx.lineTo(arrowX, arrowTipY); ctx.stroke();
-    ctx.fillStyle = "#aaa";
+function drawShieldPops() {
+// Shield pop effects
+if (shieldPops.length > 0) {
+  const now = performance.now();
+  for (const sp of shieldPops) {
+    const t = Math.min(1, (now - sp.startMs) / sp.dur);
+    const radius = 16 + t * 32;
+    ctx.globalAlpha = (1 - t) * 0.85;
+    ctx.strokeStyle = "#88ccff";
+    ctx.lineWidth = 3 - t * 2;
     ctx.beginPath();
-    ctx.moveTo(arrowX, arrowTipY);
-    ctx.lineTo(arrowX - 8, arrowTipY - arrowDir * 14);
-    ctx.lineTo(arrowX + 8, arrowTipY - arrowDir * 14);
-    ctx.closePath(); ctx.fill();
-
-    ctx.fillStyle = "#2a2a4e";
-    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
-    ctx.fillStyle = "#ddd";
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 36);
-    const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
-    const cpad = 16, csize = 100;
-    const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
-    for (let i = 0; i < choices.length; i++) {
-      const cx = startX + i * (csize + cpad);
-      const cy = dlgY + 70;
-      ctx.fillStyle = "#3a3a5e";
-      ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 8); ctx.fill();
-      const img = spriteImages[`${W}_${choices[i]}`];
-      if (img && img.complete) ctx.drawImage(img, cx + 8, cy + 8, csize - 16, csize - 16);
-    }
+    ctx.arc(sp.cx, sp.cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
+}
 
-  // Shop dialogue
-  if (shopMode) {
-    ctx.fillStyle = "rgba(0,0,0,0.65)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 
-    const dlgW = 820, dlgH = 500;
-    const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
-    ctx.fillStyle = "#1e1e3c";
-    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.fill();
-    ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.stroke();
+function drawExplosion() {
+// Explosion flash
+if (explosionAnim) {
+  const t = Math.min(1, (performance.now() - explosionAnim.startMs) / EXPLOSION_MS);
+  const img = spriteImages["explosion"];
+  if (img && img.complete) {
+    const sz = TILE * 3.2 * (0.4 + 0.6 * Math.sin(t * Math.PI)); // grows then shrinks
+    ctx.save();
+    ctx.globalAlpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
+    ctx.translate(explosionAnim.cx, explosionAnim.cy);
+    ctx.rotate(t * 0.4);
+    ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
 
-    ctx.fillStyle = "#f0c040";
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 45);
-    ctx.fillStyle = "#aaa";
-    ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
+}
 
-    const cardW = 220, cardH = 300, cardGap = 20;
-    const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
-    const cardsY = dlgY + 120;
+function drawVoidDeath() {
+// Void death spiral
+if (voidDeathAnim) {
+  const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
+  const img = spriteImages[`${voidDeathAnim.side}_${voidDeathAnim.piece}`];
+  if (img && img.complete) {
+    const scale = (1 - t) * (1 - t);
+    const angle = t * Math.PI * 6;
+    const sz = TILE * 0.75;
+    ctx.save();
+    ctx.translate(voidDeathAnim.cx, voidDeathAnim.cy);
+    ctx.rotate(angle);
+    ctx.globalAlpha = 1 - t * 0.5;
+    ctx.drawImage(img, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
 
-    const shopSold = specialSpaces[shopSpaceIdx].sold;
-    for (let i = 0; i < shopOffers.length; i++) {
-      const item = shopOffers[i];
-      const price = ITEM_PRICES[item];
-      const cardX = cardsStartX + i * (cardW + cardGap);
-      const isSold = shopSold[i];
-      const canAfford = !isSold && gold >= price;
+}
 
-      ctx.fillStyle = isSold ? "#161622" : (canAfford ? "#2a2a52" : "#1e1e30");
-      ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.fill();
-      if (canAfford) {
-        ctx.strokeStyle = "rgba(255,200,50,0.3)"; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
-      }
+function drawPromoDialog() {
+// Promoter piece chooser overlay
+if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
-      if (simg && simg.complete) {
-        ctx.globalAlpha = isSold ? 0.25 : 1.0;
-        ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
-        ctx.globalAlpha = 1.0;
-      }
+  const targetIdx2 = promotingPawnIdx >= 0 ? promotingPawnIdx : anyPromotingPieceIdx;
+  const [ptx, pty] = xy(targetIdx2);
+  const pawnSX = MARGIN + ptx * TILE + TILE / 2;
+  const pawnSY = BOARD_Y + MARGIN + pty * TILE + TILE / 2;
 
-      ctx.fillStyle = isSold ? "#444" : "#ddd";
-      ctx.font = "42px Canterbury";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const name = ITEM_NAMES[item];
-      const words = name.split(" ");
-      if (words.length > 1) {
-        const mid = Math.ceil(words.length / 2);
-        ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 130);
-        ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 168);
-      } else {
-        ctx.fillText(name, cardX + cardW / 2, cardsY + 149);
-      }
+  const dlgW = 600, dlgH = 200, dlgGap = 18;
+  const dlgX = (canvas.width - dlgW) / 2;
+  // Place dialogue above pawn if pawn is in lower half, below if in upper half
+  const placeAbove = pty >= 4;
+  const dlgY = placeAbove
+    ? Math.max(LOGO_H, pawnSY - TILE / 2 - dlgGap - dlgH)
+    : Math.min(canvas.height - dlgH - 10, pawnSY + TILE / 2 + dlgGap);
 
-      ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
-      ctx.font = "42px Canterbury";
-      ctx.fillText(isSold ? "-" : `${price} G`, cardX + cardW / 2, cardsY + 210);
+  // Arrow between dialogue and pawn
+  const arrowX = Math.max(dlgX + 20, Math.min(dlgX + dlgW - 20, pawnSX));
+  const arrowTailY = placeAbove ? dlgY + dlgH : dlgY;
+  const arrowTipY  = placeAbove ? pawnSY - TILE / 2 - 4 : pawnSY + TILE / 2 + 4;
+  const arrowDir   = placeAbove ? 1 : -1; // +1 = tip points down, -1 = tip points up
+  ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(arrowX, arrowTailY); ctx.lineTo(arrowX, arrowTipY); ctx.stroke();
+  ctx.fillStyle = "#aaa";
+  ctx.beginPath();
+  ctx.moveTo(arrowX, arrowTipY);
+  ctx.lineTo(arrowX - 8, arrowTipY - arrowDir * 14);
+  ctx.lineTo(arrowX + 8, arrowTipY - arrowDir * 14);
+  ctx.closePath(); ctx.fill();
 
-      ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
-      ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
-      ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
-      ctx.font = "42px Canterbury";
-      ctx.textBaseline = "middle";
-      ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
+  ctx.fillStyle = "#2a2a4e";
+  ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 10); ctx.fill();
+  ctx.fillStyle = "#ddd";
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Promote to:", dlgX + dlgW / 2, dlgY + 36);
+  const choices = [ROOK, KNIGHT, BISHOP, QUEEN];
+  const cpad = 16, csize = 100;
+  const startX = dlgX + (dlgW - choices.length * (csize + cpad) + cpad) / 2;
+  for (let i = 0; i < choices.length; i++) {
+    const cx = startX + i * (csize + cpad);
+    const cy = dlgY + 70;
+    ctx.fillStyle = "#3a3a5e";
+    ctx.beginPath(); ctx.roundRect(cx, cy, csize, csize, 8); ctx.fill();
+    const img = spriteImages[`${W}_${choices[i]}`];
+    if (img && img.complete) ctx.drawImage(img, cx + 8, cy + 8, csize - 16, csize - 16);
+  }
+}
+
+}
+
+function drawShopDialog() {
+// Shop dialogue
+if (shopMode) {
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const dlgW = 820, dlgH = 500;
+  const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
+  ctx.fillStyle = "#1e1e3c";
+  ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.fill();
+  ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(dlgX, dlgY, dlgW, dlgH, 12); ctx.stroke();
+
+  ctx.fillStyle = "#f0c040";
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 45);
+  ctx.fillStyle = "#aaa";
+  ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
+
+  const cardW = 220, cardH = 300, cardGap = 20;
+  const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
+  const cardsY = dlgY + 120;
+
+  const shopSold = specialSpaces[shopSpaceIdx].sold;
+  for (let i = 0; i < shopOffers.length; i++) {
+    const item = shopOffers[i];
+    const price = ITEM_PRICES[item];
+    const cardX = cardsStartX + i * (cardW + cardGap);
+    const isSold = shopSold[i];
+    const canAfford = !isSold && gold >= price;
+
+    ctx.fillStyle = isSold ? "#161622" : (canAfford ? "#2a2a52" : "#1e1e30");
+    ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.fill();
+    if (canAfford) {
+      ctx.strokeStyle = "rgba(255,200,50,0.3)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
     }
 
-    // Close button
-    const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58;
-    ctx.fillStyle = "#4a2a2a";
-    ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 110, 44, 6); ctx.fill();
-    ctx.fillStyle = "#ddd";
+    const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
+    if (simg && simg.complete) {
+      ctx.globalAlpha = isSold ? 0.25 : 1.0;
+      ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
+      ctx.globalAlpha = 1.0;
+    }
+
+    ctx.fillStyle = isSold ? "#444" : "#ddd";
+    ctx.font = "42px Canterbury";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const name = ITEM_NAMES[item];
+    const words = name.split(" ");
+    if (words.length > 1) {
+      const mid = Math.ceil(words.length / 2);
+      ctx.fillText(words.slice(0, mid).join(" "), cardX + cardW / 2, cardsY + 130);
+      ctx.fillText(words.slice(mid).join(" "), cardX + cardW / 2, cardsY + 168);
+    } else {
+      ctx.fillText(name, cardX + cardW / 2, cardsY + 149);
+    }
+
+    ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
+    ctx.font = "42px Canterbury";
+    ctx.fillText(isSold ? "-" : `${price} G`, cardX + cardW / 2, cardsY + 210);
+
+    ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
+    ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
+    ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
     ctx.font = "42px Canterbury";
     ctx.textBaseline = "middle";
-    ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
+    ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
   }
 
+  // Close button
+  const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58;
+  ctx.fillStyle = "#4a2a2a";
+  ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 110, 44, 6); ctx.fill();
+  ctx.fillStyle = "#ddd";
+  ctx.font = "42px Canterbury";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
+}
+}
+
+function draw() {
+  const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / ANIM_MS)) : 1;
+  const _animToSet = (anim && anim.pieces && _animT < 1) ? new Set(anim.pieces.map(p => p.toIdx)) : new Set();
+  const _fieldAnim = anim && anim.boardDy !== 0 && _animT < 1;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#1a1a2e";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawBackground(_fieldAnim, _animT);
+  drawBoardArea(_animT, _animToSet, _fieldAnim);
+  drawFogWindow();
+  drawInventoryPanel();
+  drawActionButtons();
+  drawGameOverOverlay();
+  drawReplayControls();
+  drawGraveyardPanels();
+  drawResignConfirm();
+  drawFlyAnims();
+  drawShieldPops();
+  drawExplosion();
+  drawVoidDeath();
+  drawPromoDialog();
+  drawShopDialog();
 }
 
 function canvasCoords(e) {
