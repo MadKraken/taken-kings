@@ -1,4 +1,5 @@
-﻿const canvas = document.getElementById("board");
+﻿const VERSION = "2b15647";
+const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 const TILE = 120;
@@ -2936,6 +2937,11 @@ function draw() {
   drawVoidDeath();
   drawPromoDialog();
   drawShopDialog();
+  ctx.font = "22px monospace";
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(VERSION, 8, canvas.height - 6);
 }
 
 function canvasCoords(e) {
