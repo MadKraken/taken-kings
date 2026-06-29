@@ -1,4 +1,4 @@
-﻿const VERSION = "222";
+﻿const VERSION = "223";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -705,21 +705,38 @@ function startGame() {
   draw();
 }
 
+const CONQUEST_FPS = 30;
+const CONQUEST_FRAME_COUNT = 94;
+const _conquestFrames = [];
+for (let _i = 0; _i < CONQUEST_FRAME_COUNT; _i++) {
+  const _img = new Image();
+  _img.src = `animations/begin conquest frames/Begin Conquest -${_i}.png`;
+  _conquestFrames.push(_img);
+}
+
 let _conquestGifActive = false;
+let _conquestStartMs = 0;
+let _conquestCurrentFrame = 0;
 
 function playConquestGif() {
-  const vid = document.getElementById('conquest-gif');
-  if (!vid) { startGame(); return; }
+  if (_conquestFrames.length === 0) { startGame(); return; }
   _conquestGifActive = true;
+  _conquestStartMs = performance.now();
+  _conquestCurrentFrame = 0;
+  requestAnimationFrame(_conquestTick);
+}
+
+function _conquestTick() {
+  if (!_conquestGifActive) return;
+  const elapsed = performance.now() - _conquestStartMs;
+  _conquestCurrentFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
   draw();
-  vid.currentTime = 0;
-  vid.style.display = 'block';
-  vid.onended = () => {
-    vid.style.display = 'none';
+  if (_conquestCurrentFrame >= CONQUEST_FRAME_COUNT - 1 && elapsed >= (CONQUEST_FRAME_COUNT / CONQUEST_FPS) * 1000) {
     _conquestGifActive = false;
     startGame();
-  };
-  vid.play();
+  } else {
+    requestAnimationFrame(_conquestTick);
+  }
 }
 
 
@@ -2980,6 +2997,8 @@ function draw() {
   if (_conquestGifActive) {
     ctx.fillStyle = "rgba(0,0,0,0.20)";
     ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
+    const _cf = _conquestFrames[_conquestCurrentFrame];
+    if (_cf && _cf.complete) ctx.drawImage(_cf, 0, 0, canvas.width, canvas.height);
   }
   drawInventoryPanel();
   drawActionButtons();
