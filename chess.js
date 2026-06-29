@@ -108,6 +108,7 @@ let shieldPops = [];
 let warnFlashRunning = false;
 let voidPulseRunning = false;
 let chestBobRunning = false;
+let voidDeathAnim = null; // {cx, cy, piece, side, startMs, onDone}
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -207,6 +208,24 @@ function _chestBobTick() {
     requestAnimationFrame(_chestBobTick);
   } else {
     chestBobRunning = false;
+  }
+}
+
+const VOID_DEATH_MS = 600;
+function startVoidDeath(cx, cy, piece, side, onDone) {
+  voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
+  requestAnimationFrame(_voidDeathTick);
+}
+function _voidDeathTick() {
+  if (!voidDeathAnim) return;
+  const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
+  draw();
+  if (t >= 1) {
+    const cb = voidDeathAnim.onDone;
+    voidDeathAnim = null;
+    if (cb) cb();
+  } else {
+    requestAnimationFrame(_voidDeathTick);
   }
 }
 
@@ -1197,7 +1216,13 @@ function aiPlay() {
           piece: _aiPiece, side: _aiSide, hlth: _aiHlth
         }];
         const _aiDoHop = (hi) => {
-          if (hi >= _aiHops.length) { _aiFinish(); return; }
+          if (hi >= _aiHops.length) {
+            if (isVoidSpace(_aiFinalI) && _aiPiece !== NONE) {
+              const [vx, vy] = xy(_aiFinalI);
+              startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece, _aiSide, _aiFinish);
+            } else { _aiFinish(); }
+            return;
+          }
           const [fI, tI] = _aiHops[hi];
           const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
           startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
@@ -2169,6 +2194,24 @@ function draw() {
     }
   }
 
+  // Void death spiral
+  if (voidDeathAnim) {
+    const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
+    const img = spriteImages[`${voidDeathAnim.side}_${voidDeathAnim.piece}`];
+    if (img && img.complete) {
+      const scale = (1 - t) * (1 - t);
+      const angle = t * Math.PI * 6;
+      const sz = TILE * 0.75;
+      ctx.save();
+      ctx.translate(voidDeathAnim.cx, voidDeathAnim.cy);
+      ctx.rotate(angle);
+      ctx.globalAlpha = 1 - t * 0.5;
+      ctx.drawImage(img, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  }
+
   // Promoter piece chooser overlay
   if (promotingPawnIdx >= 0 || anyPromotingPieceIdx >= 0) {
     ctx.fillStyle = "rgba(0,0,0,0.6)";
@@ -2824,7 +2867,13 @@ canvas.addEventListener("click", (e) => {
         } else { draw(); }
       };
       const _wDoHop = (hi) => {
-        if (hi >= _wHops.length) { _wContinue(_wFinalI); return; }
+        if (hi >= _wHops.length) {
+          if (isVoidSpace(_wFinalI) && _wPiece !== NONE) {
+            const [vx, vy] = xy(_wFinalI);
+            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece, _wSide, () => _wContinue(_wFinalI));
+          } else { _wContinue(_wFinalI); }
+          return;
+        }
         const [fI, tI] = _wHops[hi];
         const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
         startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => _wDoHop(hi+1));
