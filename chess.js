@@ -1445,13 +1445,17 @@ function canItemAffectPiece(item, i) {
   }
 }
 
-function detonateBomb(centerI) {
+function detonateBomb(centerI, _alreadyDetonated) {
+  const detonated = _alreadyDetonated || new Set();
+  detonated.add(centerI);
   const [gx, gy] = xy(centerI);
   startExplosion(MARGIN + gx * TILE + TILE / 2, BOARD_Y + MARGIN + gy * TILE + TILE / 2);
+  const chainBombs = [];
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const nx = gx + dx, ny = gy + dy;
     if (!inB(nx, ny)) continue;
     const i = idx(nx, ny);
+    if (itemSpaces[i] === ITEM_BOMB && !detonated.has(i)) chainBombs.push(i);
     if (board[i] !== NONE) {
       if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
       if (sides[i] === B && board[i] === KING) score++;
@@ -1465,6 +1469,9 @@ function detonateBomb(centerI) {
     }
     if (specialSpaces[i]?.type === 'block' || specialSpaces[i]?.type === 'shop') specialSpaces[i] = null;
     itemSpaces[i] = ITEM_NONE;
+  }
+  for (const bi of chainBombs) {
+    setTimeout(() => detonateBomb(bi, detonated), 350);
   }
 }
 
