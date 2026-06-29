@@ -3092,8 +3092,8 @@ canvas.addEventListener("click", (e) => {
     const panelH = 72, btnW = 100, btnH = 52, gap = 16;
     const midY = confirmY + panelH / 2;
     const btnY = midY - btnH / 2;
-    // Mirror draw code: label ~= 370px at 32px bold + spacing
-    const labelW = 370;
+    ctx.font = "bold 32px sans-serif";
+    const labelW = ctx.measureText("Are you sure?  ").width;
     const totalW = labelW + btnW + gap + btnW;
     const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
     const noX  = yesX + btnW + gap;
