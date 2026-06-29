@@ -2771,7 +2771,7 @@ canvas.addEventListener("click", (e) => {
   const cy = (e.clientY - rect.top) * scaleY;
 
   // Cancel / Trash buttons — checked first so they work regardless of active mode
-  if (isItemActive()) {
+  if (gamePhase === 'playing' && isItemActive()) {
     const halfW = BOARD_PX / 2 - BTN_GAP / 2;
     const btnH = 80;
     if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
@@ -3101,7 +3101,7 @@ canvas.addEventListener("click", (e) => {
   }
 
   // Check inventory click
-  if (turn === W && !aiThinking) {
+  if (gamePhase === 'playing' && turn === W && !aiThinking) {
     const invY = INV_PANEL_TOP + 50;
     for (let r = 0; r < INV_ROWS; r++) {
       for (let c = 0; c < INV_COLS; c++) {
