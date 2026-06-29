@@ -1,4 +1,4 @@
-﻿const VERSION = "219";
+﻿const VERSION = "220";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -699,15 +699,17 @@ let _conquestGifActive = false;
 function playConquestGif() {
   const gif = document.getElementById('conquest-gif');
   if (!gif) { startGame(); return; }
-  gif.src = 'begin conquest.gif?' + Date.now();
   _conquestGifActive = true;
   draw();
-  gif.style.display = 'block';
-  setTimeout(() => {
-    gif.style.display = 'none';
-    _conquestGifActive = false;
-    startGame();
-  }, 3120);
+  gif.onload = () => {
+    gif.style.display = 'block';
+    setTimeout(() => {
+      gif.style.display = 'none';
+      _conquestGifActive = false;
+      startGame();
+    }, 3120);
+  };
+  gif.src = 'begin conquest.gif?' + Date.now();
 }
 
 
