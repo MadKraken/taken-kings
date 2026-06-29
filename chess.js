@@ -2939,4 +2939,12 @@ canvas.addEventListener("click", (e) => {
 initBoard();
 loadSprites();
 
+window.setupTest = function(preset) {
+  if (preset === 'teleporter_void') {
+    itemSpaces[idx(3, 5)] = ITEM_TELEPORTER;
+    specialSpaces[idx(5, 5)] = { type: 'void' };
+    draw();
+  }
+};
+
 
