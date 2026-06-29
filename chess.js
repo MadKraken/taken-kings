@@ -658,7 +658,7 @@ function makeMove(fromI, toI, visual = false) {
   if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
     gold += GOLD_VALUE[captured] ?? 0;
   }
-  if (captured === KING && sides[toI] !== s) {
+  if (captured === KING && sides[toI] !== s && s === W) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
@@ -687,7 +687,7 @@ function makeMove(fromI, toI, visual = false) {
       const [etgx, etgy] = graveSlotPos(isEPPlayer, epPiece);
       startFlyAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2, etgx, etgy, () => { epPool[epPiece] = (epPool[epPiece] || 0) + 1; });
     }
-    if (epPiece === KING) score += 1;
+    if (epPiece === KING && s === W) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
     set(tx, capY, NONE, 0);
   }
@@ -1514,7 +1514,7 @@ function applySpecialSpace(startI) {
       health[destI]--; break;
     }
     if (destSide !== 0 && destSide !== moverSide) {
-      if (board[destI] === KING) score++;
+      if (board[destI] === KING && moverSide === W) score++;
       if (moverSide === W) gold += GOLD_VALUE[board[destI]] ?? 0;
     }
     if (board[destI] === CHEST && moverSide === W) {
