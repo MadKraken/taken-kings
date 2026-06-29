@@ -1880,6 +1880,13 @@ function draw() {
       ctx.restore();
     } else if (b.type === 'block') {
       drawBlockTile(ctx, bpx, bpy, TILE);
+    } else if (b.type === 'neutral') {
+      const nimg = spriteImages[`${B}_${b.piece}`];
+      if (nimg && nimg.complete) {
+        ctx.filter = 'grayscale(1) brightness(3.5)';
+        ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+        ctx.filter = 'none';
+      }
     }
   }
 
