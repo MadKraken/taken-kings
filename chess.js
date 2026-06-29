@@ -511,13 +511,12 @@ function initBoard() {
 
 function _randomSetupPiece() {
   const r = randInt(16);
-  if (r < 8) return PAWN;
-  if (r === 8) return ROOK;
-  if (r === 9) return KNIGHT;
-  if (r === 10) return BISHOP;
-  if (r === 11) return QUEEN;
-  if (r === 12) return KING;
-  return NONE; // 3/16 chance of empty
+  if (r < 8) return PAWN;     // 8/16 = 1/2
+  if (r < 10) return ROOK;    // 2/16 = 1/8
+  if (r < 12) return BISHOP;  // 2/16 = 1/8
+  if (r < 14) return KNIGHT;  // 2/16 = 1/8
+  if (r === 14) return QUEEN; // 1/16
+  return KING;                 // 1/16
 }
 
 function rollSetup() {
@@ -537,8 +536,7 @@ function rollSetup() {
 
   // Roll remaining 15 positions
   for (let i = 1; i < 16; i++) {
-    const p = _randomSetupPiece();
-    if (p !== NONE) set(positions[i].x, positions[i].y, p, W);
+    set(positions[i].x, positions[i].y, _randomSetupPiece(), W);
   }
 
   // One random item in inventory
