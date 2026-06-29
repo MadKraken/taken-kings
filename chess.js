@@ -456,7 +456,7 @@ function generateRowBonuses(wave) {
     } else if (type === 'block') {
       bonuses.push({ type: 'block', col: x });
     } else if (type === 'neutral') {
-      bonuses.push({ type: 'neutral', col: x, piece: SPAWN_PIECES[randInt(SPAWN_PIECES.length)] });
+      bonuses.push({ type: 'neutral', col: x, piece: _randomSetupPiece() });
     } else {
       const dirs = [];
       for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
