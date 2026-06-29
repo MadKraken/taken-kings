@@ -30,7 +30,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 22;
+  const total = 23;
   const logoImg = new Image();
   logoImg.src = "taken_kings_logo.png?v=6";
   logoImg.onload = () => {
@@ -82,6 +82,10 @@ function loadSprites() {
   bombImg.src = "sprites/item_bomb.svg";
   bombImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_bomb"] = bombImg;
+  const explosionImg = new Image();
+  explosionImg.src = "sprites/explosion.svg";
+  explosionImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["explosion"] = explosionImg;
   const groundImg = new Image();
   groundImg.src = "ground.jpg";
   groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
@@ -113,6 +117,7 @@ let warnFlashRunning = false;
 let voidPulseRunning = false;
 let chestBobRunning = false;
 let voidDeathAnim = null; // {items:[{cx,cy,piece,side}], startMs, onDone}
+let explosionAnim = null; // {cx, cy, startMs}
 let pendingCaptures = {}; // boardIdx -> {piece, side} — removed from board but still rendered until hop arrives
 let promotingMode = false;
 let promotingPawnIdx = -1;
@@ -235,6 +240,21 @@ function _voidDeathTick() {
     if (cb) cb();
   } else {
     requestAnimationFrame(_voidDeathTick);
+  }
+}
+
+const EXPLOSION_MS = 450;
+function startExplosion(cx, cy) {
+  explosionAnim = { cx, cy, startMs: performance.now() };
+  requestAnimationFrame(_explosionTick);
+}
+function _explosionTick() {
+  if (!explosionAnim) return;
+  draw();
+  if (performance.now() - explosionAnim.startMs >= EXPLOSION_MS) {
+    explosionAnim = null;
+  } else {
+    requestAnimationFrame(_explosionTick);
   }
 }
 
@@ -1310,6 +1330,7 @@ function canItemAffectPiece(item, i) {
 
 function detonateBomb(centerI) {
   const [gx, gy] = xy(centerI);
+  startExplosion(MARGIN + gx * TILE + TILE / 2, BOARD_Y + MARGIN + gy * TILE + TILE / 2);
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const nx = gx + dx, ny = gy + dy;
     if (!inB(nx, ny)) continue;
@@ -2309,6 +2330,22 @@ function draw() {
       ctx.arc(sp.cx, sp.cy, radius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
+    }
+  }
+
+  // Explosion flash
+  if (explosionAnim) {
+    const t = Math.min(1, (performance.now() - explosionAnim.startMs) / EXPLOSION_MS);
+    const img = spriteImages["explosion"];
+    if (img && img.complete) {
+      const sz = TILE * 3.2 * (0.4 + 0.6 * Math.sin(t * Math.PI)); // grows then shrinks
+      ctx.save();
+      ctx.globalAlpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
+      ctx.translate(explosionAnim.cx, explosionAnim.cy);
+      ctx.rotate(t * 0.4);
+      ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
   }
 
