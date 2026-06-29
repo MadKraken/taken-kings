@@ -1574,10 +1574,12 @@ function aiPlay() {
         const _aiFinalI = applySpecialSpace(move[1]);
         recordPosition();
         const _aiPiece = board[_aiFinalI] || _aiPiece0, _aiSide = sides[_aiFinalI] || _aiSide0, _aiHlth = health[_aiFinalI] || _aiHlth0;
+        const _aiIsCheckersJump = _aiPiece0 === CHECKERS && Math.abs(mtx - mfx) === 2;
         const aiAnimPieces = [{
           toIdx: _aiFinalI,
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-          piece: _aiPiece, side: _aiSide, hlth: _aiHlth
+          piece: _aiPiece, side: _aiSide, hlth: _aiHlth,
+          arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         const _aiDoHop = (hi) => {
           if (hi >= _aiHops.length) {
@@ -2377,7 +2379,8 @@ if (anim && anim.pieces && _animT < 1) {
   const apad = 6;
   for (const ap of anim.pieces) {
     const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
-    const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT;
+    const arcOffset = ap.arc ? ap.arc * 4 * _animT * (1 - _animT) : 0;
+    const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT - arcOffset;
     if (ap.piece === CHEST) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
@@ -3464,10 +3467,12 @@ function handleBoardClick(cx, cy) {
       }
       makeMove(selected, clicked, true);
       recordPosition();
+      const _isCheckersJump = board[clickedDest] === CHECKERS && Math.abs(ptx - pfx) === 2;
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
-        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest]
+        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest],
+        arc: _isCheckersJump ? TILE * 1.5 : 0
       }];
       if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
