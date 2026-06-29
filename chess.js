@@ -2698,6 +2698,11 @@ canvas.addEventListener("click", (e) => {
           const _tDoHop = (hi) => {
             if (hi >= _tHops.length) {
               if (isVoidSpace(_tFinalI) && _tPiece !== NONE) {
+                // Piece still on board if it landed directly on void (applySpecialSpace only clears arrow→void)
+                if (board[_tFinalI] !== NONE) {
+                  if (board[_tFinalI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+                  board[_tFinalI] = NONE; sides[_tFinalI] = 0; health[_tFinalI] = 1;
+                }
                 const [vx, vy] = xy(_tFinalI);
                 startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
               } else { _tFinish(); }
