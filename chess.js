@@ -2268,6 +2268,11 @@ function draw() {
         if (img && img.complete) {
           ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
         }
+      } else if (inventory[slotIdx] === ITEM_BOMB) {
+        const img = spriteImages["item_bomb"];
+        if (img && img.complete) {
+          ctx.drawImage(img, sx + 4, sy + 4, INV_SLOT - 8, INV_SLOT - 8);
+        }
       }
     }
   }
