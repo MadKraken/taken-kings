@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Fuse -->
+  <path d="M58 28 Q70 10 80 18" stroke="#888" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Spark -->
+  <circle cx="80" cy="18" r="5" fill="#ffdd44"/>
+  <path d="M76 12 L80 18 L84 12 M74 18 L80 18 L80 12" stroke="#ff8800" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Body -->
+  <circle cx="48" cy="58" r="30" fill="#222"/>
+  <circle cx="40" cy="50" r="8" fill="#444" opacity="0.6"/>
+</svg>

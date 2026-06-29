@@ -30,7 +30,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 21;
+  const total = 22;
   const logoImg = new Image();
   logoImg.src = "taken_kings_logo.png?v=6";
   logoImg.onload = () => {
@@ -78,6 +78,10 @@ function loadSprites() {
   upgraderImg.src = "sprites/item_upgrader.svg?v=2";
   upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_upgrader"] = upgraderImg;
+  const bombImg = new Image();
+  bombImg.src = "sprites/item_bomb.svg";
+  bombImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  spriteImages["item_bomb"] = bombImg;
   const groundImg = new Image();
   groundImg.src = "ground.jpg";
   groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
@@ -99,8 +103,8 @@ let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
 let nextBonuses = []; // [{type:'chest'|'item'|'obstacle', col, item?, dx?, dy?}]
 let positionHistory = []; // track board states to detect repetition
-const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7;
-const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader" };
+const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER = 4, ITEM_KING_PROMOTER = 5, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
+const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let playerDead = {}, enemyDead = {}, flyAnims = [];
@@ -116,6 +120,8 @@ let anyPromotingMode = false;
 let anyPromotingPieceIdx = -1;
 let teleporterMode = false;
 let teleporterSelected = -1;
+let bombMode = false;
+let bombHoverIdx = -1;
 let kingPromotingMode = false;
 let clonerMode = false;
 let clonerSelected = -1;
@@ -138,7 +144,8 @@ const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
   [ITEM_KING_PROMOTER]: "item_king_promoter",
   [ITEM_CLONER]: "item_cloner",
-  [ITEM_UPGRADER]: "item_upgrader"
+  [ITEM_UPGRADER]: "item_upgrader",
+  [ITEM_BOMB]: "item_bomb"
 };
 const ITEM_PRICES = {
   [ITEM_PROMOTER]: 20,
@@ -146,7 +153,8 @@ const ITEM_PRICES = {
   [ITEM_TELEPORTER]: 30,
   [ITEM_KING_PROMOTER]: 40,
   [ITEM_CLONER]: 45,
-  [ITEM_UPGRADER]: 20
+  [ITEM_UPGRADER]: 20,
+  [ITEM_BOMB]: 35
 };
 
 let wkMoved = false;
@@ -417,10 +425,10 @@ function generateRowBonuses(wave) {
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
-      const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+      const items = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB];
       bonuses.push({ type: 'item', col: x, item: items[randInt(items.length)] });
     } else if (type === 'shop') {
-      const all = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER];
+      const all = [ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB];
       const offers = [all[randInt(all.length)], all[randInt(all.length)], all[randInt(all.length)]];
       bonuses.push({ type: 'shop', col: x, offers, sold: [false, false, false] });
     } else if (type === 'void') {
@@ -477,7 +485,7 @@ function initBoard() {
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
-  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false;
+  inventory.fill(ITEM_NONE); promotingMode = false; promotingPawnIdx = -1; anyPromotingMode = false; anyPromotingPieceIdx = -1; teleporterMode = false; teleporterSelected = -1; kingPromotingMode = false; clonerMode = false; clonerSelected = -1; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -662,7 +670,7 @@ function makeMove(fromI, toI, visual = false) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
-    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+    addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
   }
 
   if (p === KING && s === W) {
@@ -719,12 +727,12 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode;
+  return promotingMode || anyPromotingMode || teleporterMode || kingPromotingMode || clonerMode || upgraderMode || bombMode;
 }
 
 function cancelItemMode() {
   promotingMode = false; anyPromotingMode = false; teleporterMode = false;
-  kingPromotingMode = false; clonerMode = false; upgraderMode = false;
+  kingPromotingMode = false; clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
@@ -737,7 +745,7 @@ function trashActiveItem() {
     delete inventory._activeSlot;
   }
   promotingMode = false; anyPromotingMode = false; teleporterMode = false;
-  kingPromotingMode = false; clonerMode = false; upgraderMode = false;
+  kingPromotingMode = false; clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
   promotingPawnIdx = -1; anyPromotingPieceIdx = -1;
   teleporterSelected = -1; clonerSelected = -1;
   draw();
@@ -819,7 +827,7 @@ function teamLeap() {
         if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+        if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
       }
     } else {
@@ -1518,7 +1526,7 @@ function applySpecialSpace(startI) {
       if (moverSide === W) gold += GOLD_VALUE[board[destI]] ?? 0;
     }
     if (board[destI] === CHEST && moverSide === W) {
-      addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+      addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
     }
     board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI];
     board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
@@ -1943,6 +1951,17 @@ function draw() {
     }
   }
 
+  // Bomb highlight — 3x3 blast zone around hovered square
+  if (bombMode && bombHoverIdx >= 0) {
+    const [hx, hy] = xy(bombHoverIdx);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = hx + dx, ny = hy + dy;
+      if (!inB(nx, ny)) continue;
+      ctx.fillStyle = dx === 0 && dy === 0 ? "rgba(255,80,0,0.55)" : "rgba(255,160,0,0.35)";
+      ctx.fillRect(MARGIN + nx * TILE, MARGIN + ny * TILE, TILE, TILE);
+    }
+  }
+
   // Teleporter highlight
   if (teleporterMode) {
     for (let i = 0; i < 64; i++) {
@@ -2024,7 +2043,7 @@ function draw() {
   ctx.strokeStyle = "#5a5a8e";
   ctx.lineWidth = 3;
   ctx.stroke();
-  const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : "";
+  const invStatus = promotingMode ? "Select a Pawn to promote" : anyPromotingMode ? (anyPromotingPieceIdx >= 0 ? "Choose a piece type" : "Select a piece to promote") : kingPromotingMode ? "Select a Pawn to crown as King" : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : "";
   ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
   ctx.font = "bold 36px sans-serif";
   ctx.textAlign = "center";
@@ -2451,6 +2470,12 @@ canvas.addEventListener("mousedown", (e) => {
 });
 
 canvas.addEventListener("mousemove", (e) => {
+  if (bombMode) {
+    const [cx, cy] = canvasCoords(e);
+    const gx = Math.floor((cx - MARGIN) / TILE), gy = Math.floor((cy - BOARD_Y - MARGIN) / TILE);
+    const newHover = inB(gx, gy) ? idx(gx, gy) : -1;
+    if (newHover !== bombHoverIdx) { bombHoverIdx = newHover; draw(); }
+  }
   if (dragSlot < 0) return;
   const [cx, cy] = canvasCoords(e);
   dragX = cx; dragY = cy;
@@ -2648,6 +2673,39 @@ canvas.addEventListener("click", (e) => {
     return;
   }
 
+  // Bomb
+  if (bombMode) {
+    const mx = cx - MARGIN;
+    const my = cy - BOARD_Y - MARGIN;
+    const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+    bombMode = false; bombHoverIdx = -1;
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+    if (inB(gx, gy)) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = gx + dx, ny = gy + dy;
+        if (!inB(nx, ny)) continue;
+        const i = idx(nx, ny);
+        if (board[i] !== NONE) {
+          if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+          if (sides[i] === B && board[i] === KING) score++;
+          if (sides[i] === W) gold += 0; // no gold for own pieces
+          else gold += GOLD_VALUE[board[i]] ?? 0;
+          const bp = board[i], bs = sides[i];
+          const isPlayerPiece = bs === W;
+          const pool = isPlayerPiece ? playerDead : enemyDead;
+          const [tgx, tgy] = graveSlotPos(isPlayerPiece, bp);
+          startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
+          board[i] = NONE; sides[i] = 0; health[i] = 1;
+        }
+        specialSpaces[i] = null;
+        itemSpaces[i] = ITEM_NONE;
+      }
+      firstMoveMade = true; recordPosition();
+      if (!gameOver) endWhiteTurn(); else draw();
+    } else { draw(); }
+    return;
+  }
+
   // Cloner
   if (clonerMode) {
     const mx = cx - MARGIN;
@@ -2664,7 +2722,7 @@ canvas.addEventListener("click", (e) => {
       } else {
         const dests = adjacentClonerDests(clonerSelected);
         if (dests.includes(i)) {
-          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+          if (board[i] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER, ITEM_BOMB][randInt(7)]);
           board[i] = board[clonerSelected];
           sides[i] = W;
           health[i] = health[clonerSelected];
@@ -2880,6 +2938,13 @@ canvas.addEventListener("click", (e) => {
           }
           if (inventory[slotIdx] === ITEM_UPGRADER) {
             upgraderMode = true;
+            selected = -1; validMoves = [];
+            inventory._activeSlot = slotIdx;
+            draw();
+            return;
+          }
+          if (inventory[slotIdx] === ITEM_BOMB) {
+            bombMode = true; bombHoverIdx = -1;
             selected = -1; validMoves = [];
             inventory._activeSlot = slotIdx;
             draw();
