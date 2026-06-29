@@ -2443,27 +2443,28 @@ function draw() {
 
   // Resign confirm — drawn after graveyard so it sits on top
   if (!gameOver && resignConfirm) {
-    const confirmY = GRAVE_Y + GRAVE_H + 16;
-    const panelH = 60;
+    const confirmY = GRAVE_Y + GRAVE_H + 12;
+    const panelH = 72, btnW = 100, btnH = 52, gap = 16;
+    const midY = confirmY + panelH / 2;
+    const btnY = midY - btnH / 2;
+    ctx.save();
     ctx.fillStyle = "rgba(20,10,10,0.92)";
     ctx.beginPath(); ctx.roundRect(MARGIN, confirmY, BOARD_PX, panelH, 8); ctx.fill();
     ctx.font = "bold 32px sans-serif";
-    ctx.textBaseline = "middle";
-    const midY = confirmY + panelH / 2;
-    const btnW = 90, btnH = 44, gap = 16;
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff";
     const labelX = MARGIN + 20;
-    ctx.fillStyle = "#fff"; ctx.textAlign = "left";
     ctx.fillText("Are you sure?", labelX, midY);
-    const afterLabel = labelX + ctx.measureText("Are you sure?  ").width;
-    const yesX = afterLabel, noX = afterLabel + btnW + gap;
-    const btnY = midY - btnH / 2;
+    const yesX = labelX + ctx.measureText("Are you sure?  ").width;
+    const noX = yesX + btnW + gap;
     ctx.fillStyle = "#993333";
     ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 6); ctx.fill();
     ctx.fillStyle = "#444";
     ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 6); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("YES", yesX + btnW / 2, midY);
     ctx.fillText("NO",  noX  + btnW / 2, midY);
+    ctx.restore();
   }
 
   // Flying pieces (captured pieces arcing to graveyard)
