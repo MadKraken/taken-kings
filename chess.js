@@ -20,7 +20,7 @@ const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
 
 const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7;
-const W = 1, B = 2;
+const W = 1, B = 2, N = 3;
 const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING];
 
 const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king" };
@@ -441,7 +441,7 @@ function generateRowBonuses(wave) {
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (randInt(5) !== 0) continue;
-    const type = ['chest', 'item', 'obstacle', 'shop', 'void', 'block'][randInt(6)];
+    const type = ['chest', 'item', 'obstacle', 'shop', 'void', 'block', 'neutral'][randInt(7)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
@@ -455,6 +455,8 @@ function generateRowBonuses(wave) {
       bonuses.push({ type: 'void', col: x });
     } else if (type === 'block') {
       bonuses.push({ type: 'block', col: x });
+    } else if (type === 'neutral') {
+      bonuses.push({ type: 'neutral', col: x, piece: SPAWN_PIECES[randInt(SPAWN_PIECES.length)] });
     } else {
       const dirs = [];
       for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
@@ -551,17 +553,77 @@ function startGame() {
 
 
 
+function neutralMovesFor(i) {
+  const [x, y] = xy(i);
+  const p = board[i];
+  const moves = [];
+  const canLand = (nx, ny) => inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny));
+  if (p === PAWN) {
+    if (canLand(x, y - 1)) moves.push(idx(x, y - 1));
+    if (canLand(x, y + 1)) moves.push(idx(x, y + 1));
+  } else if (p === KNIGHT) {
+    for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]])
+      if (canLand(x + dx, y + dy)) moves.push(idx(x + dx, y + dy));
+  } else if (p === KING) {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (canLand(x + dx, y + dy)) moves.push(idx(x + dx, y + dy));
+    }
+  } else {
+    let dirs;
+    if (p === ROOK) dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    else if (p === BISHOP) dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
+    else dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+    for (const [dx, dy] of dirs) {
+      let nx = x + dx, ny = y + dy;
+      while (inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
+        moves.push(idx(nx, ny));
+        nx += dx; ny += dy;
+      }
+    }
+  }
+  return moves;
+}
+
+function neutralPlay(onDone) {
+  const neutrals = [];
+  for (let i = 0; i < 64; i++) if (sides[i] === N) neutrals.push(i);
+  if (neutrals.length === 0) { onDone(); return; }
+  shuffle(neutrals);
+  const doNext = (ni) => {
+    if (ni >= neutrals.length) { onDone(); return; }
+    const i = neutrals[ni];
+    if (sides[i] !== N) { doNext(ni + 1); return; }
+    const moves = neutralMovesFor(i);
+    if (moves.length === 0) { doNext(ni + 1); return; }
+    const dest = moves[randInt(moves.length)];
+    const [fx, fy] = xy(i), [tx, ty] = xy(dest);
+    const p = board[i], h = health[i];
+    board[dest] = p; sides[dest] = N; health[dest] = h;
+    board[i] = NONE; sides[i] = 0; health[i] = 1;
+    applySpecialSpace(dest);
+    startAnim([{
+      toIdx: dest,
+      fromCX: MARGIN + fx * TILE, fromCY: BOARD_Y + MARGIN + fy * TILE,
+      toCX: MARGIN + tx * TILE, toCY: BOARD_Y + MARGIN + ty * TILE,
+      piece: p, side: N, hlth: h
+    }], 0, () => doNext(ni + 1));
+  };
+  doNext(0);
+}
+
 function slidingMoves(moves, x, y, dirs, s) {
   for (const [dx, dy] of dirs) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
       if (s === B && piece(nx, ny) === CHEST) break;
+      if (s === B && sides[idx(nx, ny)] === N) break; // enemies can't land on or pass through neutrals
       const ni = idx(nx, ny);
-      if (isBlockSpace(ni)) break; // wall â€" stop ray, can't land or pass through
+      if (isBlockSpace(ni)) break;
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
-      if (piece(nx, ny) !== NONE && piece(nx, ny) !== CHEST) break; // chests and voids don't stop the ray
+      if (piece(nx, ny) !== NONE && piece(nx, ny) !== CHEST) break;
       nx += dx; ny += dy;
     }
   }
@@ -585,7 +647,7 @@ function pseudoMoves(x, y) {
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
         if (inB(nx, ny) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
-          if (side(nx, ny) === e) moves.push(idx(nx, ny));
+          if (side(nx, ny) === e || side(nx, ny) === N) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
         }
       }
@@ -604,7 +666,7 @@ function pseudoMoves(x, y) {
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && sides[idx(nx, ny)] !== N && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     slidingMoves(moves, x, y, [[1,1],[1,-1],[-1,1],[-1,-1]], s);
@@ -616,7 +678,7 @@ function pseudoMoves(x, y) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
       if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
@@ -696,6 +758,17 @@ function makeMove(fromI, toI, visual = false) {
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
   const capSide = sides[toI];
+
+  // Bounce: white piece attacks neutral â€" attacker bounces back, neutral is hired
+  if (s === W && sides[toI] === N) {
+    sides[toI] = W;
+    const bounceI = calcBouncePos(fromI, toI, p);
+    if (bounceI !== fromI) {
+      board[bounceI] = p; sides[bounceI] = W; health[bounceI] = health[fromI];
+      board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1;
+    }
+    return;
+  }
 
   // Bounce: black piece attacks white piece with health > 1 â€" damage but no capture
   if (s === B && sides[toI] === W && health[toI] > 1) {
@@ -988,6 +1061,7 @@ function pitchShift() {
   }
   for (const b of nextBonuses) {
     if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+    if (b.type === 'neutral') set(b.col, 0, b.piece, N);
   }
 
   epTarget = -1;
@@ -1054,7 +1128,10 @@ function simulateLeap() {
   sides.splice(0, 64, ...newSides);
   spawnCount++;
   placeWave(0, nextWave);
-  for (const b of nextBonuses) { if (b.type === 'chest') set(b.col, 0, CHEST, 0); }
+  for (const b of nextBonuses) {
+    if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+    if (b.type === 'neutral') set(b.col, 0, b.piece, N);
+  }
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
   epTarget = -1;
@@ -1253,9 +1330,12 @@ function aiPlay() {
         checkArrowSpaces(() => {
           if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
           else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-          if (!gameOver) turn = W;
-          aiThinking = false;
-          draw();
+          if (gameOver) { aiThinking = false; draw(); return; }
+          neutralPlay(() => {
+            turn = W;
+            aiThinking = false;
+            draw();
+          });
         });
       };
 
@@ -1312,9 +1392,12 @@ function aiPlay() {
         gameOver = true;
         gameMsg = `Checkmate! Score: ${score}`;
       }
-      if (!gameOver) turn = W;
-      aiThinking = false;
-      draw();
+      if (gameOver) { aiThinking = false; draw(); return; }
+      neutralPlay(() => {
+        turn = W;
+        aiThinking = false;
+        draw();
+      });
     }
   }, 50);
 }
@@ -1942,10 +2025,13 @@ function draw() {
         ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
       }
     } else {
-      const key = `${sides[i]}_${board[i]}`;
+      const drawSide = sides[i] === N ? B : sides[i];
+      const key = `${drawSide}_${board[i]}`;
       const img = spriteImages[key];
       if (img && img.complete) {
+        if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(1.3)';
         ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+        if (sides[i] === N) ctx.filter = 'none';
       }
     }
     // Shield badge: shows number of shields (health - 1) using the shield sprite
@@ -2081,9 +2167,14 @@ function draw() {
         const img = spriteImages["chest"];
         if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
       } else {
-        const key = `${ap.side}_${ap.piece}`;
+        const animDrawSide = ap.side === N ? B : ap.side;
+        const key = `${animDrawSide}_${ap.piece}`;
         const img = spriteImages[key];
-        if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+        if (img && img.complete) {
+          if (ap.side === N) ctx.filter = 'grayscale(1) brightness(1.3)';
+          ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+          if (ap.side === N) ctx.filter = 'none';
+        }
       }
       if (ap.side === W && ap.hlth > 1) {
         const shields = ap.hlth - 1;
@@ -3110,6 +3201,26 @@ canvas.addEventListener("click", (e) => {
       const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
       const clickedDest = clicked;
       firstMoveMade = true;
+
+      // Hire neutral: bounce attacker, neutral turns white
+      if (sides[clicked] === N) {
+        const fromI = selected;
+        const attackPiece = board[fromI], attackHlth = health[fromI];
+        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
+        const [bx, by] = xy(bounceI);
+        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+        selected = -1; validMoves = [];
+        makeMove(fromI, clicked, false);
+        recordPosition();
+        startAnim([{ toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
+          startAnim([{ toIdx: bounceI, fromCX: pToCX, fromCY: pToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
+            startShieldPop(pToCX + TILE / 2, pToCY + TILE / 2);
+            endWhiteTurn();
+          });
+        });
+        return;
+      }
+
       makeMove(selected, clicked, true);
       recordPosition();
       const wAnimPieces = [{
