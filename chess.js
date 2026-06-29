@@ -2697,7 +2697,7 @@ canvas.addEventListener("click", (e) => {
           startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
           board[i] = NONE; sides[i] = 0; health[i] = 1;
         }
-        specialSpaces[i] = null;
+        if (specialSpaces[i]?.type === 'block' || specialSpaces[i]?.type === 'shop') specialSpaces[i] = null;
         itemSpaces[i] = ITEM_NONE;
       }
       firstMoveMade = true; recordPosition();
