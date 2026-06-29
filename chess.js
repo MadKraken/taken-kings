@@ -108,7 +108,7 @@ let shieldPops = [];
 let warnFlashRunning = false;
 let voidPulseRunning = false;
 let chestBobRunning = false;
-let voidDeathAnim = null; // {cx, cy, piece, side, startMs, onDone}
+let voidDeathAnim = null; // {items:[{cx,cy,piece,side}], startMs, onDone}
 let promotingMode = false;
 let promotingPawnIdx = -1;
 let anyPromotingMode = false;
@@ -805,6 +805,7 @@ function teamLeap() {
   }
 
   // Move white pieces that can, leave the rest in place
+  let _leapVoidDeath = null; // {cx, cy, piece, side} if a piece falls into void
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     if (canMoveUp[i]) {
@@ -813,6 +814,7 @@ function teamLeap() {
       if (isVoidSpace(ni)) {
         // piece falls into void — don't place it
         if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+        _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
@@ -832,7 +834,13 @@ function teamLeap() {
   wkMoved = true; wraMoved = true; wrhMoved = true;
   firstMoveMade = true;
   recordPosition();
-  startAnim(leapAnimPieces, 0, () => { applySpacesAfterAdvance(); });
+  startAnim(leapAnimPieces, 0, () => {
+    if (_leapVoidDeath) {
+      startVoidDeath(_leapVoidDeath.cx, _leapVoidDeath.cy, _leapVoidDeath.piece, _leapVoidDeath.side, applySpacesAfterAdvance);
+    } else {
+      applySpacesAfterAdvance();
+    }
+  });
 }
 
 function canPitchShift() {
