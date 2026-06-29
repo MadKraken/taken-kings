@@ -791,8 +791,13 @@ function teamLeap() {
     if (canMoveUp[i]) {
       const [x, y] = xy(i);
       const ni = idx(x, y - 1);
-      if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
-      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
+      if (isVoidSpace(ni)) {
+        // piece falls into void — don't place it
+        if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+      } else {
+        if (newBoard[ni] === CHEST) addToInventory([ITEM_PROMOTER, ITEM_ANY_PROMOTER, ITEM_TELEPORTER, ITEM_KING_PROMOTER, ITEM_CLONER, ITEM_UPGRADER][randInt(6)]);
+        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i];
+      }
     } else {
       newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i];
     }
@@ -1402,7 +1407,14 @@ function applySpecialSpace(startI) {
     const nx = x + sp.dx, ny = y + sp.dy;
     if (!inB(nx, ny)) break;
     const destI = idx(nx, ny);
-    if (isVoidSpace(destI) || isBlockSpace(destI)) break; // can't redirect onto void or block
+    if (isBlockSpace(destI)) break; // wall — stop
+    if (isVoidSpace(destI)) {
+      // piece falls into void — remove it
+      const moverSide = sides[toI];
+      if (moverSide === W && board[toI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+      board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
+      break;
+    }
     const moverSide = sides[toI];
     const destSide = sides[destI];
     if (destSide !== 0 && destSide === moverSide) break; // friendly blocks
