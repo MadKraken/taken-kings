@@ -2770,6 +2770,18 @@ canvas.addEventListener("click", (e) => {
   const cx = (e.clientX - rect.left) * scaleX;
   const cy = (e.clientY - rect.top) * scaleY;
 
+  // Cancel / Trash buttons — checked first so they work regardless of active mode
+  if (isItemActive()) {
+    const halfW = BOARD_PX / 2 - BTN_GAP / 2;
+    const btnH = 80;
+    if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+      cancelItemMode(); return;
+    }
+    if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
+      trashActiveItem(); return;
+    }
+  }
+
   // Shop dialogue
   if (shopMode) {
     const dlgW = 820, dlgH = 500, dlgX = (canvas.width - 820) / 2, dlgY = (canvas.height - 500) / 2;
