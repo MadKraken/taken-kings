@@ -118,6 +118,7 @@ const ITEM_NONE = 0, ITEM_PROMOTER = 1, ITEM_ANY_PROMOTER = 3, ITEM_TELEPORTER =
 const ITEM_NAMES = { [ITEM_PROMOTER]: "Pawn Promoter", [ITEM_ANY_PROMOTER]: "All Promoter", [ITEM_TELEPORTER]: "Teleporter", [ITEM_KING_PROMOTER]: "Promoter To King", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb" };
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
+let _pendingDrag = null; // { slot, startX, startY, startMs } — promoted to dragSlot after threshold
 let playerDead = {}, enemyDead = {}, flyAnims = [];
 let shieldPops = [];
 let warnFlashRunning = false;
@@ -690,6 +691,20 @@ function startGame() {
   gamePhase = 'playing';
   takeReplaySnapshot();
   draw();
+}
+
+function playConquestGif() {
+  const gif = document.getElementById('conquest-gif');
+  if (!gif) { startGame(); return; }
+  // Restart the gif by clearing and re-setting src
+  const src = gif.src;
+  gif.src = '';
+  gif.src = src;
+  gif.style.display = 'block';
+  setTimeout(() => {
+    gif.style.display = 'none';
+    startGame();
+  }, 3120);
 }
 
 
@@ -2940,14 +2955,20 @@ canvas.addEventListener("mousedown", (e) => {
       const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
       const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
       if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT) {
-        dragSlot = slotIdx;
-        dragX = cx; dragY = cy; dragOverTrash = false;
-        draw();
+        _pendingDrag = { slot: slotIdx, startX: cx, startY: cy, startMs: performance.now() };
         return;
       }
     }
   }
 });
+
+function _activatePendingDrag() {
+  if (!_pendingDrag || dragSlot >= 0) return;
+  dragSlot = _pendingDrag.slot;
+  dragX = _pendingDrag.startX; dragY = _pendingDrag.startY; dragOverTrash = false;
+  _pendingDrag = null;
+  draw();
+}
 
 canvas.addEventListener("mousemove", (e) => {
   if (bombMode) {
@@ -2955,6 +2976,13 @@ canvas.addEventListener("mousemove", (e) => {
     const gx = Math.floor((cx - MARGIN) / TILE), gy = Math.floor((cy - BOARD_Y - MARGIN) / TILE);
     const newHover = inB(gx, gy) ? idx(gx, gy) : -1;
     if (newHover !== bombHoverIdx) { bombHoverIdx = newHover; draw(); }
+  }
+  if (_pendingDrag) {
+    const [cx, cy] = canvasCoords(e);
+    const dx = cx - _pendingDrag.startX, dy = cy - _pendingDrag.startY;
+    const moved = Math.sqrt(dx * dx + dy * dy);
+    const held = performance.now() - _pendingDrag.startMs;
+    if (moved > 8 || held > 300) _activatePendingDrag();
   }
   if (dragSlot < 0) return;
   const [cx, cy] = canvasCoords(e);
@@ -2965,6 +2993,7 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 canvas.addEventListener("mouseup", (e) => {
+  _pendingDrag = null;
   if (dragSlot < 0) return;
   const [cx, cy] = canvasCoords(e);
   const slot = dragSlot;
@@ -3479,7 +3508,7 @@ canvas.addEventListener("click", (e) => {
     if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
         cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
     if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { startGame(); return; }
+        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playConquestGif(); return; }
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
