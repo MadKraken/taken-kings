@@ -45,7 +45,7 @@ function loadSprites() {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING]) {
       const key = `${s}_${p}`;
       const img = new Image();
-      img.src = `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
+      img.src = (s === W && p === PAWN) ? "pawn.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
       img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       spriteImages[key] = img;
     }
