@@ -1,4 +1,4 @@
-﻿const VERSION = "231";
+﻿const VERSION = "232";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -735,22 +735,32 @@ function startGame() {
 
 const CONQUEST_FPS = 30;
 const CONQUEST_FRAME_COUNT = 94;
-const _conquestFrames = [];
-for (let _i = 0; _i < CONQUEST_FRAME_COUNT; _i++) {
-  const _img = new Image();
-  _img.src = `animations/begin conquest frames/Begin Conquest -${_i}.png`;
-  _conquestFrames.push(_img);
-}
+const CONQUEST_BUFFER = 6; // frames to keep loaded ahead; old frames are released
+const _conquestFrames = new Array(CONQUEST_FRAME_COUNT).fill(null).map(() => new Image());
 
 let _conquestGifActive = false;
 let _conquestStartMs = 0;
 let _conquestCurrentFrame = 0;
 
+function _conquestLoadWindow(cur) {
+  const ahead = Math.min(cur + CONQUEST_BUFFER, CONQUEST_FRAME_COUNT - 1);
+  for (let i = cur; i <= ahead; i++) {
+    if (!_conquestFrames[i].src) {
+      _conquestFrames[i].src = `animations/begin conquest frames/Begin Conquest -${i}.png`;
+    }
+  }
+  // Release frames well behind current to free memory
+  const release = cur - CONQUEST_BUFFER - 1;
+  if (release >= 0 && _conquestFrames[release].src) {
+    _conquestFrames[release].src = "";
+  }
+}
+
 function playConquestGif() {
-  if (_conquestFrames.length === 0) { startGame(); return; }
   _conquestGifActive = true;
   _conquestStartMs = performance.now();
   _conquestCurrentFrame = 0;
+  _conquestLoadWindow(0);
   requestAnimationFrame(_conquestTick);
 }
 
@@ -758,6 +768,7 @@ function _conquestTick() {
   if (!_conquestGifActive) return;
   const elapsed = performance.now() - _conquestStartMs;
   _conquestCurrentFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
+  _conquestLoadWindow(_conquestCurrentFrame);
   draw();
   if (_conquestCurrentFrame >= CONQUEST_FRAME_COUNT - 1 && elapsed >= (CONQUEST_FRAME_COUNT / CONQUEST_FPS) * 1000) {
     _conquestGifActive = false;
