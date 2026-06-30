@@ -1,4 +1,4 @@
-﻿const VERSION = "253";
+﻿const VERSION = "258";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -160,6 +160,8 @@ let shopOffers = []; // items shown in merchant shop dialog
 let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
 let merchantIdx = -1; // board position of Merchant NPC (-1 = not on board)
 let merchantOffers = []; // 3 items generated at game start, persist for the whole game
+let merchantQueued = false; // merchant is waiting in the fog preview row
+let merchantQueuedCol = -1; // which column he'll enter from
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
@@ -450,11 +452,12 @@ function _randomItem() {
 function _randomShopItem() {
   const r = randInt(7);
   if (r === 0) return ITEM_PROMOTER_WILD;
-  if (r < 3) return _randomPromoterItem();
+  if (r === 1) return _randomPromoterItem();
   if (r === 2) return ITEM_TELEPORTER;
   if (r === 3) return ITEM_CLONER;
   if (r === 4) return ITEM_UPGRADER;
-  return ITEM_BOMB;
+  if (r === 5) return ITEM_BOMB;
+  return _randomPromoterItem();
 }
 
 function addToInventory(item) {
@@ -684,6 +687,7 @@ function initBoard() {
   pendingItemQueue = [];
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = [];
+  merchantQueued = false; merchantQueuedCol = -1;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
@@ -1286,6 +1290,11 @@ function fieldAdvance(playerTriggered = false) {
   const merchantAtRow7 = merchantIdx >= 0 && xy(merchantIdx)[1] === 7;
   if (merchantAtRow7) exitRow[xy(merchantIdx)[0]].merchant = true;
 
+  // If merchant was queued in the fog preview, he enters the board this advance
+  const merchantEntersThisWave = merchantQueued;
+  const merchantEnterCol = merchantQueuedCol;
+  if (merchantQueued) { merchantQueued = false; merchantQueuedCol = -1; }
+
   // Everything shifts down one row; row 7 is destroyed (including white pieces).
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
@@ -1353,12 +1362,25 @@ function fieldAdvance(playerTriggered = false) {
   leapCount++;
 
   if (merchantAtRow7) {
-    // Merchant picks first, then King, then the rest
-    merchantIdx = idx(randInt(8), 0);
-    const mCol = merchantIdx % 8;
+    // Merchant slides off bottom; queue him in the fog preview row for the NEXT advance
+    merchantIdx = -1;
+    merchantQueued = true;
+    merchantQueuedCol = randInt(8);
+    // Normal wave placement this advance (no precedence needed)
+    for (const w of nextWave) {
+      if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      set(w.x, 0, w.piece, B);
+    }
+    for (const b of nextBonuses) {
+      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'neutral') set(b.col, 0, b.piece, N);
+    }
+  } else if (merchantEntersThisWave) {
+    // Merchant enters from the fog preview: he takes his column first, King next, rest after
+    merchantIdx = idx(merchantEnterCol, 0);
     const avail = [];
     for (let x = 0; x < 8; x++) {
-      if (x !== mCol && specialSpaces[idx(x, 0)]?.type !== 'block') avail.push(x);
+      if (x !== merchantEnterCol && specialSpaces[idx(x, 0)]?.type !== 'block') avail.push(x);
     }
     shuffle(avail);
     let ci = 0;
@@ -1367,7 +1389,7 @@ function fieldAdvance(playerTriggered = false) {
     if (waveKing && ci < avail.length) set(avail[ci++], 0, KING, B);
     for (const w of waveOthers) { if (ci < avail.length) set(avail[ci++], 0, w.piece, B); }
     for (const b of nextBonuses) {
-      if (b.col === mCol) continue;
+      if (b.col === merchantEnterCol) continue;
       if (b.type === 'chest') set(b.col, 0, CHEST, 0);
       if (b.type === 'neutral') set(b.col, 0, b.piece, N);
     }
@@ -1393,6 +1415,9 @@ function fieldAdvance(playerTriggered = false) {
   // the incoming row during the slide, rather than instantly flipping to the next preview.
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
+  // Rotate merchant wares: oldest item leaves, new random one arrives
+  merchantOffers.shift();
+  merchantOffers.push(_randomShopItem());
   startAnim([], -TILE, () => {
     turn = B;
     draw();
@@ -1461,6 +1486,7 @@ function allLegalMovesForSide(s) {
     if (sides[i] !== s) continue;
     const [x, y] = xy(i);
     for (const to of legalMoves(x, y)) {
+      if (s === B && to === merchantIdx) continue; // enemies cannot target the merchant
       moves.push([i, to]);
     }
   }
@@ -1547,7 +1573,10 @@ function allPseudoMovesForSide(s) {
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== s) continue;
     const [x, y] = xy(i);
-    for (const to of pseudoMoves(x, y)) moves.push([i, to]);
+    for (const to of pseudoMoves(x, y)) {
+      if (s === B && to === merchantIdx) continue;
+      moves.push([i, to]);
+    }
   }
   return moves;
 }
@@ -2217,6 +2246,18 @@ for (const b of nextBonuses) {
       ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
     }
   }
+}
+// Queued merchant shown in the preview/fog row
+if (merchantQueued && merchantQueuedCol >= 0) {
+  const mImg = spriteImages["merchant"];
+  const mpx = MARGIN + merchantQueuedCol * TILE;
+  const mpy = MARGIN - TILE;
+  ctx.fillStyle = "rgba(255,200,50,0.18)";
+  ctx.fillRect(mpx, mpy, TILE, TILE);
+  ctx.strokeStyle = "rgba(255,200,50,0.65)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(mpx + 1, mpy + 1, TILE - 2, TILE - 2);
+  if (mImg && mImg.complete) ctx.drawImage(mImg, mpx + prevPad, mpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
 }
 
 // Exit row â€" only during Field Advance animation. Drawn at y=8 (one below the live board)
