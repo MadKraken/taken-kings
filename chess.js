@@ -1,4 +1,4 @@
-﻿const VERSION = "242";
+﻿const VERSION = "243";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -33,7 +33,7 @@ function loadSprites() {
   let count = 0;
   const total = 29;
   const logoImg = new Image();
-  logoImg.src = "sprites/logo_0.png?v=1";
+  logoImg.src = "sprites/Logo_1.png?v=1";
   logoImg.onload = () => {
     spriteImages["logo"] = logoImg;
     count++; if (count === total) { spritesLoaded = true; draw(); }
@@ -46,7 +46,7 @@ function loadSprites() {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
       const key = `${s}_${p}`;
       const img = new Image();
-      img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
+      img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : (s === W && p === QUEEN) ? "sprites/Queen.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
       img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       img.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       spriteImages[key] = img;
@@ -77,7 +77,7 @@ function loadSprites() {
   explosionImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["explosion"] = explosionImg;
   const groundImg = new Image();
-  groundImg.src = "ground.jpg";
+  groundImg.src = "sprites/Ground.png";
   groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
   groundImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
 }
