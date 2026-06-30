@@ -1,4 +1,4 @@
-﻿const VERSION = "249";
+﻿const VERSION = "250";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -991,7 +991,7 @@ function legalMoves(x, y) {
   // White has no check restriction â€" all pseudo-legal moves are legal.
   // Black still can't move into check (keeps AI from hanging its own king).
   const s = side(x, y);
-  if (s === W) return merchantIdx >= 0 ? pseudoMoves(x, y).filter(m => m !== merchantIdx) : pseudoMoves(x, y);
+  if (s === W) return pseudoMoves(x, y);
   return pseudoMoves(x, y).filter(m => {
     const savBoard = [...board], savSides = [...sides];
     board[m] = board[idx(x,y)]; sides[m] = sides[idx(x,y)];
@@ -1837,10 +1837,10 @@ function closeShop() {
   if (done) done();
 }
 
-function openMerchantShop() {
+function openMerchantShop(onDone) {
   shopOffers = merchantOffers;
   shopMode = true;
-  shopOnDone = null; // doesn't consume turn
+  shopOnDone = onDone || null;
   draw();
 }
 
@@ -3410,12 +3410,6 @@ function handleBoardClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (!inB(gx, gy)) { selected = -1; validMoves = []; draw(); return; }
   const clicked = idx(gx, gy);
-  // Merchant: clicking his square opens the shop (doesn't consume white's turn)
-  if (clicked === merchantIdx) {
-    selected = -1; validMoves = [];
-    openMerchantShop();
-    return;
-  }
   if (selected < 0) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); }
   } else {
@@ -3441,6 +3435,23 @@ function handleBoardClick(cx, cy) {
           startAnim([{ toIdx: bounceI, fromCX: pToCX, fromCY: pToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
             startShieldPop(pToCX + TILE / 2, pToCY + TILE / 2);
             endWhiteTurn();
+          });
+        });
+        return;
+      }
+      // Engage merchant: bounce attacker, open shop, then end turn
+      if (clicked === merchantIdx) {
+        const fromI = selected;
+        const attackPiece = board[fromI], attackHlth = health[fromI];
+        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
+        const [bx, by] = xy(bounceI);
+        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+        selected = -1; validMoves = [];
+        recordPosition();
+        startAnim([{ toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
+          startAnim([{ toIdx: bounceI, fromCX: pToCX, fromCY: pToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
+            startShieldPop(pToCX + TILE / 2, pToCY + TILE / 2);
+            openMerchantShop(endWhiteTurn);
           });
         });
         return;
