@@ -1,4 +1,4 @@
-﻿const VERSION = "248";
+﻿const VERSION = "249";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -31,7 +31,7 @@ let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 29;
+  const total = 30;
   const logoImg = new Image();
   logoImg.src = "sprites/Logo_1.png?v=1";
   logoImg.onload = () => {
@@ -86,6 +86,10 @@ function loadSprites() {
   groundImg.src = "sprites/Ground.png";
   groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
   groundImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  const merchantImg = new Image();
+  merchantImg.src = "sprites/merchant.svg";
+  merchantImg.onload = () => { spriteImages["merchant"] = merchantImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
+  merchantImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
 }
 
 let board = new Array(64).fill(NONE);
@@ -150,12 +154,12 @@ let itemSpaces = new Array(64).fill(ITEM_NONE);
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
-let pendingShopQueue = []; // shop-space indices queued after a Team Advance
-let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'shop'|'void'|'block', ...}
+let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'void'|'block', ...}
 let shopMode = false;
-let shopSpaceIdx = -1; // which specialSpaces entry is currently open
-let shopOffers = []; // reference to specialSpaces[shopSpaceIdx].offers
-let shopOnDone = null; // callback after shop closes
+let shopOffers = []; // items shown in merchant shop dialog
+let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
+let merchantIdx = -1; // board position of Merchant NPC (-1 = not on board)
+let merchantOffers = []; // 3 items generated at game start, persist for the whole game
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
@@ -486,7 +490,7 @@ function takeReplaySnapshot() {
     inventory: [...inventory],
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
-    spawnCount, leapCount, shiftCountdown
+    spawnCount, leapCount, shiftCountdown, merchantIdx
   });
 }
 
@@ -500,7 +504,7 @@ function applyReplaySnapshot(snap) {
   score = snap.score; gold = snap.gold; turn = snap.turn;
   playerDead = {...snap.playerDead}; enemyDead = {...snap.enemyDead};
   spawnCount = snap.spawnCount; leapCount = snap.leapCount;
-  shiftCountdown = snap.shiftCountdown;
+  shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
 }
 
 function enterReplay() {
@@ -617,14 +621,11 @@ function generateRowBonuses(wave) {
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (randInt(5) !== 0) continue;
-    const type = ['chest', 'item', 'obstacle', 'shop', 'void', 'block', 'neutral'][randInt(7)];
+    const type = ['chest', 'item', 'obstacle', 'void', 'block', 'neutral', 'neutral'][randInt(7)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
       bonuses.push({ type: 'item', col: x, item: _randomItem() });
-    } else if (type === 'shop') {
-      const offers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
-      bonuses.push({ type: 'shop', col: x, offers, sold: [false, false, false] });
     } else if (type === 'void') {
       bonuses.push({ type: 'void', col: x });
     } else if (type === 'block') {
@@ -682,10 +683,12 @@ function initBoard() {
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
   specialSpaces.fill(null);
+  merchantIdx = -1; merchantOffers = [];
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
   rollSetup();
+  _placeMerchant();
 }
 
 function _randomSetupPiece() {
@@ -988,7 +991,7 @@ function legalMoves(x, y) {
   // White has no check restriction â€" all pseudo-legal moves are legal.
   // Black still can't move into check (keeps AI from hanging its own king).
   const s = side(x, y);
-  if (s === W) return pseudoMoves(x, y);
+  if (s === W) return merchantIdx >= 0 ? pseudoMoves(x, y).filter(m => m !== merchantIdx) : pseudoMoves(x, y);
   return pseudoMoves(x, y).filter(m => {
     const savBoard = [...board], savSides = [...sides];
     board[m] = board[idx(x,y)]; sides[m] = sides[idx(x,y)];
@@ -1317,11 +1320,21 @@ function fieldAdvance(playerTriggered = false) {
   }
   for (const b of nextBonuses) {
     if (b.type === 'obstacle') newSpecialSpaces[idx(b.col, 0)] = { type: 'obstacle', dx: b.dx, dy: b.dy };
-    if (b.type === 'shop') newSpecialSpaces[idx(b.col, 0)] = { type: 'shop', offers: b.offers, sold: b.sold };
     if (b.type === 'void') newSpecialSpaces[idx(b.col, 0)] = { type: 'void' };
     if (b.type === 'block') newSpecialSpaces[idx(b.col, 0)] = { type: 'block' };
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
+
+  // Merchant moves down with the field advance
+  if (merchantIdx >= 0) {
+    const [mmx, mmy] = xy(merchantIdx);
+    if (mmy === 7) {
+      respawnMerchant();
+    } else {
+      merchantIdx = idx(mmx, mmy + 1);
+      if (isVoidSpace(merchantIdx)) respawnMerchant();
+    }
+  }
 
   // Scroll item spaces down
   const newItemSpaces = new Array(64).fill(ITEM_NONE);
@@ -1617,10 +1630,12 @@ function aiPlay() {
           else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
           if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
           neutralPlay(() => {
-            turn = W;
-            aiThinking = false;
-            takeReplaySnapshot();
-            draw();
+            merchantPlay(() => {
+              turn = W;
+              aiThinking = false;
+              takeReplaySnapshot();
+              draw();
+            });
           });
         });
       };
@@ -1637,6 +1652,7 @@ function aiPlay() {
         startAnim([{ toIdx: move[0], fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
           // Apply board state now
           makeMove(move[0], move[1], true);
+          if (move[1] === merchantIdx) respawnMerchant();
           recordPosition();
           // Phase 2: bounce back to bounceI (suppress at bounceI)
           startAnim([{ toIdx: bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
@@ -1646,6 +1662,7 @@ function aiPlay() {
         });
       } else {
         makeMove(move[0], move[1], true);
+        if (move[1] === merchantIdx) respawnMerchant();
         const _aiHops = computeObstacleHops(move[1]);
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
         const _aiFinalI = applySpecialSpace(move[1]);
@@ -1682,10 +1699,12 @@ function aiPlay() {
       }
       if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
       neutralPlay(() => {
-        turn = W;
-        aiThinking = false;
-        takeReplaySnapshot();
-        draw();
+        merchantPlay(() => {
+          turn = W;
+          aiThinking = false;
+          takeReplaySnapshot();
+          draw();
+        });
       });
     }
   }, 50);
@@ -1754,7 +1773,8 @@ function detonateBomb(centerI, _alreadyDetonated) {
       startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
       board[i] = NONE; sides[i] = 0; health[i] = 1;
     }
-    if (specialSpaces[i]?.type === 'block' || specialSpaces[i]?.type === 'shop') specialSpaces[i] = null;
+    if (specialSpaces[i]?.type === 'block') specialSpaces[i] = null;
+    if (i === merchantIdx) respawnMerchant();
     itemSpaces[i] = ITEM_NONE;
   }
   for (const bi of chainBombs) {
@@ -1804,24 +1824,10 @@ function activateItemSpace(item, i) {
 // Called after item/obstacle interaction completes; drains queue or ends turn.
 function processNextQueuedItem() {
   activeItemSpaceIdx = -1;
-  if (pendingItemQueue.length === 0) { processNextShop(); return; }
+  if (pendingItemQueue.length === 0) { endWhiteTurn(); return; }
   const { item, i } = pendingItemQueue.shift();
   const done = activateItemSpace(item, i);
   if (done) processNextQueuedItem();
-}
-
-function processNextShop() {
-  if (pendingShopQueue.length === 0) { endWhiteTurn(); return; }
-  const spaceIdx = pendingShopQueue.shift();
-  openShop(spaceIdx, () => processNextShop());
-}
-
-function openShop(spaceIdx, onDone) {
-  shopSpaceIdx = spaceIdx;
-  shopOffers = specialSpaces[spaceIdx].offers;
-  shopMode = true;
-  shopOnDone = onDone;
-  draw();
 }
 
 function closeShop() {
@@ -1829,6 +1835,50 @@ function closeShop() {
   const done = shopOnDone;
   shopOnDone = null;
   if (done) done();
+}
+
+function openMerchantShop() {
+  shopOffers = merchantOffers;
+  shopMode = true;
+  shopOnDone = null; // doesn't consume turn
+  draw();
+}
+
+function respawnMerchant() {
+  const empty = [];
+  for (let i = 0; i < 64; i++) {
+    if (board[i] === NONE && i !== merchantIdx) empty.push(i);
+  }
+  merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
+}
+
+function _placeMerchant() {
+  const empty = [];
+  for (let i = 0; i < 64; i++) if (board[i] === NONE) empty.push(i);
+  merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
+  merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
+}
+
+function merchantPlay(onDone) {
+  if (merchantIdx < 0 || gameOver) { onDone(); return; }
+  const [mx, my] = xy(merchantIdx);
+  const moves = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = mx + dx, ny = my + dy;
+      if (!inB(nx, ny)) continue;
+      const ni = idx(nx, ny);
+      if (board[ni] !== NONE) continue;
+      if (isBlockSpace(ni)) continue;
+      moves.push(ni);
+    }
+  }
+  if (moves.length > 0) {
+    merchantIdx = moves[randInt(moves.length)];
+    if (isVoidSpace(merchantIdx)) respawnMerchant();
+  }
+  onDone();
 }
 
 // After a Team Advance, apply obstacle spaces then item spaces leftâ†’right, frontâ†’back.
@@ -1852,11 +1902,6 @@ function _applySpacesAfterAdvancePass2() {
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
 
-  // Pass 3: shop spaces â€" queued after items so each triggers its own dialogue.
-  pendingShopQueue = [];
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] === W && specialSpaces[i]?.type === 'shop') pendingShopQueue.push(i);
-  }
   processNextQueuedItem();
 }
 
@@ -2131,13 +2176,6 @@ for (const b of nextBonuses) {
     ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
     ctx.restore();
-  } else if (b.type === 'shop') {
-    ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
-    ctx.fillRect(bpx, bpy, TILE, TILE);
-    ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(bpx + 1, bpy + 1, TILE - 2, TILE - 2);
-    drawShopTile(ctx, bpx, bpy, TILE);
   } else if (b.type === 'void') {
     const vcx = bpx + TILE / 2, vcy = bpy + TILE / 2;
     ctx.save();
@@ -2228,18 +2266,15 @@ for (let i = 0; i < 64; i++) {
   }
 }
 
-// Shop spaces
-for (let i = 0; i < 64; i++) {
-  const sp = specialSpaces[i];
-  if (!sp || sp.type !== 'shop') continue;
-  const [x, y] = xy(i);
-  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-  ctx.fillStyle = "rgba(255, 200, 50, 0.18)";
-  ctx.fillRect(px, py, TILE, TILE);
-  ctx.strokeStyle = "rgba(255, 200, 50, 0.55)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
-  drawShopTile(ctx, px, py, TILE);
+// Merchant NPC square highlight
+if (merchantIdx >= 0) {
+  const [mx, my] = xy(merchantIdx);
+  const mpx = MARGIN + mx * TILE, mpy = MARGIN + my * TILE;
+  ctx.fillStyle = "rgba(255,200,50,0.18)";
+  ctx.fillRect(mpx, mpy, TILE, TILE);
+  ctx.strokeStyle = "rgba(255,200,50,0.65)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(mpx + 1, mpy + 1, TILE - 2, TILE - 2);
 }
 
 // Arrow spaces
@@ -2327,6 +2362,13 @@ for (let i = 0; i < 64; i++) {
     ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
     ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
   }
+}
+
+// Merchant NPC sprite
+if (merchantIdx >= 0) {
+  const [mx, my] = xy(merchantIdx);
+  const mImg = spriteImages["merchant"];
+  if (mImg && mImg.complete) ctx.drawImage(mImg, MARGIN + mx * TILE + pad, MARGIN + my * TILE + pad, TILE - pad * 2, TILE - pad * 2);
 }
 
 // Pending captures: pieces removed from board but not yet visually taken (waiting for hop anim)
@@ -2893,7 +2935,7 @@ if (shopMode) {
   ctx.fillStyle = "#f0c040";
   ctx.font = "42px Canterbury";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("Shop", dlgX + dlgW / 2, dlgY + 45);
+  ctx.fillText("Merchant", dlgX + dlgW / 2, dlgY + 45);
   ctx.fillStyle = "#aaa";
   ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
 
@@ -2901,31 +2943,27 @@ if (shopMode) {
   const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
   const cardsY = dlgY + 120;
 
-  const shopSold = specialSpaces[shopSpaceIdx].sold;
   for (let i = 0; i < shopOffers.length; i++) {
     const item = shopOffers[i];
     const price = itemPrice(item);
     const cardX = cardsStartX + i * (cardW + cardGap);
-    const isSold = shopSold[i];
-    const canAfford = !isSold && gold >= price;
+    const canAfford = gold >= price;
 
-    ctx.fillStyle = isSold ? "#161622" : (canAfford ? "#2a2a52" : "#1e1e30");
+    ctx.fillStyle = canAfford ? "#2a2a52" : "#1e1e30";
     ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.fill();
     if (canAfford) {
       ctx.strokeStyle = "rgba(255,200,50,0.3)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
     }
 
-    ctx.globalAlpha = isSold ? 0.25 : 1.0;
     if (isPromoterItem(item)) {
       _drawItemInSlot(ctx, item, cardX + (cardW - 90) / 2, cardsY + 16, 90);
     } else {
       const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
       if (simg && simg.complete) ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
     }
-    ctx.globalAlpha = 1.0;
 
-    ctx.fillStyle = isSold ? "#444" : "#ddd";
+    ctx.fillStyle = "#ddd";
     ctx.font = "42px Canterbury";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -2939,16 +2977,16 @@ if (shopMode) {
       ctx.fillText(name, cardX + cardW / 2, cardsY + 149);
     }
 
-    ctx.fillStyle = isSold ? "#444" : (canAfford ? "#f0c040" : "#666");
+    ctx.fillStyle = canAfford ? "#f0c040" : "#666";
     ctx.font = "42px Canterbury";
-    ctx.fillText(isSold ? "-" : `${price} G`, cardX + cardW / 2, cardsY + 210);
+    ctx.fillText(`${price} G`, cardX + cardW / 2, cardsY + 210);
 
-    ctx.fillStyle = (isSold || !canAfford) ? "#2a2a2a" : "#3a6a3a";
+    ctx.fillStyle = canAfford ? "#3a6a3a" : "#2a2a2a";
     ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
-    ctx.fillStyle = (isSold || !canAfford) ? "#555" : "#fff";
+    ctx.fillStyle = canAfford ? "#fff" : "#555";
     ctx.font = "42px Canterbury";
     ctx.textBaseline = "middle";
-    ctx.fillText(isSold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
+    ctx.fillText("Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
   }
 
   // Close button
@@ -3166,11 +3204,9 @@ function handleShopClick(cx, cy) {
     const price = itemPrice(shopOffers[i]);
     const cardX = cardsStartX + i * (cardW + cardGap);
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
-    const sold = specialSpaces[shopSpaceIdx].sold[i];
-    if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !sold) {
+    if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price) {
       gold -= price;
       addToInventory(shopOffers[i]);
-      specialSpaces[shopSpaceIdx].sold[i] = true;
       draw();
       return;
     }
@@ -3284,16 +3320,11 @@ function handleTeleporterClick(cx, cy) {
             processNextQueuedItem();
           } else {
             firstMoveMade = true; recordPosition();
-            const continueAfterShop = () => {
-              const itm = itemSpaces[_tFinalI];
-              if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
-                const done = activateItemSpace(itm, _tFinalI);
-                if (done) endWhiteTurn();
-              } else { endWhiteTurn(); }
-            };
-            if (specialSpaces[_tFinalI]?.type === 'shop' && sides[_tFinalI] === W) {
-              openShop(_tFinalI, continueAfterShop);
-            } else { continueAfterShop(); }
+            const itm = itemSpaces[_tFinalI];
+            if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
+              const done = activateItemSpace(itm, _tFinalI);
+              if (done) endWhiteTurn();
+            } else { endWhiteTurn(); }
           }
         };
         const _tDoHop = (hi) => {
@@ -3379,6 +3410,12 @@ function handleBoardClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (!inB(gx, gy)) { selected = -1; validMoves = []; draw(); return; }
   const clicked = idx(gx, gy);
+  // Merchant: clicking his square opens the shop (doesn't consume white's turn)
+  if (clicked === merchantIdx) {
+    selected = -1; validMoves = [];
+    openMerchantShop();
+    return;
+  }
   if (selected < 0) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); }
   } else {
@@ -3437,16 +3474,11 @@ function handleBoardClick(cx, cy) {
         pendingCaptures = {};
         checkWhiteKingAlive();
         if (!gameOver) {
-          const continueAfterShop = () => {
-            const item = itemSpaces[movedTo];
-            if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
-              const done = activateItemSpace(item, movedTo);
-              if (done) endWhiteTurn();
-            } else { endWhiteTurn(); }
-          };
-          if (specialSpaces[movedTo]?.type === 'shop' && sides[movedTo] === W) {
-            openShop(movedTo, continueAfterShop);
-          } else { continueAfterShop(); }
+          const item = itemSpaces[movedTo];
+          if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
+            const done = activateItemSpace(item, movedTo);
+            if (done) endWhiteTurn();
+          } else { endWhiteTurn(); }
         } else { draw(); }
       };
       const _wDoHop = (hi) => {

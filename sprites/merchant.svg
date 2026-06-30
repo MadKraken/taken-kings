@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
+  <!-- Robe body -->
+  <path d="M22 72 Q17 50 19 34 Q19 15 40 11 Q61 15 61 34 Q63 50 58 72 Z" fill="#8B4513" stroke="#5C2E00" stroke-width="2"/>
+  <!-- Hood shadow -->
+  <path d="M22 34 Q21 13 40 9 Q59 13 58 34 Q51 23 40 21 Q29 23 22 34 Z" fill="#5C2E00"/>
+  <!-- Face -->
+  <ellipse cx="40" cy="26" rx="11" ry="10" fill="#D4A876"/>
+  <!-- Eyes -->
+  <circle cx="36" cy="24" r="1.8" fill="#333"/>
+  <circle cx="44" cy="24" r="1.8" fill="#333"/>
+  <!-- Bushy brows -->
+  <path d="M33 20 Q36 18.5 39 20" stroke="#5C2E00" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M41 20 Q44 18.5 47 20" stroke="#5C2E00" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <!-- Beard -->
+  <path d="M31 30 Q33 37 40 38 Q47 37 49 30" fill="#C8A87A" stroke="#A07850" stroke-width="1"/>
+  <!-- Coin bag -->
+  <path d="M27 52 Q22 46 26 41 Q30 37 34 41 Q38 46 33 52 Z" fill="#DAA520" stroke="#B8860B" stroke-width="2"/>
+  <ellipse cx="30" cy="52" rx="7" ry="6" fill="#DAA520" stroke="#B8860B" stroke-width="2"/>
+  <!-- Bag tie -->
+  <ellipse cx="30" cy="41" rx="4" ry="2.5" fill="#DAA520" stroke="#B8860B" stroke-width="1.5"/>
+  <!-- Coin gleam -->
+  <ellipse cx="28" cy="51" rx="2.5" ry="2" fill="rgba(255,240,160,0.55)"/>
+</svg>
