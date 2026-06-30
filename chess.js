@@ -1,4 +1,4 @@
-﻿const VERSION = "269";
+﻿const VERSION = "270";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -147,7 +147,8 @@ let shopMode = false;
 let shopOffers = []; // items shown in merchant shop dialog
 let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
 let merchantIdx = -1; // board position of Merchant NPC (-1 = not on board)
-let merchantOffers = []; // 3 items generated at game start, persist for the whole game
+let merchantOffers = []; // 3 items generated at game start, rotate on field advance
+let merchantSold = [false, false, false]; // sold state per slot, resets when item rotates out
 let merchantQueued = false; // merchant is waiting in the fog preview row
 let merchantQueuedCol = -1; // which column he'll enter from
 
@@ -675,7 +676,7 @@ function initBoard() {
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
   specialSpaces.fill(null);
-  merchantIdx = -1; merchantOffers = [];
+  merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
   merchantQueued = false; merchantQueuedCol = -1;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
@@ -1411,8 +1412,8 @@ function fieldAdvance(playerTriggered = false) {
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
   // Rotate merchant wares: oldest item leaves, new random one arrives
-  merchantOffers.shift();
-  merchantOffers.push(_randomShopItem());
+  merchantOffers.shift(); merchantSold.shift();
+  merchantOffers.push(_randomShopItem()); merchantSold.push(false);
   startAnim([], -TILE, () => {
     turn = B;
     draw();
@@ -2985,23 +2986,26 @@ if (shopMode) {
     const item = shopOffers[i];
     const price = itemPrice(item);
     const cardX = cardsStartX + i * (cardW + cardGap);
-    const canAfford = gold >= price;
+    const sold = merchantSold[i];
+    const canAfford = !sold && gold >= price;
 
-    ctx.fillStyle = canAfford ? "#2a2a52" : "#1e1e30";
+    ctx.fillStyle = sold ? "#181820" : canAfford ? "#2a2a52" : "#1e1e30";
     ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.fill();
     if (canAfford) {
       ctx.strokeStyle = "rgba(255,200,50,0.3)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
     }
 
+    ctx.globalAlpha = sold ? 0.35 : 1;
     if (isPromoterItem(item)) {
       _drawItemInSlot(ctx, item, cardX + (cardW - 90) / 2, cardsY + 16, 90);
     } else {
       const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
       if (simg && simg.complete) ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
     }
+    ctx.globalAlpha = 1;
 
-    ctx.fillStyle = "#ddd";
+    ctx.fillStyle = sold ? "#555" : "#ddd";
     ctx.font = "42px Canterbury";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -3015,16 +3019,16 @@ if (shopMode) {
       ctx.fillText(name, cardX + cardW / 2, cardsY + 149);
     }
 
-    ctx.fillStyle = canAfford ? "#f0c040" : "#666";
+    ctx.fillStyle = sold ? "#444" : canAfford ? "#f0c040" : "#666";
     ctx.font = "42px Canterbury";
-    ctx.fillText(`${price} G`, cardX + cardW / 2, cardsY + 210);
+    ctx.fillText(sold ? "" : `${price} G`, cardX + cardW / 2, cardsY + 210);
 
-    ctx.fillStyle = canAfford ? "#3a6a3a" : "#2a2a2a";
+    ctx.fillStyle = sold ? "#2a1a1a" : canAfford ? "#3a6a3a" : "#2a2a2a";
     ctx.beginPath(); ctx.roundRect(cardX + 14, cardsY + cardH - 54, cardW - 28, 44, 6); ctx.fill();
-    ctx.fillStyle = canAfford ? "#fff" : "#555";
+    ctx.fillStyle = sold ? "#663333" : canAfford ? "#fff" : "#555";
     ctx.font = "42px Canterbury";
     ctx.textBaseline = "middle";
-    ctx.fillText("Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
+    ctx.fillText(sold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
   }
 
   // Close button
@@ -3250,9 +3254,10 @@ function handleShopClick(cx, cy) {
     const price = itemPrice(shopOffers[i]);
     const cardX = cardsStartX + i * (cardW + cardGap);
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
-    if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price) {
+    if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !merchantSold[i]) {
       gold -= price;
       addToInventory(shopOffers[i]);
+      merchantSold[i] = true;
       draw();
       return;
     }
