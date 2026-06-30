@@ -1,4 +1,4 @@
-﻿const VERSION = "233";
+﻿const VERSION = "235";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -115,7 +115,7 @@ const ITEM_NAMES = {
   [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb"
 };
 function itemName(item) {
-  if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Promoter (wild)" : `Promoter (${PIECE_NAMES[promoterTo(item)] || "?"})`;
+  if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
   return ITEM_NAMES[item] || "?";
 }
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
