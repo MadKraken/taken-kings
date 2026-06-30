@@ -1,4 +1,4 @@
-﻿const VERSION = "232";
+﻿const VERSION = "233";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -159,7 +159,7 @@ const ITEM_SPRITE_KEYS = {
 const _PROMOTER_TO_PRICE = { [ROOK]: 20, [KNIGHT]: 20, [BISHOP]: 20, [QUEEN]: 30, [PROMOTER_WILD]: 15 };
 function itemPrice(item) {
   if (isPromoterItem(item)) return _PROMOTER_TO_PRICE[promoterTo(item)] || 20;
-  return itemPrice(item) || 0;
+  return ITEM_PRICES[item] || 0;
 }
 const ITEM_PRICES = {
   [ITEM_TELEPORTER]: 30,
@@ -2901,18 +2901,20 @@ if (shopMode) {
       ctx.beginPath(); ctx.roundRect(cardX, cardsY, cardW, cardH, 8); ctx.stroke();
     }
 
-    const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
-    if (simg && simg.complete) {
-      ctx.globalAlpha = isSold ? 0.25 : 1.0;
-      ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
-      ctx.globalAlpha = 1.0;
+    ctx.globalAlpha = isSold ? 0.25 : 1.0;
+    if (isPromoterItem(item)) {
+      _drawItemInSlot(ctx, item, cardX + (cardW - 90) / 2, cardsY + 16, 90);
+    } else {
+      const simg = spriteImages[ITEM_SPRITE_KEYS[item]];
+      if (simg && simg.complete) ctx.drawImage(simg, cardX + (cardW - 90) / 2, cardsY + 16, 90, 90);
     }
+    ctx.globalAlpha = 1.0;
 
     ctx.fillStyle = isSold ? "#444" : "#ddd";
     ctx.font = "42px Canterbury";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const name = ITEM_NAMES[item];
+    const name = itemName(item);
     const words = name.split(" ");
     if (words.length > 1) {
       const mid = Math.ceil(words.length / 2);
