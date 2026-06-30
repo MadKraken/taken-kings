@@ -1,4 +1,4 @@
-﻿const VERSION = "246";
+﻿const VERSION = "247";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1289,6 +1289,12 @@ function pitchShift(playerTriggered = false) {
     const [x, y] = xy(i);
     if (y === 7) { // destroyed
       if (playerTriggered && sides[i] === B && board[i] === KING) score++;
+      const isPlayer = sides[i] === W;
+      const pool = isPlayer ? playerDead : enemyDead;
+      const [tgx, tgy] = graveSlotPos(isPlayer, board[i]);
+      const sx = MARGIN + x * TILE + TILE / 2, sy = BOARD_Y + MARGIN + y * TILE + TILE / 2;
+      const p = board[i], s = sides[i];
+      startFlyAnim(p, s, sx, sy, tgx, tgy, () => { pool[p] = (pool[p] || 0) + 1; });
       continue;
     }
     const ni = idx(x, y + 1);
