@@ -1,4 +1,4 @@
-﻿const VERSION = "241";
+﻿const VERSION = "242";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1160,7 +1160,7 @@ function teamLeap() {
   for (let x = 0; x < 8; x++) {
     const occupied = new Set();
     for (let y = 0; y < 8; y++) {
-      if (sides[idx(x, y)] === B) occupied.add(y);
+      if (sides[idx(x, y)] === B || sides[idx(x, y)] === N) occupied.add(y);
     }
     for (let y = 0; y < 8; y++) {
       if (sides[idx(x, y)] !== W) continue;
