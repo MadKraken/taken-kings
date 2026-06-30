@@ -1,4 +1,4 @@
-﻿const VERSION = "268";
+﻿const VERSION = "269";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -720,9 +720,12 @@ function rollSetup() {
   shuffle(positions);
   set(positions[0].x, positions[0].y, KING, W);
 
-  // Roll remaining 15 positions
-  for (let i = 1; i < 16; i++) {
-    set(positions[i].x, positions[i].y, _randomSetupPiece(), W);
+  // Queen is guaranteed; remaining 14 slots are random (Pawn/Rook/Knight/Bishop only)
+  set(positions[1].x, positions[1].y, QUEEN, W);
+  for (let i = 2; i < 16; i++) {
+    const r = randInt(14);
+    const p = r < 8 ? PAWN : r < 10 ? ROOK : r < 12 ? KNIGHT : BISHOP;
+    set(positions[i].x, positions[i].y, p, W);
   }
 
   // One random item in inventory
