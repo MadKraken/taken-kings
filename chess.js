@@ -1,4 +1,4 @@
-﻿const VERSION = "244";
+﻿const VERSION = "245";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1426,11 +1426,13 @@ function evaluate() {
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const v = PIECE_VALUE[board[i]];
+    const shields = health[i] - 1;
+    const effectiveV = shields > 0 ? v * (1 + 0.5 * shields) : v;
     if (sides[i] === W) {
-      val += v;
+      val += effectiveV;
       if (board[i] === KING) whiteKing = true;
     } else {
-      val -= v;
+      val -= effectiveV;
     }
   }
   if (!whiteKing) return -99999;
