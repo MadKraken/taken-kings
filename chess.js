@@ -1,4 +1,4 @@
-﻿const VERSION = "259";
+﻿const VERSION = "261";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -32,64 +32,52 @@ let spritesLoaded = false;
 function loadSprites() {
   let count = 0;
   const total = 30;
+  const done = () => { count++; if (count >= total && !spritesLoaded) { spritesLoaded = true; draw(); } };
   const logoImg = new Image();
-  logoImg.src = "sprites/Logo_1.png?v=1";
-  logoImg.onload = () => {
-    spriteImages["logo"] = logoImg;
-    count++; if (count === total) { spritesLoaded = true; draw(); }
-  };
-  logoImg.onerror = (e) => {
-    console.log("logo FAILED", e);
-    count++; if (count === total) { spritesLoaded = true; draw(); }
-  };
+  logoImg.src = "sprites/logo_2.png?v=1";
+  logoImg.onload = () => { spriteImages["logo"] = logoImg; done(); };
+  logoImg.onerror = (e) => { console.log("logo FAILED", e); done(); };
   for (const s of [W, B, N]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
       const key = `${s}_${p}`;
       const img = new Image();
       img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : (s === W && p === QUEEN) ? "sprites/Queen.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
-      img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-      img.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+      img.onload = done; img.onerror = done;
       spriteImages[key] = img;
     }
   }
   const chestImg = new Image();
   chestImg.src = "sprites/chest.svg";
-  chestImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  chestImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  chestImg.onload = done; chestImg.onerror = done;
   spriteImages["chest"] = chestImg;
   const teleImg = new Image();
   teleImg.src = "sprites/item_teleporter.svg";
-  teleImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  teleImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  teleImg.onload = done; teleImg.onerror = done;
   spriteImages["item_teleporter"] = teleImg;
   const clonerImg = new Image();
   clonerImg.src = "sprites/item_cloner.svg";
-  clonerImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  clonerImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  clonerImg.onload = done; clonerImg.onerror = done;
   spriteImages["item_cloner"] = clonerImg;
   const upgraderImg = new Image();
   upgraderImg.src = "sprites/item_upgrader.svg?v=2";
-  upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  upgraderImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  upgraderImg.onload = done; upgraderImg.onerror = done;
   spriteImages["item_upgrader"] = upgraderImg;
   const bombImg = new Image();
   bombImg.src = "sprites/item_bomb.svg";
-  bombImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  bombImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  bombImg.onload = done; bombImg.onerror = done;
   spriteImages["item_bomb"] = bombImg;
   const explosionImg = new Image();
   explosionImg.src = "sprites/explosion.svg";
-  explosionImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
-  explosionImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  explosionImg.onload = done; explosionImg.onerror = done;
   spriteImages["explosion"] = explosionImg;
   const groundImg = new Image();
   groundImg.src = "sprites/Ground.png";
-  groundImg.onload = () => { spriteImages["ground"] = groundImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
-  groundImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  groundImg.onload = done; groundImg.onerror = done;
+  spriteImages["ground"] = groundImg;
   const merchantImg = new Image();
   merchantImg.src = "sprites/merchant.svg";
-  merchantImg.onload = () => { spriteImages["merchant"] = merchantImg; count++; if (count === total) { spritesLoaded = true; draw(); } };
-  merchantImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  merchantImg.onload = done; merchantImg.onerror = done;
+  spriteImages["merchant"] = merchantImg;
 }
 
 let board = new Array(64).fill(NONE);
@@ -2115,15 +2103,6 @@ if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
   }
 }
 
-// Logo
-const logoEl = spriteImages["logo"];
-if (logoEl && logoEl.width > 0) {
-  const maxW = canvas.width - MARGIN * 2;
-  const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
-  const lw = logoEl.width * scale, lh = logoEl.height * scale;
-  ctx.drawImage(logoEl, MARGIN, (LOGO_H - lh) / 2, lw, lh);
-}
-
 // Stats â€" right side
 {
   ctx.font = "42px Canterbury";
@@ -3086,6 +3065,14 @@ function draw() {
   drawVoidDeath();
   drawPromoDialog();
   drawShopDialog();
+  // Logo — topmost layer
+  const logoEl = spriteImages["logo"];
+  if (logoEl && logoEl.width > 0) {
+    const maxW = canvas.width - MARGIN * 2;
+    const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
+    const lw = logoEl.width * scale, lh = logoEl.height * scale;
+    ctx.drawImage(logoEl, MARGIN, (LOGO_H - lh) / 2, lw, lh);
+  }
   ctx.font = "22px monospace";
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.textAlign = "left";
