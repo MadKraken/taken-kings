@@ -1,4 +1,4 @@
-﻿const VERSION = "238";
+﻿const VERSION = "240";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -25,13 +25,13 @@ const W = 1, B = 2, N = 3;
 const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS];
 
 const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king", [CHECKERS]: "checkers" };
-const SIDE_PREFIX = { [W]: "w", [B]: "b" };
+const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
 
 function loadSprites() {
   let count = 0;
-  const total = 22;
+  const total = 29;
   const logoImg = new Image();
   logoImg.src = "sprites/logo_0.png?v=1";
   logoImg.onload = () => {
@@ -42,12 +42,13 @@ function loadSprites() {
     console.log("logo FAILED", e);
     count++; if (count === total) { spritesLoaded = true; draw(); }
   };
-  for (const s of [W, B]) {
+  for (const s of [W, B, N]) {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
       const key = `${s}_${p}`;
       const img = new Image();
       img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
       img.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+      img.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
       spriteImages[key] = img;
     }
   }
@@ -2133,11 +2134,9 @@ for (const b of nextBonuses) {
   } else if (b.type === 'block') {
     drawBlockTile(ctx, bpx, bpy, TILE);
   } else if (b.type === 'neutral') {
-    const nimg = spriteImages[`${B}_${b.piece}`];
+    const nimg = spriteImages[`${N}_${b.piece}`];
     if (nimg && nimg.complete) {
-      ctx.filter = 'grayscale(1) brightness(3.5)';
       ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
-      ctx.filter = 'none';
     }
   }
 }
@@ -2291,13 +2290,10 @@ for (let i = 0; i < 64; i++) {
       ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
     }
   } else {
-    const drawSide = sides[i] === N ? B : sides[i];
-    const key = `${drawSide}_${board[i]}`;
+    const key = `${sides[i]}_${board[i]}`;
     const img = spriteImages[key];
     if (img && img.complete) {
-      if (sides[i] === N) ctx.filter = 'grayscale(1) brightness(3.5)';
       ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
-      if (sides[i] === N) ctx.filter = 'none';
     }
   }
   // Shield badge: shows number of shields (health - 1) using the shield sprite
@@ -3511,7 +3507,7 @@ canvas.addEventListener("click", (e) => {
 
 
 initBoard();
-document.fonts.ready.then(() => loadSprites());
+document.fonts.load("42px Canterbury").then(() => loadSprites());
 
 window.setupTest = function(preset) {
   if (preset === 'teleporter_void') {
