@@ -1,4 +1,4 @@
-﻿const VERSION = "245";
+﻿const VERSION = "246";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -55,26 +55,32 @@ function loadSprites() {
   const chestImg = new Image();
   chestImg.src = "sprites/chest.svg";
   chestImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  chestImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["chest"] = chestImg;
   const teleImg = new Image();
   teleImg.src = "sprites/item_teleporter.svg";
   teleImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  teleImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_teleporter"] = teleImg;
   const clonerImg = new Image();
   clonerImg.src = "sprites/item_cloner.svg";
   clonerImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  clonerImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_cloner"] = clonerImg;
   const upgraderImg = new Image();
   upgraderImg.src = "sprites/item_upgrader.svg?v=2";
   upgraderImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  upgraderImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_upgrader"] = upgraderImg;
   const bombImg = new Image();
   bombImg.src = "sprites/item_bomb.svg";
   bombImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  bombImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["item_bomb"] = bombImg;
   const explosionImg = new Image();
   explosionImg.src = "sprites/explosion.svg";
   explosionImg.onload = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
+  explosionImg.onerror = () => { count++; if (count === total) { spritesLoaded = true; draw(); } };
   spriteImages["explosion"] = explosionImg;
   const groundImg = new Image();
   groundImg.src = "sprites/Ground.png";
