@@ -1,4 +1,4 @@
-﻿const VERSION = "237";
+﻿const VERSION = "238";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1282,7 +1282,6 @@ function pitchShift() {
     const [x, y] = xy(i);
     if (y === 7) continue; // destroyed
     const ni = idx(x, y + 1);
-    if (specialSpaces[ni]?.type === 'block') { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; continue; }
     newBoard[ni] = board[i];
     newSides[ni] = sides[i];
     newHealth[ni] = health[i];
