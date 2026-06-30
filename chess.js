@@ -1,4 +1,4 @@
-﻿const VERSION = "240";
+﻿const VERSION = "241";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1263,7 +1263,7 @@ function canManualPitchShift() {
   return true;
 }
 
-function pitchShift() {
+function pitchShift(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
 
   // Capture the bottom row before it's destroyed so animation can slide it out.
@@ -1281,7 +1281,10 @@ function pitchShift() {
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
-    if (y === 7) continue; // destroyed
+    if (y === 7) { // destroyed
+      if (playerTriggered && sides[i] === B && board[i] === KING) score++;
+      continue;
+    }
     const ni = idx(x, y + 1);
     newBoard[ni] = board[i];
     newSides[ni] = sides[i];
@@ -3501,7 +3504,7 @@ canvas.addEventListener("click", (e) => {
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
       cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { hintMove = null; teamLeap(); return; }
   if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) pitchShift(); return; }
+      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) pitchShift(true); return; }
   handleBoardClick(cx, cy);
 });
 
