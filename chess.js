@@ -1,4 +1,4 @@
-﻿const VERSION = "247";
+﻿const VERSION = "248";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1118,7 +1118,7 @@ function makeMove(fromI, toI, visual = false) {
 function endWhiteTurn() {
   shiftCountdown--;
   if (shiftCountdown <= 0) {
-    pitchShift();
+    fieldAdvance();
   } else {
     checkArrowSpaces(() => {
       turn = B;
@@ -1269,7 +1269,7 @@ function canManualPitchShift() {
   return true;
 }
 
-function pitchShift(playerTriggered = false) {
+function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
 
   // Capture the bottom row before it's destroyed so animation can slide it out.
@@ -1396,7 +1396,7 @@ function canSimulateLeap() {
 }
 
 function simulateLeap() {
-  // Simulates pitchShift for AI lookahead: everything shifts down, row 7 destroyed
+  // Simulates fieldAdvance for AI lookahead: everything shifts down, row 7 destroyed
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
   for (let i = 0; i < 64; i++) {
@@ -3517,7 +3517,7 @@ canvas.addEventListener("click", (e) => {
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
       cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { hintMove = null; teamLeap(); return; }
   if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) pitchShift(true); return; }
+      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
   handleBoardClick(cx, cy);
 });
 
