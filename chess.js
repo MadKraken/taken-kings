@@ -1,4 +1,4 @@
-﻿const VERSION = "236";
+﻿const VERSION = "237";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -735,41 +735,30 @@ function startGame() {
 
 const CONQUEST_FPS = 30;
 const CONQUEST_FRAME_COUNT = 94;
-const CONQUEST_BUFFER = 6; // frames to keep loaded ahead; old frames are released
 const _conquestFrames = new Array(CONQUEST_FRAME_COUNT).fill(null).map(() => new Image());
+
+// Preload all frames sequentially at startup so they're ready before the player hits Go
+(function _preloadConquest(i) {
+  if (i >= CONQUEST_FRAME_COUNT) return;
+  _conquestFrames[i].onload = () => _preloadConquest(i + 1);
+  _conquestFrames[i].onerror = () => _preloadConquest(i + 1);
+  _conquestFrames[i].src = `animations/begin conquest frames/Begin Conquest -${i}.png`;
+})(0);
 
 let _conquestGifActive = false;
 let _conquestStartMs = 0;
 let _conquestCurrentFrame = 0;
 
-function _conquestLoadWindow(cur) {
-  const ahead = Math.min(cur + CONQUEST_BUFFER, CONQUEST_FRAME_COUNT - 1);
-  for (let i = cur; i <= ahead; i++) {
-    if (!_conquestFrames[i].src) {
-      _conquestFrames[i].src = `animations/begin conquest frames/Begin Conquest -${i}.png`;
-    }
-  }
-  // Release frames well behind current to free memory
-  const release = cur - CONQUEST_BUFFER - 1;
-  if (release >= 0 && _conquestFrames[release].src) {
-    _conquestFrames[release].src = "";
-  }
-}
-
 function playConquestGif() {
   _conquestGifActive = true;
   _conquestCurrentFrame = 0;
-  _conquestLoadWindow(0);
-  // Don't start the timer until frame 0 is ready
-  const _waitForFirst = () => {
-    if (_conquestFrames[0].complete) {
-      _conquestStartMs = performance.now();
-      requestAnimationFrame(_conquestTick);
-    } else {
-      _conquestFrames[0].onload = () => { _conquestStartMs = performance.now(); requestAnimationFrame(_conquestTick); };
-    }
-  };
-  _waitForFirst();
+  // Wait for frame 0 in case preload is still in progress
+  if (_conquestFrames[0].complete) {
+    _conquestStartMs = performance.now();
+    requestAnimationFrame(_conquestTick);
+  } else {
+    _conquestFrames[0].onload = () => { _conquestStartMs = performance.now(); requestAnimationFrame(_conquestTick); };
+  }
 }
 
 function _conquestTick() {
@@ -777,8 +766,7 @@ function _conquestTick() {
   const now = performance.now();
   const elapsed = now - _conquestStartMs;
   const targetFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
-  _conquestLoadWindow(targetFrame);
-  // Stall timer if the target frame isn't loaded yet
+  // Stall timer if the target frame isn't loaded yet (safety net)
   if (!_conquestFrames[targetFrame].complete) {
     _conquestStartMs = now - (targetFrame / CONQUEST_FPS * 1000);
     requestAnimationFrame(_conquestTick);
