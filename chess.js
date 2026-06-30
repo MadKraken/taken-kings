@@ -1,4 +1,4 @@
-﻿const VERSION = "265";
+﻿const VERSION = "268";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1355,7 +1355,7 @@ function fieldAdvance(playerTriggered = false) {
     merchantIdx = -1;
     merchantQueued = true;
     merchantQueuedCol = randInt(8);
-    // Normal wave placement this advance (no precedence needed)
+    // Normal wave placement this advance
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       set(w.x, 0, w.piece, B);
@@ -1365,7 +1365,7 @@ function fieldAdvance(playerTriggered = false) {
       if (b.type === 'neutral') set(b.col, 0, b.piece, N);
     }
   } else if (merchantEntersThisWave) {
-    // Merchant enters from the fog preview: he takes his column first, King next, rest after
+    // Merchant slides in from fog preview: he takes his column first, King next, rest after
     merchantIdx = idx(merchantEnterCol, 0);
     const avail = [];
     for (let x = 0; x < 8; x++) {
@@ -1383,11 +1383,14 @@ function fieldAdvance(playerTriggered = false) {
       if (b.type === 'neutral') set(b.col, 0, b.piece, N);
     }
   } else {
+    // Normal advance: wave works around merchant's current position
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      if (idx(w.x, 0) === merchantIdx) continue;
       set(w.x, 0, w.piece, B);
     }
     for (const b of nextBonuses) {
+      if (idx(b.col, 0) === merchantIdx) continue;
       if (b.type === 'chest') set(b.col, 0, CHEST, 0);
       if (b.type === 'neutral') set(b.col, 0, b.piece, N);
     }
@@ -1887,7 +1890,7 @@ function openMerchantShop(onDone) {
 function respawnMerchant() {
   const empty = [];
   for (let i = 0; i < 64; i++) {
-    if (board[i] === NONE && i !== merchantIdx) empty.push(i);
+    if (board[i] === NONE && i !== merchantIdx && Math.floor(i / 8) !== 0) empty.push(i);
   }
   merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
 }
