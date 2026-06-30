@@ -1,4 +1,4 @@
-﻿const VERSION = "252";
+﻿const VERSION = "253";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1282,6 +1282,9 @@ function fieldAdvance(playerTriggered = false) {
     const i = idx(x, 7);
     exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i] });
   }
+  // If merchant is on row 7 he slides off with the exit row
+  const merchantAtRow7 = merchantIdx >= 0 && xy(merchantIdx)[1] === 7;
+  if (merchantAtRow7) exitRow[xy(merchantIdx)[0]].merchant = true;
 
   // Everything shifts down one row; row 7 is destroyed (including white pieces).
   const newBoard = new Array(64).fill(NONE);
@@ -1326,15 +1329,11 @@ function fieldAdvance(playerTriggered = false) {
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
 
-  // Merchant moves down with the field advance
-  if (merchantIdx >= 0) {
+  // Non-row-7 merchant: shift down with everything else
+  if (!merchantAtRow7 && merchantIdx >= 0) {
     const [mmx, mmy] = xy(merchantIdx);
-    if (mmy === 7) {
-      respawnMerchant();
-    } else {
-      merchantIdx = idx(mmx, mmy + 1);
-      if (isVoidSpace(merchantIdx)) respawnMerchant();
-    }
+    merchantIdx = idx(mmx, mmy + 1);
+    if (isVoidSpace(merchantIdx)) respawnMerchant();
   }
 
   // Scroll item spaces down
@@ -1352,13 +1351,35 @@ function fieldAdvance(playerTriggered = false) {
 
   spawnCount++;
   leapCount++;
-  for (const w of nextWave) {
-    if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue; // block wall, piece can't enter
-    set(w.x, 0, w.piece, B);
-  }
-  for (const b of nextBonuses) {
-    if (b.type === 'chest') set(b.col, 0, CHEST, 0);
-    if (b.type === 'neutral') set(b.col, 0, b.piece, N);
+
+  if (merchantAtRow7) {
+    // Merchant picks first, then King, then the rest
+    merchantIdx = idx(randInt(8), 0);
+    const mCol = merchantIdx % 8;
+    const avail = [];
+    for (let x = 0; x < 8; x++) {
+      if (x !== mCol && specialSpaces[idx(x, 0)]?.type !== 'block') avail.push(x);
+    }
+    shuffle(avail);
+    let ci = 0;
+    const waveKing = nextWave.find(w => w.piece === KING);
+    const waveOthers = nextWave.filter(w => w.piece !== KING);
+    if (waveKing && ci < avail.length) set(avail[ci++], 0, KING, B);
+    for (const w of waveOthers) { if (ci < avail.length) set(avail[ci++], 0, w.piece, B); }
+    for (const b of nextBonuses) {
+      if (b.col === mCol) continue;
+      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'neutral') set(b.col, 0, b.piece, N);
+    }
+  } else {
+    for (const w of nextWave) {
+      if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      set(w.x, 0, w.piece, B);
+    }
+    for (const b of nextBonuses) {
+      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'neutral') set(b.col, 0, b.piece, N);
+    }
   }
 
   epTarget = -1;
@@ -2206,6 +2227,10 @@ if (_fieldAnim && anim.exitRow) {
     if ((x + 8) % 2 !== 0) { ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(MARGIN + x * TILE, MARGIN + BOARD_PX, TILE, TILE); }
   }
   for (const ep of anim.exitRow) {
+    if (ep.merchant) {
+      const mImg = spriteImages["merchant"];
+      if (mImg && mImg.complete) ctx.drawImage(mImg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
+    }
     if (ep.piece === NONE) continue;
     const ekey = ep.piece === CHEST ? "chest" : `${ep.side}_${ep.piece}`;
     const eimg = spriteImages[ekey];
