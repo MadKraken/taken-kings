@@ -1,4 +1,4 @@
-﻿const VERSION = "270";
+﻿const VERSION = "274";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -86,6 +86,7 @@ let health = new Array(64).fill(1);
 let selected = -1;
 let validMoves = [];
 let turn = W;
+let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
 let gameMsg = "";
 let score = 0;
@@ -795,7 +796,7 @@ function neutralMovesFor(i) {
   const [x, y] = xy(i);
   const p = board[i];
   const moves = [];
-  const canLand = (nx, ny) => inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny));
+  const canLand = (nx, ny) => inB(nx, ny) && board[idx(nx, ny)] === NONE && idx(nx, ny) !== merchantIdx && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny));
   if (p === PAWN) {
     if (canLand(x, y - 1)) moves.push(idx(x, y - 1));
     if (canLand(x, y + 1)) moves.push(idx(x, y + 1));
@@ -1116,6 +1117,7 @@ function makeMove(fromI, toI, visual = false) {
 }
 
 function endWhiteTurn() {
+  lastActingSide = W;
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     fieldAdvance();
@@ -1415,9 +1417,21 @@ function fieldAdvance(playerTriggered = false) {
   merchantOffers.shift(); merchantSold.shift();
   merchantOffers.push(_randomShopItem()); merchantSold.push(false);
   startAnim([], -TILE, () => {
-    turn = B;
-    draw();
-    if (!gameOver) aiPlay();
+    if (!playerTriggered) {
+      // Auto-advance: White just spent their move triggering the countdown, so Black goes next.
+      turn = B;
+      draw();
+      if (!gameOver) aiPlay();
+    } else {
+      // Manual advance: hand off to Black if White acted last, otherwise stay on White.
+      if (lastActingSide === W) {
+        turn = B;
+        draw();
+        if (!gameOver) aiPlay();
+      } else {
+        draw();
+      }
+    }
   }, exitRow);
 }
 
@@ -1668,6 +1682,7 @@ function aiPlay() {
   setTimeout(() => {
     const move = aiBestMove();
     if (move) {
+      lastActingSide = B;
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
@@ -1712,29 +1727,34 @@ function aiPlay() {
         if (move[1] === merchantIdx) respawnMerchant();
         const _aiHops = computeObstacleHops(move[1]);
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
-        const _aiFinalI = applySpecialSpace(move[1]);
-        recordPosition();
-        const _aiPiece = board[_aiFinalI] || _aiPiece0, _aiSide = sides[_aiFinalI] || _aiSide0, _aiHlth = health[_aiFinalI] || _aiHlth0;
         const _aiIsCheckersJump = _aiPiece0 === CHECKERS && Math.abs(mtx - mfx) === 2;
+        // Suppress the piece at move[1] (where it now sits) during the initial slide anim.
+        // applySpecialSpace is deferred until after this anim so captured pieces stay visible.
         const aiAnimPieces = [{
-          toIdx: _aiFinalI,
+          toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-          piece: _aiPiece, side: _aiSide, hlth: _aiHlth,
+          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0,
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
-        const _aiDoHop = (hi) => {
-          if (hi >= _aiHops.length) {
-            if (isVoidSpace(_aiFinalI) && _aiPiece !== NONE) {
-              const [vx, vy] = xy(_aiFinalI);
-              startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece, _aiSide, _aiFinish);
-            } else { _aiFinish(); }
-            return;
-          }
-          const [fI, tI] = _aiHops[hi];
-          const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-          startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
-        };
-        startAnim(aiAnimPieces, 0, () => _aiDoHop(0));
+        startAnim(aiAnimPieces, 0, () => {
+          // Now apply special-space redirect (captures happen here, after the slide is visible)
+          const _aiFinalI = applySpecialSpace(move[1]);
+          recordPosition();
+          const _aiPiece = board[_aiFinalI] || _aiPiece0, _aiSide = sides[_aiFinalI] || _aiSide0, _aiHlth = health[_aiFinalI] || _aiHlth0;
+          const _aiDoHop = (hi) => {
+            if (hi >= _aiHops.length) {
+              if (isVoidSpace(_aiFinalI) && _aiPiece !== NONE) {
+                const [vx, vy] = xy(_aiFinalI);
+                startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece, _aiSide, _aiFinish);
+              } else { _aiFinish(); }
+              return;
+            }
+            const [fI, tI] = _aiHops[hi];
+            const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
+            startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
+          };
+          _aiDoHop(0);
+        });
       }
     } else {
       if (countKings(W) === 0) {
@@ -1918,6 +1938,7 @@ function merchantPlay(onDone) {
       const ni = idx(nx, ny);
       if (board[ni] !== NONE) continue;
       if (isBlockSpace(ni)) continue;
+      if (isVoidSpace(ni)) continue;
       moves.push(ni);
     }
   }
@@ -1930,14 +1951,11 @@ function merchantPlay(onDone) {
   startAnim([{ toIdx: dest, fromCX, fromCY, toCX, toCY, spriteKey: "merchant" }], 0, onDone);
 }
 
-// After a Team Advance, apply obstacle spaces then item spaces leftâ†’right, frontâ†’back.
+// After a Team Advance, apply item spaces only — arrows don’t fire since no piece moved.
 function applySpacesAfterAdvance() {
-  // Pass 1: obstacles â€" use checkArrowSpaces so hop animations play correctly.
-  checkArrowSpaces(() => {
-    checkWhiteKingAlive();
-    if (gameOver) { takeReplaySnapshot(); draw(); return; }
-    _applySpacesAfterAdvancePass2();
-  });
+  checkWhiteKingAlive();
+  if (gameOver) { takeReplaySnapshot(); draw(); return; }
+  _applySpacesAfterAdvancePass2();
 }
 
 function _applySpacesAfterAdvancePass2() {
