@@ -1,4 +1,4 @@
-﻿const VERSION = "235";
+﻿const VERSION = "236";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -758,19 +758,35 @@ function _conquestLoadWindow(cur) {
 
 function playConquestGif() {
   _conquestGifActive = true;
-  _conquestStartMs = performance.now();
   _conquestCurrentFrame = 0;
   _conquestLoadWindow(0);
-  requestAnimationFrame(_conquestTick);
+  // Don't start the timer until frame 0 is ready
+  const _waitForFirst = () => {
+    if (_conquestFrames[0].complete) {
+      _conquestStartMs = performance.now();
+      requestAnimationFrame(_conquestTick);
+    } else {
+      _conquestFrames[0].onload = () => { _conquestStartMs = performance.now(); requestAnimationFrame(_conquestTick); };
+    }
+  };
+  _waitForFirst();
 }
 
 function _conquestTick() {
   if (!_conquestGifActive) return;
-  const elapsed = performance.now() - _conquestStartMs;
-  _conquestCurrentFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
-  _conquestLoadWindow(_conquestCurrentFrame);
+  const now = performance.now();
+  const elapsed = now - _conquestStartMs;
+  const targetFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
+  _conquestLoadWindow(targetFrame);
+  // Stall timer if the target frame isn't loaded yet
+  if (!_conquestFrames[targetFrame].complete) {
+    _conquestStartMs = now - (targetFrame / CONQUEST_FPS * 1000);
+    requestAnimationFrame(_conquestTick);
+    return;
+  }
+  _conquestCurrentFrame = targetFrame;
   draw();
-  if (_conquestCurrentFrame >= CONQUEST_FRAME_COUNT - 1 && elapsed >= (CONQUEST_FRAME_COUNT / CONQUEST_FPS) * 1000) {
+  if (_conquestCurrentFrame >= CONQUEST_FRAME_COUNT - 1) {
     _conquestGifActive = false;
     startGame();
   } else {
