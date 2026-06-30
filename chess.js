@@ -1,4 +1,4 @@
-﻿const VERSION = "243";
+﻿const VERSION = "244";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2009,19 +2009,18 @@ if (logoEl && logoEl.width > 0) {
   const maxW = canvas.width - MARGIN * 2;
   const scale = Math.min(maxW / logoEl.width, (LOGO_H - 8) / logoEl.height);
   const lw = logoEl.width * scale, lh = logoEl.height * scale;
-  ctx.drawImage(logoEl, MARGIN + BOARD_PX - lw, (LOGO_H - lh) / 2, lw, lh);
+  ctx.drawImage(logoEl, MARGIN, (LOGO_H - lh) / 2, lw, lh);
 }
 
-// Stats â€" left and right of logo, in the logo area
+// Stats â€" right side
 {
-  const statsY = LOGO_H * 0.55;
   ctx.font = "42px Canterbury";
   ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
+  ctx.textAlign = "right";
   ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
   ctx.fillStyle = "#fff";
-  ctx.fillText(`Taken Kings: ${score}`, MARGIN, LOGO_H * 0.35);
-  ctx.fillText(`Gold: ${gold}`, MARGIN, LOGO_H * 0.70);
+  ctx.fillText(`Taken Kings: ${score}`, MARGIN + BOARD_PX, LOGO_H * 0.35);
+  ctx.fillText(`Gold: ${gold}`, MARGIN + BOARD_PX, LOGO_H * 0.70);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 }
 }
