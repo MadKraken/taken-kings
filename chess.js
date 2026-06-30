@@ -1,4 +1,4 @@
-﻿const VERSION = "258";
+﻿const VERSION = "259";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2252,11 +2252,6 @@ if (merchantQueued && merchantQueuedCol >= 0) {
   const mImg = spriteImages["merchant"];
   const mpx = MARGIN + merchantQueuedCol * TILE;
   const mpy = MARGIN - TILE;
-  ctx.fillStyle = "rgba(255,200,50,0.18)";
-  ctx.fillRect(mpx, mpy, TILE, TILE);
-  ctx.strokeStyle = "rgba(255,200,50,0.65)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(mpx + 1, mpy + 1, TILE - 2, TILE - 2);
   if (mImg && mImg.complete) ctx.drawImage(mImg, mpx + prevPad, mpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
 }
 
@@ -2335,16 +2330,6 @@ for (let i = 0; i < 64; i++) {
   }
 }
 
-// Merchant NPC square highlight
-if (merchantIdx >= 0) {
-  const [mx, my] = xy(merchantIdx);
-  const mpx = MARGIN + mx * TILE, mpy = MARGIN + my * TILE;
-  ctx.fillStyle = "rgba(255,200,50,0.18)";
-  ctx.fillRect(mpx, mpy, TILE, TILE);
-  ctx.strokeStyle = "rgba(255,200,50,0.65)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(mpx + 1, mpy + 1, TILE - 2, TILE - 2);
-}
 
 // Arrow spaces
 for (let i = 0; i < 64; i++) {
