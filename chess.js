@@ -1,4 +1,4 @@
-﻿const VERSION = "261";
+﻿const VERSION = "265";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -391,7 +391,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
       itemSpaces: [...itemSpaces],
       inventory: [...inventory],
-      score, gold, leapCount, shiftCountdown,
+      score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
@@ -542,6 +542,7 @@ function _playReplayTransition(snapIdx, onDone) {
     itemSpaces.splice(0, 64, ...ev.itemSpaces);
     inventory.splice(0, inventory.length, ...ev.inventory);
     score = ev.score; gold = ev.gold; leapCount = ev.leapCount; shiftCountdown = ev.shiftCountdown;
+    merchantIdx = ev.merchantIdx ?? -1;
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
     startAnim(ev.pieces, ev.boardDy, playNext, ev.exitRow || undefined);
   };
@@ -577,7 +578,7 @@ function _tickAutoPlay() {
 }
 
 function toggleReplayAutoPlay() {
-  if (anim) return;
+  if (anim && !replayAutoPlay) return; // block starting while animating, but allow pausing
   replayAutoPlay = !replayAutoPlay;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   if (replayAutoPlay) _tickAutoPlay();
@@ -2511,14 +2512,9 @@ if (anim && anim.pieces && _animT < 1) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
-      const animDrawSide = ap.side === N ? B : ap.side;
-      const key = `${animDrawSide}_${ap.piece}`;
+      const key = `${ap.side}_${ap.piece}`;
       const img = spriteImages[key];
-      if (img && img.complete) {
-        if (ap.side === N) ctx.filter = 'grayscale(1) brightness(3.5)';
-        ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
-        if (ap.side === N) ctx.filter = 'none';
-      }
+      if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     }
     if (ap.side === W && ap.hlth > 1) {
       const shields = ap.hlth - 1;
@@ -2759,7 +2755,7 @@ if (gameOver && !replayMode) {
 function drawReplayControls() {
 if (replayMode) {
   // Replay nav controls — placed right below the countdown label
-  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 90;
   const ctrlW = BOARD_PX, ctrlH = 130;
   ctx.fillStyle = "rgba(10,10,40,0.93)";
   ctx.beginPath(); ctx.roundRect(ctrlX, ctrlY, ctrlW, ctrlH, 10); ctx.fill();
@@ -3194,7 +3190,7 @@ canvas.addEventListener("mouseup", (e) => {
 // --- Click handler sub-functions ---
 
 function handleReplayClick(cx, cy) {
-  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 64;
+  const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 90;
   const ctrlH = 130;
   const midX = ctrlX + BOARD_PX / 2;
   const bW = 140, bH = 52, bGap = 14;
