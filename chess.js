@@ -1,4 +1,4 @@
-﻿const VERSION = "250";
+﻿const VERSION = "251";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1874,11 +1874,13 @@ function merchantPlay(onDone) {
       moves.push(ni);
     }
   }
-  if (moves.length > 0) {
-    merchantIdx = moves[randInt(moves.length)];
-    if (isVoidSpace(merchantIdx)) respawnMerchant();
-  }
-  onDone();
+  if (moves.length === 0) { onDone(); return; }
+  const dest = moves[randInt(moves.length)];
+  const fromCX = MARGIN + mx * TILE, fromCY = BOARD_Y + MARGIN + my * TILE;
+  const toCX = MARGIN + (dest % 8) * TILE, toCY = BOARD_Y + MARGIN + Math.floor(dest / 8) * TILE;
+  merchantIdx = dest;
+  if (isVoidSpace(merchantIdx)) { respawnMerchant(); onDone(); return; }
+  startAnim([{ toIdx: dest, fromCX, fromCY, toCX, toCY, spriteKey: "merchant" }], 0, onDone);
 }
 
 // After a Team Advance, apply obstacle spaces then item spaces leftâ†’right, frontâ†’back.
@@ -2364,8 +2366,8 @@ for (let i = 0; i < 64; i++) {
   }
 }
 
-// Merchant NPC sprite
-if (merchantIdx >= 0) {
+// Merchant NPC sprite (suppressed when animating — anim overlay draws him)
+if (merchantIdx >= 0 && !_animToSet.has(merchantIdx)) {
   const [mx, my] = xy(merchantIdx);
   const mImg = spriteImages["merchant"];
   if (mImg && mImg.complete) ctx.drawImage(mImg, MARGIN + mx * TILE + pad, MARGIN + my * TILE + pad, TILE - pad * 2, TILE - pad * 2);
@@ -2471,7 +2473,10 @@ if (anim && anim.pieces && _animT < 1) {
     const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
     const arcOffset = ap.arc ? ap.arc * 4 * _animT * (1 - _animT) : 0;
     const acy = ap.fromCY + (ap.toCY - ap.fromCY) * _animT - arcOffset;
-    if (ap.piece === CHEST) {
+    if (ap.spriteKey) {
+      const img = spriteImages[ap.spriteKey];
+      if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+    } else if (ap.piece === CHEST) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
