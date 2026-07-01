@@ -1,4 +1,4 @@
-﻿const VERSION = "280";
+﻿const VERSION = "281";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2260,7 +2260,7 @@ function respawnMerchant() {
 
 function _placeMerchant() {
   const empty = [];
-  for (let i = 0; i < 64; i++) if (board[i] === NONE) empty.push(i);
+  for (let i = 0; i < 64; i++) if (board[i] === NONE && Math.floor(i / 8) !== 0) empty.push(i);
   merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
   merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
 }
