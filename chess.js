@@ -817,7 +817,6 @@ function initBoard() {
   epTarget = -1;
   gamePhase = 'setup';
   rollSetup();
-  _placeMerchant();
 }
 
 function _randomSetupPiece() {
@@ -1679,6 +1678,12 @@ function fieldAdvance(playerTriggered = false) {
   spawnCount++;
   leapCount++;
 
+  // Queue merchant to enter with the 3rd wave (after 2nd advance)
+  if (spawnCount === 3 && merchantIdx < 0 && !merchantQueued && !merchantAtRow7) {
+    merchantQueued = true;
+    merchantQueuedCol = randInt(8);
+  }
+
   if (merchantAtRow7) {
     // Merchant slides off bottom; queue him in the fog preview row for the NEXT advance
     merchantIdx = -1;
@@ -1696,6 +1701,8 @@ function fieldAdvance(playerTriggered = false) {
   } else if (merchantEntersThisWave) {
     // Merchant slides in from fog preview: he takes his column first, King next, rest after
     merchantIdx = idx(merchantEnterCol, 0);
+    merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
+    merchantSold = [false, false, false];
     const avail = [];
     for (let x = 0; x < 8; x++) {
       if (x !== merchantEnterCol && specialSpaces[idx(x, 0)]?.type !== 'block') avail.push(x);
