@@ -1,4 +1,4 @@
-﻿const VERSION = "307";
+﻿const VERSION = "308";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -360,7 +360,59 @@ function _flyTick() {
 
 // shoveParams: { isKnight, toI } for Knight; { isKnight: false, dx, dy, toI } for sliders
 function startWaveAnim(squares, shoveParams, onDone) {
-  waveAnim = { squares, shoveParams, lastHead: -1, startMs: performance.now(), dur: 500, onDone };
+  const sp = shoveParams;
+  // squareToK: board-index → position in the wave sweep (used to time visual releases)
+  const squareToK = new Map();
+  squares.forEach((si, k) => squareToK.set(si, k));
+
+  // drawAt: Map<newBoardIdx, {cx, cy, releaseK}>
+  // While active, the piece at newBoardIdx is drawn at (cx,cy) instead of its real square.
+  // Released (deleted) when the wave head reaches releaseK.
+  const drawAt = new Map();
+
+  if (sp.isKnight) {
+    const [tx, ty] = xy(sp.toI);
+    for (const ni of squares) {
+      if (ni === sp.toI) continue;
+      if (board[ni] === NONE && ni !== merchantIdx) continue;
+      const [nx, ny] = xy(ni);
+      const releaseK = squareToK.get(ni) ?? 0;
+      const [destX, destY] = [nx + (nx - tx > 0 ? 1 : nx - tx < 0 ? -1 : 0),
+                               ny + (ny - ty > 0 ? 1 : ny - ty < 0 ? -1 : 0)];
+      if (!inB(destX, destY)) continue;
+      const destI = idx(destX, destY);
+      drawAt.set(destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK });
+      shovePiece(ni, nx - tx, ny - ty);
+    }
+  } else {
+    // Pass 1: determine which pieces can move (far-to-near, chain-aware)
+    const willShove = new Set();
+    for (let i = squares.length - 1; i >= 0; i--) {
+      const ni = squares[i];
+      if (ni === sp.toI) continue;
+      if (board[ni] === NONE && ni !== merchantIdx) continue;
+      if (elements[ni] & ELEM_EARTH) continue;
+      const [nx, ny] = xy(ni);
+      const destX = nx + sp.dx, destY = ny + sp.dy;
+      if (!inB(destX, destY) || isBlockSpace(idx(destX, destY))) continue;
+      const destI = idx(destX, destY);
+      if (board[destI] === NONE && destI !== merchantIdx || willShove.has(destI)) {
+        willShove.add(ni);
+      }
+    }
+    // Pass 2: record old visual positions and apply shoves far-to-near
+    for (let i = squares.length - 1; i >= 0; i--) {
+      const ni = squares[i];
+      if (!willShove.has(ni)) continue;
+      const [nx, ny] = xy(ni);
+      const destI = idx(nx + sp.dx, ny + sp.dy);
+      const releaseK = squareToK.get(ni) ?? 0;
+      drawAt.set(destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK });
+      shovePiece(ni, sp.dx, sp.dy);
+    }
+  }
+
+  waveAnim = { squares, shoveParams, drawAt, lastHead: -1, startMs: performance.now(), dur: 500, onDone };
   requestAnimationFrame(_waveTick);
 }
 
@@ -368,16 +420,10 @@ function _waveTick() {
   if (!waveAnim) return;
   const t = Math.min(1, (performance.now() - waveAnim.startMs) / waveAnim.dur);
   const head = Math.floor(t * waveAnim.squares.length);
-  const sp = waveAnim.shoveParams;
-  // Apply shoves as wave head advances, one square at a time
+  // Release visual overrides as the wave front passes each square
   for (let k = waveAnim.lastHead + 1; k <= head && k < waveAnim.squares.length; k++) {
-    const ni = waveAnim.squares[k];
-    if (ni === sp.toI) { waveAnim.lastHead = k; continue; }
-    if (sp.isKnight) {
-      const [nx, ny] = xy(ni), [tx, ty] = xy(sp.toI);
-      if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, nx - tx, ny - ty);
-    } else {
-      if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, sp.dx, sp.dy);
+    for (const [newI, ov] of waveAnim.drawAt) {
+      if (ov.releaseK <= k) waveAnim.drawAt.delete(newI);
     }
     waveAnim.lastHead = k;
   }
@@ -2730,20 +2776,24 @@ for (let i = 0; i < 64; i++) {
   if (board[i] === NONE) continue;
   if (_animToSet.has(i)) continue; // drawn by animation overlay at interpolated position
   const [x, y] = xy(i);
+  // If a wave visual override exists, draw at the old position until the wave reaches it
+  const _waveOv = waveAnim?.drawAt?.get(i);
+  const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
+  const _drawY = _waveOv ? _waveOv.cy : MARGIN + y * TILE;
   if (board[i] === CHEST) {
     const img = spriteImages["chest"];
     if (img && img.complete) {
-      ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+      ctx.drawImage(img, _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
     }
   } else {
-    _drawPieceSprite(ctx, sides[i], board[i], MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
   }
   // Elemental badges: labeled dots at bottom of tile
   if (elements[i]) {
     const present = ELEM_ALL.filter(e => elements[i] & e);
     const dotR = 12, spacing = 26;
-    const startX = MARGIN + x * TILE + TILE / 2 - (present.length - 1) * spacing / 2;
-    const dotY = MARGIN + y * TILE + TILE - dotR - 3;
+    const startX = _drawX + TILE / 2 - (present.length - 1) * spacing / 2;
+    const dotY = _drawY + TILE - dotR - 3;
     for (let k = 0; k < present.length; k++) {
       const cx2 = startX + k * spacing;
       // White backing for contrast
@@ -2765,7 +2815,7 @@ for (let i = 0; i < 64; i++) {
   if (sides[i] === W && health[i] > 1) {
     const shields = health[i] - 1;
     const sz = 45;
-    const bx = MARGIN + x * TILE + TILE - sz - 2, by = MARGIN + y * TILE + 2;
+    const bx = _drawX + TILE - sz - 2, by = _drawY + 2;
     const shieldImg = spriteImages["item_upgrader"];
     if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
     ctx.fillStyle = "#ffffff";
