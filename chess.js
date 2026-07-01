@@ -1,4 +1,4 @@
-﻿const VERSION = "330";
+﻿const VERSION = "332";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -264,6 +264,7 @@ function piece(x, y) { return inB(x, y) ? board[idx(x, y)] : NONE; }
 function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
+function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
@@ -887,7 +888,7 @@ function applyRiverFlow(onDone) {
         {
           animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i] });
           board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i];
-          board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0;
+          clearSquare(i);
         }
         continue;
       }
@@ -1113,7 +1114,7 @@ function neutralPlay(onDone) {
     const [fx, fy] = xy(i), [tx, ty] = xy(dest);
     const p = board[i], h = health[i];
     board[dest] = p; sides[dest] = N; health[dest] = h;
-    board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0;
+    clearSquare(i);
     checkFireDeath(dest);
     startAnim([{
       toIdx: dest,
@@ -1195,8 +1196,9 @@ function pseudoMoves(x, y) {
       // White pawns move and capture upward only (toward row 0)
       const dir = -1;
       const fwd = piece(x, y + dir);
-      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST) && !isVoidSpace(idx(x, y + dir)) && !isBlockSpace(idx(x, y + dir))) {
-        moves.push(idx(x, y + dir));
+      const fwdI = idx(x, y + dir);
+      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST) && fwdI !== merchantIdx && !isVoidSpace(fwdI) && !isBlockSpace(fwdI)) {
+        moves.push(fwdI);
         if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE && !isVoidSpace(idx(x, y - 2)) && !isBlockSpace(idx(x, y - 2))) moves.push(idx(x, y - 2));
       }
       for (const dx of [-1, 1]) {
@@ -1204,6 +1206,7 @@ function pseudoMoves(x, y) {
         if (inB(nx, ny) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
           if (side(nx, ny) === e) moves.push(idx(nx, ny));
           else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
+          else if (idx(nx, ny) === merchantIdx) moves.push(idx(nx, ny));
         }
       }
     } else {
@@ -1308,11 +1311,11 @@ function shovePiece(srcI, dx, dy) {
     const p = board[srcI], s = sides[srcI];
     if (p === KING && s === W) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
     if (s === B) { if (p === KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
-    board[srcI] = NONE; sides[srcI] = 0; health[srcI] = 1; elements[srcI] = 0;
+    clearSquare(srcI);
     return;
   }
   board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI];
-  board[srcI] = NONE; sides[srcI] = 0; health[srcI] = 1; elements[srcI] = 0;
+  clearSquare(srcI);
 }
 
 function applyWaterWave(fromI, toI, p) {
@@ -1351,7 +1354,7 @@ function checkFireDeath(i) {
   const p = board[i], s = sides[i];
   if (p === KING && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
-  board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0;
+  clearSquare(i);
   return true;
 }
 
@@ -1436,7 +1439,7 @@ function applyShieldBounceState(atkI, defI, p) {
       health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI];
       board[defI] = board[atkI]; sides[defI] = sides[atkI];
       health[defI] = health[atkI]; elements[defI] = elements[atkI];
-      board[atkI] = NONE; sides[atkI] = 0; health[atkI] = 1; elements[atkI] = 0;
+      clearSquare(atkI);
       return { mode: 'earth-bonk', bonkDest };
     }
   }
@@ -1492,7 +1495,7 @@ function makeMove(fromI, toI, visual = false) {
     if (bounceI !== fromI) {
       board[bounceI] = p; sides[bounceI] = W; health[bounceI] = health[fromI];
       elements[bounceI] = elements[fromI]; // carry elements to bounce destination
-      board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1; elements[fromI] = 0;
+      clearSquare(fromI);
     }
     return;
   }
@@ -1559,7 +1562,7 @@ function makeMove(fromI, toI, visual = false) {
   const movedElem = elements[fromI];
   board[toI] = p; sides[toI] = s; health[toI] = movedHealth;
   elements[toI] = movedElem; // carry elements to destination (overwrites captured piece's elements)
-  board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1; elements[fromI] = 0;
+  clearSquare(fromI);
 
 }
 
@@ -4125,7 +4128,7 @@ function handleBoardClick(cx, cy) {
           // Move piece to bounce square only after animation finishes to avoid mid-anim flash.
           if (bounceI !== fromI) {
             board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem;
-            board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1; elements[fromI] = 0;
+            clearSquare(fromI);
           }
           openMerchantShop(endWhiteTurn);
         });
