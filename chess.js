@@ -1,4 +1,4 @@
-﻿const VERSION = "317";
+﻿const VERSION = "318";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -213,6 +213,7 @@ let merchantOffers = []; // 3 items generated at game start, rotate on field adv
 let merchantSold = [false, false, false]; // sold state per slot, resets when item rotates out
 let merchantQueued = false; // merchant is waiting in the fog preview row
 let merchantQueuedCol = -1; // which column he'll enter from
+let merchantPendingRespawn = false; // pushed into void mid-play; re-queue on next field advance
 let elements = new Array(64).fill(0); // elemental bitmask per board square, travels with piece
 let fireSquares = new Set(); // indices of squares on fire (White-placed, kills non-White pieces)
 let elementizerMode = false;
@@ -942,7 +943,7 @@ function initBoard() {
   pendingItemQueue = [];
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
-  merchantQueued = false; merchantQueuedCol = -1;
+  merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
   elements.fill(0); fireSquares = new Set(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
@@ -1283,8 +1284,7 @@ function _shoveMerchant(dx, dy) {
   if (isVoidSpace(destI)) {
     const oldIdx = merchantIdx;
     merchantIdx = -1;
-    merchantQueued = true;
-    merchantQueuedCol = randInt(8);
+    merchantPendingRespawn = true;
     return { merchantVoid: true, oldIdx, destI };
   }
   merchantIdx = destI;
@@ -1873,6 +1873,12 @@ function fieldAdvance(playerTriggered = false) {
   // the incoming row during the slide, rather than instantly flipping to the next preview.
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
+  // If merchant was void-killed mid-play, queue him now so he appears in the next preview
+  if (merchantPendingRespawn && merchantIdx < 0 && !merchantQueued) {
+    merchantPendingRespawn = false;
+    merchantQueued = true;
+    merchantQueuedCol = randInt(8);
+  }
   // If merchant is queued, pre-remap any wave piece that conflicts with his column
   // so the preview already shows final spawn positions
   if (merchantQueued && merchantQueuedCol >= 0) {
