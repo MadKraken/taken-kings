@@ -1,4 +1,4 @@
-﻿const VERSION = "277";
+﻿const VERSION = "278";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -29,20 +29,31 @@ const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
 
-// Returns an offscreen canvas with the image recolored via multiply blend.
-function _makeTinted(img, color) {
-  const w = img.naturalWidth || img.width || 128;
-  const h = img.naturalHeight || img.height || 128;
-  const oc = document.createElement('canvas');
-  oc.width = w; oc.height = h;
-  const oc2 = oc.getContext('2d');
-  oc2.drawImage(img, 0, 0);
-  oc2.globalCompositeOperation = 'multiply';
-  oc2.fillStyle = color;
-  oc2.fillRect(0, 0, w, h);
-  oc2.globalCompositeOperation = 'destination-in';
-  oc2.drawImage(img, 0, 0); // restore original alpha mask
-  return oc;
+const SIDE_TINT = { [B]: 'rgb(40,30,80)', [N]: 'rgb(180,140,60)' };
+// Persistent offscreen canvas used to tint pieces at draw time.
+const _tintOC = document.createElement('canvas');
+_tintOC.width = 256; _tintOC.height = 256;
+const _tintCtx = _tintOC.getContext('2d');
+
+// Draws any piece sprite, tinting for B/N sides using the W sprite as base.
+function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh) {
+  const img = spriteImages[`${W}_${piece}`];
+  if (!img || !img.complete) return;
+  if (side === W) { ctx.drawImage(img, dx, dy, dw, dh); return; }
+  _drawTinted(ctx, img, side, dx, dy, dw, dh);
+}
+
+// Draws a W sprite tinted for the given side onto ctx at (dx,dy,dw,dh).
+function _drawTinted(ctx, img, side, dx, dy, dw, dh) {
+  _tintCtx.clearRect(0, 0, 256, 256);
+  _tintCtx.drawImage(img, 0, 0, 256, 256);
+  _tintCtx.globalCompositeOperation = 'multiply';
+  _tintCtx.fillStyle = SIDE_TINT[side];
+  _tintCtx.fillRect(0, 0, 256, 256);
+  _tintCtx.globalCompositeOperation = 'destination-in';
+  _tintCtx.drawImage(img, 0, 0, 256, 256);
+  _tintCtx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(_tintOC, 0, 0, 256, 256, dx, dy, dw, dh);
 }
 
 function loadSprites() {
@@ -57,12 +68,7 @@ function loadSprites() {
     const key = `${W}_${p}`;
     const img = new Image();
     img.src = (p === PAWN) ? "sprites/pawn.png" : (p === KING) ? "sprites/king.png" : (p === QUEEN) ? "sprites/Queen.png" : (p === KNIGHT) ? "sprites/knight.png" : (p === BISHOP) ? "sprites/bishop.png" : `sprites/w_${PIECE_NAMES[p]}.svg`;
-    img.onload = () => {
-      spriteImages[key] = img;
-      spriteImages[`${B}_${p}`] = _makeTinted(img, 'rgb(40,30,80)');
-      spriteImages[`${N}_${p}`] = _makeTinted(img, 'rgb(180,140,60)');
-      done();
-    };
+    img.onload = () => { spriteImages[key] = img; done(); };
     img.onerror = done;
   }
   const chestImg = new Image();
@@ -2528,9 +2534,7 @@ for (let x = 0; x < 8; x++) {
 }
 const prevPad = 6;
 for (const w of nextWave) {
-  const wimg = spriteImages[`${B}_${w.piece}`];
-  if (wimg && wimg.complete)
-    ctx.drawImage(wimg, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+  _drawPieceSprite(ctx, B, w.piece, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
 }
 for (const b of nextBonuses) {
   const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
@@ -2580,9 +2584,8 @@ for (const b of nextBonuses) {
   } else if (b.type === 'block') {
     drawBlockTile(ctx, bpx, bpy, TILE);
   } else if (b.type === 'neutral') {
-    const nimg = spriteImages[`${N}_${b.piece}`];
-    if (nimg && nimg.complete) {
-      ctx.drawImage(nimg, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+    {
+      _drawPieceSprite(ctx, N, b.piece, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
     }
   }
 }
@@ -2776,11 +2779,7 @@ for (let i = 0; i < 64; i++) {
       ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
     }
   } else {
-    const key = `${sides[i]}_${board[i]}`;
-    const img = spriteImages[key];
-    if (img && img.complete) {
-      ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
-    }
+    _drawPieceSprite(ctx, sides[i], board[i], MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
   }
   // Elemental badges: small colored dots at bottom of tile
   if (elements[i]) {
@@ -2826,9 +2825,7 @@ if (merchantIdx >= 0 && !_animToSet.has(merchantIdx)) {
 for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
   const i = Number(idxStr);
   const [x, y] = xy(i);
-  const key = `${cap.side}_${cap.piece}`;
-  const img = spriteImages[key];
-  if (img && img.complete) ctx.drawImage(img, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
+  _drawPieceSprite(ctx, cap.side, cap.piece, MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
 }
 
 // Piece promoter highlight
@@ -2944,9 +2941,7 @@ if (anim && anim.pieces && _animT < 1) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
-      const key = `${ap.side}_${ap.piece}`;
-      const img = spriteImages[key];
-      if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
+      _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     }
     if (ap.side === W && ap.hlth > 1) {
       const shields = ap.hlth - 1;
@@ -3256,11 +3251,10 @@ if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool,
     const [cx] = graveSlotPos(isPlayer, pt);
     const cy = pieceCY;
     const isKing = pt === KING;
-    const img = spriteImages[`${sideVal}_${pt}`];
     if (count === 0) {
       if (pt !== CHECKERS) {
         ctx.globalAlpha = 0.15;
-        if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
         ctx.globalAlpha = 1;
       }
     } else {
@@ -3268,7 +3262,7 @@ if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool,
         ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
         ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
       }
-      if (img && img.complete) ctx.drawImage(img, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+      _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
       ctx.font = "28px Canterbury";
       ctx.fillStyle = "#fff";
       ctx.textAlign = "center"; ctx.textBaseline = "top";
@@ -3321,13 +3315,17 @@ function drawFlyAnims() {
     const cy2 = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 160;
     const angle = t * Math.PI * 5;
     const sz = 36;
-    const img = spriteImages[`${f.side}_${f.piece}`];
-    if (img && img.complete) {
+    const _flyWImg = spriteImages[`${W}_${f.piece}`];
+    if (_flyWImg && _flyWImg.complete) {
       ctx.save();
       ctx.translate(cx2, cy2);
       ctx.rotate(angle);
       ctx.globalAlpha = t > 0.85 ? 1 - (t - 0.85) / 0.15 * 0.6 : 1;
-      ctx.drawImage(img, -sz / 2, -sz / 2, sz, sz);
+      if (f.side === W) {
+        ctx.drawImage(_flyWImg, -sz / 2, -sz / 2, sz, sz);
+      } else {
+        _drawTinted(ctx, _flyWImg, f.side, -sz / 2, -sz / 2, sz, sz);
+      }
       ctx.globalAlpha = 1;
       ctx.restore();
     }
@@ -3378,8 +3376,8 @@ function drawVoidDeath() {
 // Void death spiral
 if (voidDeathAnim) {
   const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
-  const img = spriteImages[`${voidDeathAnim.side}_${voidDeathAnim.piece}`];
-  if (img && img.complete) {
+  const _vdImg = spriteImages[`${W}_${voidDeathAnim.piece}`];
+  if (_vdImg && _vdImg.complete) {
     const scale = (1 - t) * (1 - t);
     const angle = t * Math.PI * 6;
     const sz = TILE * 0.75;
@@ -3387,7 +3385,11 @@ if (voidDeathAnim) {
     ctx.translate(voidDeathAnim.cx, voidDeathAnim.cy);
     ctx.rotate(angle);
     ctx.globalAlpha = 1 - t * 0.5;
-    ctx.drawImage(img, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
+    if (voidDeathAnim.side === W) {
+      ctx.drawImage(_vdImg, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
+    } else {
+      _drawTinted(ctx, _vdImg, voidDeathAnim.side, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
+    }
     ctx.globalAlpha = 1;
     ctx.restore();
   }
