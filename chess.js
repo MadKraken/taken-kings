@@ -1,4 +1,4 @@
-﻿const VERSION = "309";
+﻿const VERSION = "310";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2319,8 +2319,13 @@ function activateItemSpace(item, i) {
         draw(); return false;
       }
       if (isElementalizerItem(item)) {
-        elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false);
-        draw(); return false;
+        // Auto-apply to the piece that landed on the space — no interactive selection needed
+        const elem = item === ITEM_ELEM_MYSTERY
+          ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
+          : elemFromItem(item, false);
+        elements[i] |= elem;
+        activeItemSpaceIdx = -1;
+        return true;
       }
     case ITEM_TELEPORTER:
       // Piece pre-selected; player chooses destination.
@@ -2644,11 +2649,6 @@ for (let i = 0; i < 64; i++) {
   if (itemSpaces[i] === ITEM_NONE) continue;
   const [x, y] = xy(i);
   const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-  ctx.fillStyle = "rgba(255,220,80,0.22)";
-  ctx.fillRect(px, py, TILE, TILE);
-  ctx.strokeStyle = "rgba(255,200,50,0.55)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
   const itemHere = itemSpaces[i];
   const key = ITEM_SPRITE_KEYS[itemHere];
   const img = spriteImages[key];
@@ -2674,6 +2674,14 @@ for (let i = 0; i < 64; i++) {
     const letter = itemHere === ITEM_ELEM_MYSTERY ? '?' : ELEM_NAMES[elem][0];
     const r = sz / 2;
     const cx2 = px + TILE / 2, cy2 = py + baseOffY + bob + r;
+    // Drop shadow ellipse (same as sprite items)
+    const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
+    ctx.save();
+    ctx.globalAlpha = shadowAlpha;
+    ctx.beginPath();
+    ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#000"; ctx.fill();
+    ctx.restore();
     ctx.globalAlpha = 0.9;
     ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
