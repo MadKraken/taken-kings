@@ -41,7 +41,7 @@ function loadSprites() {
     for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
       const key = `${s}_${p}`;
       const img = new Image();
-      img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : (s === W && p === QUEEN) ? "sprites/Queen.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
+      img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : (s === W && p === QUEEN) ? "sprites/Queen.png" : (s === W && p === KNIGHT) ? "sprites/knight.png" : (s === W && p === BISHOP) ? "sprites/bishop.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
       img.onload = done; img.onerror = done;
       spriteImages[key] = img;
     }
