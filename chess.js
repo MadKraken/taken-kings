@@ -1,4 +1,4 @@
-﻿const VERSION = "310";
+﻿const VERSION = "311";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -405,9 +405,15 @@ function startWaveAnim(squares, shoveParams, onDone) {
       const ni = squares[i];
       if (!willShove.has(ni)) continue;
       const [nx, ny] = xy(ni);
-      const destI = idx(nx + sp.dx, ny + sp.dy);
+      const destX = nx + sp.dx, destY = ny + sp.dy;
+      const destI = idx(destX, destY);
       const releaseK = squareToK.get(ni) ?? 0;
-      drawAt.set(destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK });
+      // If dest is a void, store piece info for void death animation on wave release
+      const voidDeath = isVoidSpace(destI)
+        ? { p: board[ni], s: sides[ni], cx: MARGIN + destX * TILE + TILE / 2, cy: BOARD_Y + MARGIN + destY * TILE + TILE / 2 }
+        : null;
+      // For void-bound pieces, key drawAt by srcI (board is NONE at destI after shove)
+      drawAt.set(voidDeath ? ni : destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK, voidDeath });
       shovePiece(ni, sp.dx, sp.dy);
     }
   }
@@ -422,8 +428,14 @@ function _waveTick() {
   const head = Math.floor(t * waveAnim.squares.length);
   // Release visual overrides as the wave front passes each square
   for (let k = waveAnim.lastHead + 1; k <= head && k < waveAnim.squares.length; k++) {
-    for (const [newI, ov] of waveAnim.drawAt) {
-      if (ov.releaseK <= k) waveAnim.drawAt.delete(newI);
+    for (const [boardI, ov] of waveAnim.drawAt) {
+      if (ov.releaseK <= k) {
+        waveAnim.drawAt.delete(boardI);
+        if (ov.voidDeath) {
+          const { p, s, cx: vcx, cy: vcy } = ov.voidDeath;
+          startVoidDeath(vcx, vcy, p, s, null);
+        }
+      }
     }
     waveAnim.lastHead = k;
   }
@@ -1259,7 +1271,7 @@ function shovePiece(srcI, dx, dy) {
   if (isVoidSpace(destI)) {
     const p = board[srcI], s = sides[srcI];
     if (p === KING && s === W) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-    if (p === KING && s === B) score++;
+    if (s === B) { if (p === KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
     board[srcI] = NONE; sides[srcI] = 0; health[srcI] = 1; elements[srcI] = 0;
     return;
   }
@@ -2833,6 +2845,16 @@ for (let i = 0; i < 64; i++) {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
     ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
+  }
+}
+
+// Draw ghost sprites for void-bound wave pieces (already removed from board)
+if (waveAnim?.drawAt) {
+  const pad2 = 6;
+  for (const [boardI, ov] of waveAnim.drawAt) {
+    if (ov.voidDeath && board[boardI] === NONE) {
+      _drawPieceSprite(ctx, ov.voidDeath.s, ov.voidDeath.p, ov.cx + pad2, ov.cy + pad2, TILE - pad2 * 2, TILE - pad2 * 2);
+    }
   }
 }
 
