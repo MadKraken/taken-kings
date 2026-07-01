@@ -1,4 +1,4 @@
-﻿const VERSION = "311";
+﻿const VERSION = "312";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -76,7 +76,7 @@ function loadSprites() {
   for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
     const key = `${W}_${p}`;
     const img = new Image();
-    img.src = (p === PAWN) ? "sprites/pawn.png" : (p === KING) ? "sprites/king.png" : (p === QUEEN) ? "sprites/Queen.png" : (p === KNIGHT) ? "sprites/knight.png" : (p === BISHOP) ? "sprites/bishop.png" : `sprites/w_${PIECE_NAMES[p]}.svg`;
+    img.src = (p === PAWN) ? "sprites/pawn.png" : (p === KING) ? "sprites/king.png" : (p === QUEEN) ? "sprites/Queen.png" : (p === KNIGHT) ? "sprites/knight.png" : (p === BISHOP) ? "sprites/bishop_1.png" : (p === ROOK) ? "sprites/rook.png" : `sprites/w_${PIECE_NAMES[p]}.svg`;
     img.onload = () => { spriteImages[key] = img; done(); };
     img.onerror = done;
   }
