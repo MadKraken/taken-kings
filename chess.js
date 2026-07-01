@@ -997,7 +997,6 @@ function slidingMoves(moves, x, y, dirs, s) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
-      if (s === B && piece(nx, ny) === CHEST) break;
       if (sides[idx(nx, ny)] === N) break; // only W King can recruit neutrals; all others treat them as impassable
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break;
@@ -1021,7 +1020,6 @@ function airSlidingMoves(moves, x, y, dirs, s) {
       const occ = sides[ni];
       if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
       if (occ === N) { nx += dx; ny += dy; continue; } // fly through neutrals
-      if (s === B && board[ni] === CHEST) { nx += dx; ny += dy; continue; }
       moves.push(ni); // vacant or capturable enemy square
       if (board[ni] !== NONE) { nx += dx; ny += dy; continue; } // fly through enemy pieces too
       nx += dx; ny += dy;
@@ -1108,7 +1106,7 @@ function pseudoMoves(x, y) {
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && sides[idx(nx, ny)] !== N && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && sides[idx(nx, ny)] !== N && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
@@ -1123,7 +1121,7 @@ function pseudoMoves(x, y) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !(s === B && piece(nx, ny) === CHEST) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
       if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
