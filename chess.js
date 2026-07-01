@@ -1,4 +1,4 @@
-﻿const VERSION = "313";
+﻿const VERSION = "314";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1629,6 +1629,7 @@ function teamLeap() {
       newBoard[i] = board[i];
       newSides[i] = sides[i];
       newHealth[i] = health[i];
+      newElements[i] = elements[i];
     }
   }
 
