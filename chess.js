@@ -1,4 +1,4 @@
-﻿const VERSION = "315";
+﻿const VERSION = "316";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -360,6 +360,21 @@ function _flyTick() {
 
 // shoveParams: { isKnight, toI } for Knight; { isKnight: false, dx, dy, toI } for sliders
 function startWaveAnim(squares, shoveParams, onDone) {
+  if (!replayMode) {
+    _replayAnimBuffer.push({
+      type: 'wave',
+      board: [...board], sides: [...sides], health: [...health],
+      elements: [...elements],
+      specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
+      itemSpaces: [...itemSpaces],
+      inventory: [...inventory],
+      score, gold, leapCount, shiftCountdown, merchantIdx,
+      playerDead: {...playerDead}, enemyDead: {...enemyDead},
+      fireSquares: [...fireSquares],
+      squares: [...squares],
+      shoveParams: {...shoveParams},
+    });
+  }
   const sp = shoveParams;
   // squareToK: board-index → position in the wave sweep (used to time visual releases)
   const squareToK = new Map();
@@ -726,7 +741,6 @@ function _playReplayTransition(snapIdx, onDone) {
       return;
     }
     const ev = events[ei++];
-    // ev.type === 'anim'
     board.splice(0, 64, ...ev.board);
     sides.splice(0, 64, ...ev.sides);
     health.splice(0, 64, ...ev.health);
@@ -738,7 +752,11 @@ function _playReplayTransition(snapIdx, onDone) {
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
     fireSquares = ev.fireSquares ? new Set(ev.fireSquares) : new Set();
-    startAnim(ev.pieces, ev.boardDy, playNext, ev.exitRow || undefined);
+    if (ev.type === 'wave') {
+      startWaveAnim(ev.squares, {...ev.shoveParams}, playNext);
+    } else {
+      startAnim(ev.pieces, ev.boardDy, playNext, ev.exitRow || undefined);
+    }
   };
   playNext();
 }
