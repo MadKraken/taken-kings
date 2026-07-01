@@ -1,4 +1,4 @@
-﻿const VERSION = "334";
+﻿const VERSION = "335";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3022,7 +3022,7 @@ if (_fieldAnim) ctx.restore(); // remove clip + field-advance shift
 ctx.restore(); // remove board translate
 
 // Animation overlay: draw moving pieces at interpolated canvas positions
-if (anim && anim.pieces && _animT < 1) {
+if (anim && anim.pieces) {
   const apad = 6;
   for (const ap of anim.pieces) {
     const acx = ap.fromCX + (ap.toCX - ap.fromCX) * _animT;
