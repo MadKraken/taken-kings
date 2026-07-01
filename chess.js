@@ -1,4 +1,4 @@
-﻿const VERSION = "333";
+﻿const VERSION = "334";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -281,6 +281,13 @@ function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
   }
   flyAnims.push({ piece, side, sx, sy, tx, ty, startMs: performance.now(), dur: 600, onDone });
   if (flyAnims.length === 1) requestAnimationFrame(_flyTick);
+}
+
+function startCaptureAnim(piece, side, sx, sy) {
+  const isPlayer = side === W;
+  const pool = isPlayer ? playerDead : enemyDead;
+  const [tgx, tgy] = graveSlotPos(isPlayer, piece);
+  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; });
 }
 
 function _warnFlashTick() {
@@ -1478,10 +1485,7 @@ function makeMove(fromI, toI, visual = false) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI];
     if (visual && capPiece !== NONE) {
-      const isPlayerPiece = capSide === W;
-      const pool = isPlayerPiece ? playerDead : enemyDead;
-      const [tgx, tgy] = graveSlotPos(isPlayerPiece, capPiece);
-      startFlyAnim(capPiece, capSide, MARGIN + ((fx+tx)/2)*TILE + TILE/2, BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2, tgx, tgy, () => { pool[capPiece] = (pool[capPiece] || 0) + 1; });
+      startCaptureAnim(capPiece, capSide, MARGIN + ((fx+tx)/2)*TILE + TILE/2, BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2);
     }
     if (capSide !== s && s === W) gold += GOLD_VALUE[capPiece] ?? 0;
     if (capPiece === KING && capSide !== s && s === W) score += 1;
@@ -1507,12 +1511,7 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && captured !== CHEST && capSide !== s) {
-    const capSX = MARGIN + tx * TILE + TILE / 2;
-    const capSY = BOARD_Y + MARGIN + ty * TILE + TILE / 2;
-    const isPlayerPiece = capSide === W;
-    const pool = isPlayerPiece ? playerDead : enemyDead;
-    const [tgx, tgy] = graveSlotPos(isPlayerPiece, captured);
-    startFlyAnim(captured, capSide, capSX, capSY, tgx, tgy, () => { pool[captured] = (pool[captured] || 0) + 1; });
+    startCaptureAnim(captured, capSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + ty * TILE + TILE / 2);
   }
 
   if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
@@ -1542,10 +1541,7 @@ function makeMove(fromI, toI, visual = false) {
     const epPiece = piece(tx, capY);
     const epSide = side(tx, capY);
     if (visual && epPiece !== NONE) {
-      const isEPPlayer = epSide === W;
-      const epPool = isEPPlayer ? playerDead : enemyDead;
-      const [etgx, etgy] = graveSlotPos(isEPPlayer, epPiece);
-      startFlyAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2, etgx, etgy, () => { epPool[epPiece] = (epPool[epPiece] || 0) + 1; });
+      startCaptureAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2);
     }
     if (epPiece === KING && s === W) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
@@ -1652,8 +1648,7 @@ function teamLeap() {
     const ni2 = idx(ax2, ay2 - 1);
     if (sides[ni2] === B && board[ni2] !== NONE && board[ni2] !== CHEST) {
       const capPiece = board[ni2];
-      const [tgx, tgy] = graveSlotPos(false, capPiece);
-      startFlyAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2, tgx, tgy, () => { enemyDead[capPiece] = (enemyDead[capPiece] || 0) + 1; });
+      startCaptureAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2);
     }
   }
 
@@ -1754,12 +1749,7 @@ function fieldAdvance(playerTriggered = false) {
     const [x, y] = xy(i);
     if (y === 7) { // destroyed
       if (playerTriggered && sides[i] === B && board[i] === KING) score++;
-      const isPlayer = sides[i] === W;
-      const pool = isPlayer ? playerDead : enemyDead;
-      const [tgx, tgy] = graveSlotPos(isPlayer, board[i]);
-      const sx = MARGIN + x * TILE + TILE / 2, sy = BOARD_Y + MARGIN + y * TILE + TILE / 2;
-      const p = board[i], s = sides[i];
-      startFlyAnim(p, s, sx, sy, tgx, tgy, () => { pool[p] = (pool[p] || 0) + 1; });
+      startCaptureAnim(board[i], sides[i], MARGIN + x * TILE + TILE / 2, BOARD_Y + MARGIN + y * TILE + TILE / 2);
       continue;
     }
     const ni = idx(x, y + 1);
@@ -2358,11 +2348,7 @@ function detonateBomb(centerI, _alreadyDetonated) {
       if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
       if (sides[i] === B && board[i] === KING) score++;
       if (sides[i] === B) gold += GOLD_VALUE[board[i]] ?? 0;
-      const bp = board[i], bs = sides[i];
-      const isPlayerPiece = bs === W;
-      const pool = isPlayerPiece ? playerDead : enemyDead;
-      const [tgx, tgy] = graveSlotPos(isPlayerPiece, bp);
-      startFlyAnim(bp, bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, tgx, tgy, () => { pool[bp] = (pool[bp] || 0) + 1; });
+      startCaptureAnim(board[i], sides[i], MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2);
       board[i] = NONE; sides[i] = 0; health[i] = 1;
     }
     if (specialSpaces[i]?.type === 'block') specialSpaces[i] = null;
