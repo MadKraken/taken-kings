@@ -1,4 +1,4 @@
-﻿const VERSION = "279";
+﻿const VERSION = "280";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1016,8 +1016,12 @@ function airSlidingMoves(moves, x, y, dirs, s) {
     while (inB(nx, ny)) {
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break; // physical blocks still stop Air
-      if (board[ni] === NONE) moves.push(ni); // can only land on vacant squares
-      // continue through anything (pieces, voids, obstacles)
+      const occ = sides[ni];
+      if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
+      if (occ === N) { nx += dx; ny += dy; continue; } // fly through neutrals
+      if (s === B && board[ni] === CHEST) { nx += dx; ny += dy; continue; }
+      moves.push(ni); // vacant or capturable enemy square
+      if (board[ni] !== NONE) { nx += dx; ny += dy; continue; } // fly through enemy pieces too
       nx += dx; ny += dy;
     }
   }
