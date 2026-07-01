@@ -1,4 +1,4 @@
-﻿const VERSION = "276";
+﻿const VERSION = "277";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -29,22 +29,41 @@ const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
 
+// Returns an offscreen canvas with the image recolored via multiply blend.
+function _makeTinted(img, color) {
+  const w = img.naturalWidth || img.width || 128;
+  const h = img.naturalHeight || img.height || 128;
+  const oc = document.createElement('canvas');
+  oc.width = w; oc.height = h;
+  const oc2 = oc.getContext('2d');
+  oc2.drawImage(img, 0, 0);
+  oc2.globalCompositeOperation = 'multiply';
+  oc2.fillStyle = color;
+  oc2.fillRect(0, 0, w, h);
+  oc2.globalCompositeOperation = 'destination-in';
+  oc2.drawImage(img, 0, 0); // restore original alpha mask
+  return oc;
+}
+
 function loadSprites() {
   let count = 0;
-  const total = 30;
+  const total = 16; // 1 logo + 7 W pieces + 8 other sprites (B/N derived from W)
   const done = () => { count++; if (count >= total && !spritesLoaded) { spritesLoaded = true; draw(); } };
   const logoImg = new Image();
   logoImg.src = "sprites/logo_2.png?v=1";
   logoImg.onload = () => { spriteImages["logo"] = logoImg; done(); };
   logoImg.onerror = (e) => { console.log("logo FAILED", e); done(); };
-  for (const s of [W, B, N]) {
-    for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
-      const key = `${s}_${p}`;
-      const img = new Image();
-      img.src = (s === W && p === PAWN) ? "sprites/pawn.png" : (s === W && p === KING) ? "sprites/king.png" : (s === W && p === QUEEN) ? "sprites/Queen.png" : (s === W && p === KNIGHT) ? "sprites/knight.png" : (s === W && p === BISHOP) ? "sprites/bishop.png" : `sprites/${SIDE_PREFIX[s]}_${PIECE_NAMES[p]}.svg`;
-      img.onload = done; img.onerror = done;
+  for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
+    const key = `${W}_${p}`;
+    const img = new Image();
+    img.src = (p === PAWN) ? "sprites/pawn.png" : (p === KING) ? "sprites/king.png" : (p === QUEEN) ? "sprites/Queen.png" : (p === KNIGHT) ? "sprites/knight.png" : (p === BISHOP) ? "sprites/bishop.png" : `sprites/w_${PIECE_NAMES[p]}.svg`;
+    img.onload = () => {
       spriteImages[key] = img;
-    }
+      spriteImages[`${B}_${p}`] = _makeTinted(img, 'rgb(40,30,80)');
+      spriteImages[`${N}_${p}`] = _makeTinted(img, 'rgb(180,140,60)');
+      done();
+    };
+    img.onerror = done;
   }
   const chestImg = new Image();
   chestImg.src = "sprites/chest.svg";
