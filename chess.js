@@ -1,4 +1,4 @@
-﻿const VERSION = "312";
+﻿const VERSION = "313";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1801,20 +1801,14 @@ function fieldAdvance(playerTriggered = false) {
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   } else if (merchantEntersThisWave) {
-    // Merchant slides in from fog preview: he takes his column first, King next, rest after
+    // Merchant slides in from fog preview: place pieces at their previewed positions
     merchantIdx = idx(merchantEnterCol, 0);
     merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
     merchantSold = [false, false, false];
-    const avail = [];
-    for (let x = 0; x < 8; x++) {
-      if (x !== merchantEnterCol && specialSpaces[idx(x, 0)]?.type !== 'block') avail.push(x);
+    for (const w of nextWave) {
+      if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      set(w.x, 0, w.piece, B);
     }
-    shuffle(avail);
-    let ci = 0;
-    const waveKing = nextWave.find(w => w.piece === KING);
-    const waveOthers = nextWave.filter(w => w.piece !== KING);
-    if (waveKing && ci < avail.length) set(avail[ci++], 0, KING, B);
-    for (const w of waveOthers) { if (ci < avail.length) set(avail[ci++], 0, w.piece, B); }
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
       if (b.type === 'chest') set(b.col, 0, CHEST, 0);
@@ -1845,6 +1839,21 @@ function fieldAdvance(playerTriggered = false) {
   // the incoming row during the slide, rather than instantly flipping to the next preview.
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
+  // If merchant is queued, pre-remap any wave piece that conflicts with his column
+  // so the preview already shows final spawn positions
+  if (merchantQueued && merchantQueuedCol >= 0) {
+    const usedCols = new Set(nextWave.map(w => w.x).filter(x => x !== merchantQueuedCol));
+    for (const w of nextWave) {
+      if (w.x === merchantQueuedCol) {
+        for (let x = 0; x < 8; x++) {
+          if (x !== merchantQueuedCol && !usedCols.has(x) && specialSpaces[idx(x, 0)]?.type !== 'block') {
+            usedCols.add(x); w.x = x; break;
+          }
+        }
+      }
+    }
+    nextBonuses = nextBonuses.filter(b => b.col !== merchantQueuedCol);
+  }
   // Rotate merchant wares: oldest item leaves, new random one arrives
   merchantOffers.shift(); merchantSold.shift();
   merchantOffers.push(_randomShopItem()); merchantSold.push(false);
