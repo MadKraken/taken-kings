@@ -1,4 +1,4 @@
-﻿const VERSION = "316";
+﻿const VERSION = "317";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -429,7 +429,12 @@ function startWaveAnim(squares, shoveParams, onDone) {
         : null;
       // For void-bound pieces, key drawAt by srcI (board is NONE at destI after shove)
       drawAt.set(voidDeath ? ni : destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK, voidDeath });
-      shovePiece(ni, sp.dx, sp.dy);
+      const _shoveResult = shovePiece(ni, sp.dx, sp.dy);
+      // Merchant pushed into void: add a drawAt entry for his ghost + void death
+      if (_shoveResult?.merchantVoid) {
+        const vdcx = MARGIN + destX * TILE + TILE / 2, vdcy = BOARD_Y + MARGIN + destY * TILE + TILE / 2;
+        drawAt.set(_shoveResult.oldIdx, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK, merchantVoidDeath: { cx: vdcx, cy: vdcy } });
+      }
     }
   }
 
@@ -449,6 +454,9 @@ function _waveTick() {
         if (ov.voidDeath) {
           const { p, s, cx: vcx, cy: vcy } = ov.voidDeath;
           startVoidDeath(vcx, vcy, p, s, null);
+        }
+        if (ov.merchantVoidDeath) {
+          startVoidDeath(ov.merchantVoidDeath.cx, ov.merchantVoidDeath.cy, null, null, null);
         }
       }
     }
@@ -1269,17 +1277,24 @@ function applyFireTrail(fromI, toI, p) {
 function _shoveMerchant(dx, dy) {
   const [mx, my] = xy(merchantIdx);
   const nx = mx + dx, ny = my + dy;
-  if (!inB(nx, ny) || isBlockSpace(idx(nx, ny))) return;
+  if (!inB(nx, ny) || isBlockSpace(idx(nx, ny))) return null;
   const destI = idx(nx, ny);
-  if (board[destI] !== NONE || destI === merchantIdx) return;
-  if (isVoidSpace(destI)) { respawnMerchant(); return; }
+  if (board[destI] !== NONE || destI === merchantIdx) return null;
+  if (isVoidSpace(destI)) {
+    const oldIdx = merchantIdx;
+    merchantIdx = -1;
+    merchantQueued = true;
+    merchantQueuedCol = randInt(8);
+    return { merchantVoid: true, oldIdx, destI };
+  }
   merchantIdx = destI;
+  return null;
 }
 
 function shovePiece(srcI, dx, dy) {
   if (elements[srcI] & ELEM_EARTH) return; // Earth pieces immune to forced movement
   // Merchant is tracked separately from board[]
-  if (srcI === merchantIdx) { _shoveMerchant(dx, dy); return; }
+  if (srcI === merchantIdx) return _shoveMerchant(dx, dy);
   if (board[srcI] === NONE) return;
   const [nx, ny] = xy(srcI);
   const ndx = nx + dx, ndy = ny + dy;
@@ -2888,6 +2903,10 @@ if (waveAnim?.drawAt) {
     if (ov.voidDeath && board[boardI] === NONE) {
       _drawPieceSprite(ctx, ov.voidDeath.s, ov.voidDeath.p, ov.cx + pad2, ov.cy + pad2, TILE - pad2 * 2, TILE - pad2 * 2);
     }
+    if (ov.merchantVoidDeath && merchantIdx < 0) {
+      const mImg = spriteImages["merchant"];
+      if (mImg && mImg.complete) ctx.drawImage(mImg, ov.cx + pad2, ov.cy + pad2, TILE - pad2 * 2, TILE - pad2 * 2);
+    }
   }
 }
 
@@ -3483,7 +3502,9 @@ function drawVoidDeath() {
 // Void death spiral
 if (voidDeathAnim) {
   const t = Math.min(1, (performance.now() - voidDeathAnim.startMs) / VOID_DEATH_MS);
-  const _vdImg = spriteImages[`${W}_${voidDeathAnim.piece}`];
+  const _vdImg = voidDeathAnim.piece == null
+    ? spriteImages["merchant"]
+    : spriteImages[`${W}_${voidDeathAnim.piece}`];
   if (_vdImg && _vdImg.complete) {
     const scale = (1 - t) * (1 - t);
     const angle = t * Math.PI * 6;
@@ -3492,7 +3513,7 @@ if (voidDeathAnim) {
     ctx.translate(voidDeathAnim.cx, voidDeathAnim.cy);
     ctx.rotate(angle);
     ctx.globalAlpha = 1 - t * 0.5;
-    if (voidDeathAnim.side === W) {
+    if (voidDeathAnim.piece == null || voidDeathAnim.side === W) {
       ctx.drawImage(_vdImg, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
     } else {
       _drawTinted(ctx, _vdImg, voidDeathAnim.side, -sz * scale / 2, -sz * scale / 2, sz * scale, sz * scale);
