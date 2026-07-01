@@ -1,4 +1,4 @@
-﻿const VERSION = "281";
+﻿const VERSION = "282";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2783,20 +2783,27 @@ for (let i = 0; i < 64; i++) {
   } else {
     _drawPieceSprite(ctx, sides[i], board[i], MARGIN + x * TILE + pad, MARGIN + y * TILE + pad, TILE - pad * 2, TILE - pad * 2);
   }
-  // Elemental badges: small colored dots at bottom of tile
+  // Elemental badges: labeled dots at bottom of tile
   if (elements[i]) {
     const present = ELEM_ALL.filter(e => elements[i] & e);
-    const dotR = 9, spacing = 21;
+    const dotR = 12, spacing = 26;
     const startX = MARGIN + x * TILE + TILE / 2 - (present.length - 1) * spacing / 2;
-    const dotY = MARGIN + y * TILE + TILE - dotR - 4;
+    const dotY = MARGIN + y * TILE + TILE - dotR - 3;
     for (let k = 0; k < present.length; k++) {
-      ctx.beginPath();
-      ctx.arc(startX + k * spacing, dotY, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = ELEM_COLORS[present[k]];
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      const cx2 = startX + k * spacing;
+      // White backing for contrast
+      ctx.beginPath(); ctx.arc(cx2, dotY, dotR + 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+      // Colored fill
+      ctx.beginPath(); ctx.arc(cx2, dotY, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = ELEM_COLORS[present[k]]; ctx.fill();
+      // Dark border
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Letter initial
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.font = `bold ${dotR}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ELEM_NAMES[present[k]][0], cx2, dotY + 1);
     }
   }
   // Shield badge: shows number of shields (health - 1) using the shield sprite
