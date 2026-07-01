@@ -1,4 +1,4 @@
-﻿const VERSION = "314";
+﻿const VERSION = "315";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2214,6 +2214,8 @@ function aiPlay() {
           }
         });
       } else {
+        const _aiFromElems = elements[move[0]];
+        const _aiWaveData = (_aiFromElems & ELEM_WATER) ? _waveLineSqFromMove(move[0], move[1], board[move[0]]) : null;
         makeMove(move[0], move[1], true);
         if (move[1] === merchantIdx) respawnMerchant();
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
@@ -2229,6 +2231,9 @@ function aiPlay() {
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiFinish);
+          } else if (_aiWaveData) {
+            _aiWaveData.shoveParams.toI = move[1];
+            startWaveAnim(_aiWaveData.squares, _aiWaveData.shoveParams, _aiFinish);
           } else { _aiFinish(); }
         });
       }
