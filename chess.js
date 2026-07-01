@@ -1,4 +1,4 @@
-﻿const VERSION = "320";
+﻿const VERSION = "329";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1497,8 +1497,8 @@ function makeMove(fromI, toI, visual = false) {
     return;
   }
 
-  // Bounce: black piece attacks white piece with health > 1 — damage but no capture (or Earth bonk)
-  if (s === B && sides[toI] === W && health[toI] > 1) {
+  // Bounce: attacker hits a shielded piece (health > 1) — damage but no capture (or Earth bonk)
+  if (sides[toI] !== s && sides[toI] !== N && health[toI] > 1) {
     applyShieldBounceState(fromI, toI, p);
     return;
   }
@@ -2889,7 +2889,7 @@ for (let i = 0; i < 64; i++) {
     }
   }
   // Shield badge: shows number of shields (health - 1) using the shield sprite
-  if (sides[i] === W && health[i] > 1) {
+  if (health[i] > 1) {
     const shields = health[i] - 1;
     const sz = 45;
     const bx = _drawX + TILE - sz - 2, by = _drawY + 2;
@@ -3617,7 +3617,16 @@ if (shopMode) {
 
 function draw() {
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / ANIM_MS)) : 1;
-  const _animToSet = (anim && anim.pieces && _animT < 1) ? new Set(anim.pieces.map(p => p.toIdx)) : new Set();
+  const _animToSet = (() => {
+    const s = new Set();
+    if (anim && anim.pieces) {
+      for (const p of anim.pieces) {
+        s.add(p.toIdx);                          // always suppress landing square (no flash at final frame)
+        if (p.fromIdx != null) s.add(p.fromIdx); // always suppress source
+      }
+    }
+    return s;
+  })();
   const _fieldAnim = anim && anim.boardDy !== 0 && _animT < 1;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#1a1a2e";
@@ -4063,38 +4072,62 @@ function handleBoardClick(cx, cy) {
       const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
       const clickedDest = clicked;
       firstMoveMade = true;
+      // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
+      // suppressFromIdx: if the piece hasn't moved on the board, pass fromI to suppress ghost draw.
+      const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone) => {
+        const [bx, by] = xy(bounceI);
+        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+        const approach = { toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: targetCX, toCY: targetCY, piece, side, hlth };
+        const retreat  = { toIdx: bounceI, fromCX: targetCX, fromCY: targetCY, toCX: bounceCX, toCY: bounceCY, piece, side, hlth };
+        if (suppressFromIdx != null) { approach.fromIdx = suppressFromIdx; retreat.fromIdx = suppressFromIdx; }
+        startAnim([approach], 0, () => {
+          startAnim([retreat], 0, () => {
+            startShieldPop(targetCX + TILE / 2, targetCY + TILE / 2);
+            onDone();
+          });
+        });
+      };
       // Hire neutral: bounce attacker, neutral turns white
       if (sides[clicked] === N) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const bounceI = calcBouncePos(fromI, clicked, attackPiece);
-        const [bx, by] = xy(bounceI);
-        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
         recordPosition();
-        startAnim([{ toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
-          startAnim([{ toIdx: bounceI, fromCX: pToCX, fromCY: pToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
-            startShieldPop(pToCX + TILE / 2, pToCY + TILE / 2);
-            endWhiteTurn();
-          });
-        });
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
+        return;
+      }
+      // Attack shielded enemy: bounce attacker, damage enemy
+      if (sides[clicked] === B && health[clicked] > 1) {
+        const fromI = selected;
+        const attackPiece = board[fromI], attackHlth = health[fromI];
+        const result = applyShieldBounceState(fromI, clicked, attackPiece);
+        const bounceI = result.mode === 'attacker-bounce' ? result.bounceI : fromI;
+        selected = -1; validMoves = [];
+        recordPosition();
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
         return;
       }
       // Engage merchant: bounce attacker, open shop, then end turn
       if (clicked === merchantIdx) {
         const fromI = selected;
-        const attackPiece = board[fromI], attackHlth = health[fromI];
-        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
-        const [bx, by] = xy(bounceI);
-        const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+        const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI];
+        // Always bounce to the square directly adjacent to the merchant on the attacker's side.
+        const [_mfx, _mfy] = xy(fromI), [_mtx, _mty] = xy(clicked);
+        const _mdx = Math.sign(_mtx - _mfx), _mdy = Math.sign(_mty - _mfy);
+        const bounceI = (attackPiece === ROOK || attackPiece === BISHOP || attackPiece === QUEEN)
+          ? idx(_mtx - _mdx, _mty - _mdy)
+          : fromI;
         selected = -1; validMoves = [];
         recordPosition();
-        startAnim([{ toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
-          startAnim([{ toIdx: bounceI, fromCX: pToCX, fromCY: pToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: W, hlth: attackHlth }], 0, () => {
-            startShieldPop(pToCX + TILE / 2, pToCY + TILE / 2);
-            openMerchantShop(endWhiteTurn);
-          });
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, fromI, attackPiece, W, attackHlth, () => {
+          // Move piece to bounce square only after animation finishes to avoid mid-anim flash.
+          if (bounceI !== fromI) {
+            board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem;
+            board[fromI] = NONE; sides[fromI] = 0; health[fromI] = 1; elements[fromI] = 0;
+          }
+          openMerchantShop(endWhiteTurn);
         });
         return;
       }
@@ -4754,6 +4787,15 @@ window.setupTest = function(preset) {
   if (preset === 'teleporter_void') {
     itemSpaces[idx(3, 5)] = ITEM_TELEPORTER;
     specialSpaces[idx(5, 5)] = { type: 'void' };
+    draw();
+  }
+  if (preset === 'shielded_and_merchant') {
+    // Black shielded Knight at D4
+    const ei = idx(3, 3);
+    board[ei] = KNIGHT; sides[ei] = B; health[ei] = 2; elements[ei] = 0;
+    // Merchant at F4
+    merchantIdx = idx(5, 3);
+    merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
     draw();
   }
 };
