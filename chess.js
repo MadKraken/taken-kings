@@ -129,7 +129,7 @@ let replayAutoTimer = null;
 let _replayAnimBuffer = [];
 let _replayTransitions = [];
 const ITEM_NONE = 0;
-const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_UPGRADER = 7, ITEM_BOMB = 8;
+const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_SHIELD = 7, ITEM_BOMB = 8;
 const ITEM_PROMOTER_BASE = 100; // encoded: base + to (ROOK/KNIGHT/BISHOP/QUEEN/9=wild); always promotes a Pawn
 const PROMOTER_WILD = 9;
 function isPromoterItem(item) { return item >= ITEM_PROMOTER_BASE && item < 200; }
@@ -162,7 +162,7 @@ function elementizerItemName(item) {
 }
 
 const ITEM_NAMES = {
-  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_UPGRADER]: "Upgrader", [ITEM_BOMB]: "Bomb"
+  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -189,7 +189,7 @@ let bombMode = false;
 let bombHoverIdx = -1;
 let clonerMode = false;
 let clonerSelected = -1;
-let upgraderMode = false;
+let shieldMode = false;
 let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
 
@@ -213,10 +213,10 @@ let elementizerMystery = false; // true if the active elementalizer is Mystery (
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
   [ITEM_CLONER]: "item_cloner",
-  [ITEM_UPGRADER]: "item_upgrader",
+  [ITEM_SHIELD]: "item_upgrader",
   [ITEM_BOMB]: "item_bomb"
 };
-const _PROMOTER_TO_PRICE = { [ROOK]: 20, [KNIGHT]: 20, [BISHOP]: 20, [QUEEN]: 30, [PROMOTER_WILD]: 15 };
+const _PROMOTER_TO_PRICE = { [ROOK]: 25, [KNIGHT]: 20, [BISHOP]: 20, [QUEEN]: 30, [PROMOTER_WILD]: 15 };
 function itemPrice(item) {
   if (isPromoterItem(item)) return _PROMOTER_TO_PRICE[promoterTo(item)] || 20;
   return ITEM_PRICES[item] || 0;
@@ -224,7 +224,7 @@ function itemPrice(item) {
 const ITEM_PRICES = {
   [ITEM_TELEPORTER]: 30,
   [ITEM_CLONER]: 45,
-  [ITEM_UPGRADER]: 20,
+  [ITEM_SHIELD]: 20,
   [ITEM_BOMB]: 35,
   [ITEM_ELEM_FIRE]: 25, [ITEM_ELEM_WATER]: 25, [ITEM_ELEM_EARTH]: 25, [ITEM_ELEM_AIR]: 25,
   [ITEM_ELEM_MYSTERY]: 20,
@@ -394,9 +394,12 @@ function _waveLineSqFromMove(fromI, toI, p) {
   }
   const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
-  const sq = [toI]; // wave head lands on destination, then shoves 1 square ahead
-  const nx = tx + dx, ny = ty + dy;
-  if (inB(nx, ny)) sq.push(idx(nx, ny));
+  // Start from the board edge behind the piece's origin, sweep to the edge past destination
+  let sx = fx, sy = fy;
+  while (inB(sx - dx, sy - dy)) { sx -= dx; sy -= dy; }
+  const sq = [];
+  let cx = sx, cy = sy;
+  while (inB(cx, cy)) { sq.push(idx(cx, cy)); cx += dx; cy += dy; }
   return { squares: sq, shoveParams: { isKnight: false, dx, dy, toI } };
 }
 
@@ -538,15 +541,16 @@ function _rollWildTo() {
 }
 
 function _randomPromoterItem() {
-  const pool = [ROOK, ROOK, KNIGHT, KNIGHT, BISHOP, BISHOP, QUEEN];
-  return makePromoterItem(pool[randInt(pool.length)]);
+  const pool = [ROOK, ROOK, KNIGHT, KNIGHT, BISHOP, BISHOP, QUEEN, PROMOTER_WILD];
+  const pick = pool[randInt(pool.length)];
+  return pick === PROMOTER_WILD ? ITEM_PROMOTER_WILD : makePromoterItem(pick);
 }
 
 function _randomItem() {
   const r = randInt(5);
   if (r === 0) return ITEM_TELEPORTER;
   if (r === 1) return ITEM_CLONER;
-  if (r === 2) return ITEM_UPGRADER;
+  if (r === 2) return ITEM_SHIELD;
   if (r === 3) return ITEM_BOMB;
   return _randomElementalizerItem();
 }
@@ -557,14 +561,12 @@ function _randomElementalizerItem() {
 }
 
 function _randomShopItem() {
-  const r = randInt(9);
-  if (r === 0) return ITEM_PROMOTER_WILD;
-  if (r === 1) return _randomPromoterItem();
-  if (r === 2) return ITEM_TELEPORTER;
-  if (r === 3) return ITEM_CLONER;
-  if (r === 4) return ITEM_UPGRADER;
-  if (r === 5) return ITEM_BOMB;
-  if (r === 6) return _randomPromoterItem();
+  const r = randInt(6);
+  if (r === 0) return _randomPromoterItem(); // includes Wild via pool
+  if (r === 1) return ITEM_TELEPORTER;
+  if (r === 2) return ITEM_CLONER;
+  if (r === 3) return ITEM_SHIELD;
+  if (r === 4) return ITEM_BOMB;
   return _randomElementalizerItem();
 }
 
@@ -767,7 +769,7 @@ function generateRowBonuses(wave) {
 
 function _rollSpawnBonuses(i, odds = 32) {
   while (randInt(odds) === 0) {
-    if (randInt(2) === 0) elements[i] |= ELEM_ALL[randInt(4)];
+    if (randInt(2) === 0) elements[i] = ELEM_ALL[randInt(4)];
     else health[i]++;
   }
 }
@@ -802,7 +804,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -1441,12 +1443,12 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return piecePromoterMode || teleporterMode || clonerMode || upgraderMode || bombMode || elementizerMode;
+  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode;
 }
 
 function cancelItemMode() {
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
-  clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
+  clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
@@ -1459,7 +1461,7 @@ function trashActiveItem() {
     delete inventory._activeSlot;
   }
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
-  clonerMode = false; upgraderMode = false; bombMode = false; bombHoverIdx = -1;
+  clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   teleporterSelected = -1; clonerSelected = -1;
   draw();
@@ -2145,7 +2147,7 @@ function canItemAffectPiece(item, i) {
   const p = board[i];
   if (isPromoterItem(item)) { return p === PAWN && sides[i] === W; }
   switch (item) {
-    case ITEM_UPGRADER: return true;
+    case ITEM_SHIELD: return true;
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
@@ -2191,7 +2193,7 @@ function activateItemSpace(item, i) {
   activeItemSpaceIdx = i;
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
-    case ITEM_UPGRADER:
+    case ITEM_SHIELD:
       health[i]++;
       activeItemSpaceIdx = -1;
       return true;
@@ -2303,7 +2305,7 @@ function _applySpacesAfterAdvancePass2() {
   for (let i = 0; i < 64; i++) {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
-    if (item === ITEM_UPGRADER) { health[i]++; itemSpaces[i] = ITEM_NONE; }
+    if (item === ITEM_SHIELD) { health[i]++; itemSpaces[i] = ITEM_NONE; }
     else if (isPromoterItem(item)) { board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item); itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
@@ -2873,7 +2875,7 @@ if (clonerMode) {
 }
 
 // Upgrader highlight â€" all white pieces selectable
-if (upgraderMode) {
+if (shieldMode) {
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [px, py] = xy(i);
@@ -2965,6 +2967,26 @@ if (anim && anim.pieces && _animT < 1) {
       ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
       ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
     }
+    // Element badges at interpolated position
+    const apElems = ap.toIdx >= 0 ? elements[ap.toIdx] : 0;
+    if (apElems) {
+      const present = ELEM_ALL.filter(e => apElems & e);
+      const dotR = 12, spacing = 26;
+      const startX = acx + TILE / 2 - (present.length - 1) * spacing / 2;
+      const dotY = acy + TILE - dotR - 3;
+      for (let k = 0; k < present.length; k++) {
+        const cx2 = startX + k * spacing;
+        ctx.beginPath(); ctx.arc(cx2, dotY, dotR + 2, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(cx2, dotY, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = ELEM_COLORS[present[k]]; ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = 'rgba(0,0,0,0.85)';
+        ctx.font = `bold ${dotR}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(ELEM_NAMES[present[k]][0], cx2, dotY + 1);
+      }
+    }
   }
 }
 }
@@ -3045,7 +3067,7 @@ ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.
 ctx.strokeStyle = "#5a5a8e";
 ctx.lineWidth = 3;
 ctx.stroke();
-const invStatus = piecePromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[piecePromoterTo] || "?"}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : upgraderMode ? "Select a piece to upgrade" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
+const invStatus = piecePromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[piecePromoterTo] || "?"}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : shieldMode ? "Select a piece to shield" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
 ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
 ctx.font = "42px Canterbury";
 ctx.textAlign = "center";
@@ -3056,7 +3078,7 @@ for (let r = 0; r < INV_ROWS; r++) {
     const slotIdx = r * INV_COLS + c;
     const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
     const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-    const isActive = (piecePromoterMode || teleporterMode || clonerMode || upgraderMode) && inventory._activeSlot === slotIdx;
+    const isActive = (piecePromoterMode || teleporterMode || clonerMode || shieldMode) && inventory._activeSlot === slotIdx;
     ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
     ctx.beginPath();
     ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
@@ -3620,10 +3642,10 @@ canvas.addEventListener("mouseup", (e) => {
       piecePromoterMode = false; piecePromoterTo = NONE;
       dragConsumed = true; draw(); return;
     }
-    if (item === ITEM_UPGRADER && sides[i] === W) {
+    if (item === ITEM_SHIELD && sides[i] === W) {
       health[i] = Math.max(health[i], 1) + 1;
       removeFromInventory(slot); delete inventory._activeSlot;
-      upgraderMode = false;
+      shieldMode = false;
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_TELEPORTER && sides[i] === W) {
@@ -3733,16 +3755,16 @@ function handlePiecePromoterClick(cx, cy) {
   draw();
 }
 
-function handleUpgraderClick(cx, cy) {
+function handleShieldClick(cx, cy) {
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
     health[i] = Math.max(health[i], 1) + 1;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    upgraderMode = false; draw(); return;
+    shieldMode = false; draw(); return;
   }
-  upgraderMode = false;
+  shieldMode = false;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
 }
@@ -3867,7 +3889,7 @@ function handleElementizerClick(cx, cy) {
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
-    elements[i] |= resolvedElem;
+    elements[i] = resolvedElem;
     if (resolvedElem === ELEM_EARTH) health[i] = Math.max(health[i], 1) + 1;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
@@ -3914,7 +3936,7 @@ function handleInventoryClick(cx, cy) {
       const modeMap = {
         [ITEM_TELEPORTER]:   () => { teleporterMode = true; teleporterSelected = -1; },
         [ITEM_CLONER]:       () => { clonerMode = true; clonerSelected = -1; },
-        [ITEM_UPGRADER]:     () => { upgraderMode = true; },
+        [ITEM_SHIELD]:     () => { shieldMode = true; },
         [ITEM_BOMB]:         () => { bombMode = true; bombHoverIdx = -1; },
       };
       if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterTo = promoterTo(item); };
@@ -4078,7 +4100,7 @@ canvas.addEventListener("click", (e) => {
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (shopMode) { handleShopClick(cx, cy); return; }
   if (piecePromoterMode) { handlePiecePromoterClick(cx, cy); return; }
-  if (upgraderMode) { handleUpgraderClick(cx, cy); return; }
+  if (shieldMode) { handleShieldClick(cx, cy); return; }
   if (bombMode) { handleBombClick(cx, cy); return; }
   if (clonerMode) { handleClonerClick(cx, cy); return; }
   if (teleporterMode) { handleTeleporterClick(cx, cy); return; }
