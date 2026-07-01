@@ -1,4 +1,4 @@
-﻿const VERSION = "329";
+﻿const VERSION = "330";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4192,7 +4192,7 @@ canvas.addEventListener("click", (e) => {
   const [cx, cy] = canvasCoords(e);
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
-  if (anim) return;
+  if (anim || _conquestGifActive) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (shopMode) { handleShopClick(cx, cy); return; }
   if (piecePromoterMode) { handlePiecePromoterClick(cx, cy); return; }
