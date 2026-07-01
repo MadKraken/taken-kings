@@ -1,4 +1,4 @@
-﻿const VERSION = "318";
+﻿const VERSION = "319";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -47,9 +47,12 @@ function _makeTinted(img, color) {
 
 // Draws any piece sprite, tinting for B/N sides using the W sprite as base.
 // Tinted canvases are lazily baked and cached in spriteImages on first use.
+const PIECE_SCALE = { [PAWN]: 0.9, [KNIGHT]: 1.2 };
 function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh) {
   const wImg = spriteImages[`${W}_${piece}`];
   if (!wImg || !wImg.complete) return;
+  const sc = PIECE_SCALE[piece];
+  if (sc) { dx += dw * (1 - sc) / 2; dy += dh * (1 - sc); dw *= sc; dh *= sc; }
   if (side === W) { ctx.drawImage(wImg, dx, dy, dw, dh); return; }
   const key = `${side}_${piece}`;
   if (!spriteImages[key]) spriteImages[key] = _makeTinted(wImg, SIDE_TINT[side]);
