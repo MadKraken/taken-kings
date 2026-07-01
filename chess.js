@@ -1,4 +1,4 @@
-﻿const VERSION = "319";
+﻿const VERSION = "320";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -883,7 +883,7 @@ function applyRiverFlow(onDone) {
       // Move piece/chest
       if (board[i] !== NONE) {
         if (elements[i] & (ELEM_EARTH | ELEM_WATER)) continue;
-        if (board[di] !== NONE) continue;
+        if (board[di] !== NONE || di === merchantIdx) continue;
         {
           animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i] });
           board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i];
