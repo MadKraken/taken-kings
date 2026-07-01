@@ -1,4 +1,4 @@
-﻿const VERSION = "308";
+﻿const VERSION = "309";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -935,7 +935,7 @@ function _randomEnemyPiece() {
 
 function rollSetup() {
   // Clear all pieces and regenerate enemy wave
-  board.fill(NONE); sides.fill(0); health.fill(1);
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0);
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
