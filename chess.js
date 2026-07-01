@@ -1,4 +1,4 @@
-﻿const VERSION = "332";
+﻿const VERSION = "333";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3895,8 +3895,8 @@ function handleBombClick(cx, cy) {
   if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
   if (inB(gx, gy)) {
     detonateBomb(idx(gx, gy));
-    firstMoveMade = true; recordPosition();
-    if (!gameOver) endWhiteTurn(); else { takeReplaySnapshot(); draw(); }
+    recordPosition();
+    if (gameOver) { takeReplaySnapshot(); draw(); } else { draw(); }
   } else { draw(); }
 }
 
@@ -3965,12 +3965,11 @@ function handleTeleporterClick(cx, cy) {
           if (fromSpace) {
             processNextQueuedItem();
           } else {
-            firstMoveMade = true; recordPosition();
+            recordPosition();
             const itm = itemSpaces[i];
             if (itm !== ITEM_NONE && sides[i] === W && canItemAffectPiece(itm, i)) {
-              const done = activateItemSpace(itm, i);
-              if (done) endWhiteTurn();
-            } else { endWhiteTurn(); }
+              activateItemSpace(itm, i); // item activates but turn continues — player still moves
+            } else { draw(); }
           }
         };
         if (isVoidSpace(i) && _tPiece !== NONE) {
