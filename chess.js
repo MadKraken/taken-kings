@@ -1,4 +1,4 @@
-﻿const VERSION = "282";
+﻿const VERSION = "289";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -119,7 +119,7 @@ let gold = 0;
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
-let nextBonuses = []; // [{type:'chest'|'item'|'obstacle', col, item?, dx?, dy?}]
+let nextBonuses = []; // [{type:'chest'|'item'|'void'|'block'|'neutral'|'river', col, ...}]
 let positionHistory = []; // track board states to detect repetition
 let replaySnapshots = [];
 let replayMode = false;
@@ -195,7 +195,7 @@ let itemSpaces = new Array(64).fill(ITEM_NONE);
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
-let specialSpaces = new Array(64).fill(null); // {type:'obstacle'|'void'|'block', ...}
+let specialSpaces = new Array(64).fill(null); // {type:'void'|'block'|'river', ...}
 let shopMode = false;
 let shopOffers = []; // items shown in merchant shop dialog
 let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
@@ -733,14 +733,20 @@ function generateWave(count) {
   return wave;
 }
 
-// Each open column has a 1-in-8 chance of becoming a bonus (chest, item, or obstacle).
+// Each open column has a 1-in-5 chance of becoming a bonus.
 function generateRowBonuses(wave) {
   const waveCols = new Set(wave.map(w => w.x));
   const bonuses = [];
+  // 1/32 chance the incoming row is a River
+  if (randInt(32) === 0) {
+    const dx = randInt(2) === 0 ? -1 : 1;
+    for (let x = 0; x < 8; x++) bonuses.push({ type: 'river', col: x, dx });
+    return bonuses; // river replaces all other bonuses for this row
+  }
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (randInt(5) !== 0) continue;
-    const type = ['chest', 'item', 'obstacle', 'void', 'block', 'neutral', 'neutral'][randInt(7)];
+    const type = ['chest', 'item', 'void', 'block', 'neutral', 'neutral'][randInt(6)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
@@ -751,17 +757,6 @@ function generateRowBonuses(wave) {
       bonuses.push({ type: 'block', col: x });
     } else if (type === 'neutral') {
       bonuses.push({ type: 'neutral', col: x, piece: _randomSetupPiece() });
-    } else {
-      const dirs = [];
-      for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
-        if (dx === 0 && dy === 0) continue;
-        if (x + dx < 0 || x + dx > 7) continue;
-        if (dy === -1) continue;
-        dirs.push({ dx, dy });
-      }
-      if (dirs.length === 0) continue;
-      const d = dirs[randInt(dirs.length)];
-      bonuses.push({ type: 'obstacle', col: x, dx: d.dx, dy: d.dy });
     }
   }
   return bonuses;
@@ -771,6 +766,49 @@ function _rollSpawnBonuses(i, odds = 32) {
   while (randInt(odds) === 0) {
     if (randInt(2) === 0) elements[i] = ELEM_ALL[randInt(4)];
     else health[i]++;
+  }
+}
+
+function applyRiverFlow(onDone) {
+  const animPieces = [];
+  for (let y = 0; y < 8; y++) {
+    const cell = specialSpaces[idx(0, y)];
+    if (!cell || cell.type !== 'river') continue;
+    const dx = cell.dx;
+    // Process columns from downstream end first to avoid blocking chain
+    const cols = dx === 1 ? [7,6,5,4,3,2,1,0] : [0,1,2,3,4,5,6,7];
+    for (const x of cols) {
+      const i = idx(x, y);
+      const nx = x + dx;
+      if (!inB(nx, y)) continue;
+      const di = idx(nx, y);
+      if (isBlockSpace(di)) continue;
+      // Move piece/chest
+      if (board[i] !== NONE) {
+        if (elements[i] & (ELEM_EARTH | ELEM_WATER)) continue;
+        if (board[di] !== NONE) continue;
+        {
+          animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i] });
+          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i];
+          board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0;
+        }
+        continue;
+      }
+      // Move merchant
+      if (i === merchantIdx && board[di] === NONE) {
+        animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, spriteKey: 'merchant' });
+        merchantIdx = di; continue;
+      }
+      // Drift item space (only if no piece/merchant is occupying it)
+      if (itemSpaces[i] !== ITEM_NONE && itemSpaces[di] === ITEM_NONE) {
+        itemSpaces[di] = itemSpaces[i]; itemSpaces[i] = ITEM_NONE;
+      }
+    }
+  }
+  if (animPieces.length > 0) {
+    startAnim(animPieces, 0, onDone);
+  } else {
+    if (onDone) onDone();
   }
 }
 
@@ -979,8 +1017,7 @@ function neutralPlay(onDone) {
     const p = board[i], h = health[i];
     board[dest] = p; sides[dest] = N; health[dest] = h;
     board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0;
-    const neutralFinal = applySpecialSpace(dest);
-    checkFireDeath(neutralFinal);
+    checkFireDeath(dest);
     startAnim([{
       toIdx: dest,
       fromCX: MARGIN + fx * TILE, fromCY: BOARD_Y + MARGIN + fy * TILE,
@@ -1429,11 +1466,9 @@ function endWhiteTurn() {
   if (shiftCountdown <= 0) {
     fieldAdvance();
   } else {
-    checkArrowSpaces(() => {
-      turn = B;
-      draw();
-      if (!gameOver) aiPlay();
-    });
+    turn = B;
+    draw();
+    if (!gameOver) aiPlay();
   }
 }
 
@@ -1641,9 +1676,9 @@ function fieldAdvance(playerTriggered = false) {
     newSpecialSpaces[idx(x, y + 1)] = specialSpaces[i];
   }
   for (const b of nextBonuses) {
-    if (b.type === 'obstacle') newSpecialSpaces[idx(b.col, 0)] = { type: 'obstacle', dx: b.dx, dy: b.dy };
     if (b.type === 'void') newSpecialSpaces[idx(b.col, 0)] = { type: 'void' };
     if (b.type === 'block') newSpecialSpaces[idx(b.col, 0)] = { type: 'block' };
+    if (b.type === 'river') newSpecialSpaces[idx(b.col, 0)] = { type: 'river', dx: b.dx };
   }
   specialSpaces.splice(0, 64, ...newSpecialSpaces);
 
@@ -2019,12 +2054,12 @@ function aiPlay() {
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
       const _aiFinish = () => {
-        checkArrowSpaces(() => {
-          if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-          else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-          if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
-          neutralPlay(() => {
-            merchantPlay(() => {
+        if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+        else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
+        if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
+        neutralPlay(() => {
+          merchantPlay(() => {
+            applyRiverFlow(() => {
               fireSquares.clear(); // fire from last White move expires as White's turn begins
               turn = W;
               aiThinking = false;
@@ -2068,37 +2103,20 @@ function aiPlay() {
       } else {
         makeMove(move[0], move[1], true);
         if (move[1] === merchantIdx) respawnMerchant();
-        const _aiHops = computeObstacleHops(move[1]);
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
         const _aiIsCheckersJump = _aiPiece0 === CHECKERS && Math.abs(mtx - mfx) === 2;
-        // Suppress the piece at move[1] (where it now sits) during the initial slide anim.
-        // applySpecialSpace is deferred until after this anim so captured pieces stay visible.
-        const aiAnimPieces = [{
+        startAnim([{
           toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
           piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0,
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
-        }];
-        startAnim(aiAnimPieces, 0, () => {
-          // Now apply special-space redirect (captures happen here, after the slide is visible)
-          const _aiFinalI = applySpecialSpace(move[1]);
-          checkFireDeath(_aiFinalI); // Black piece may have landed on White fire
+        }], 0, () => {
+          checkFireDeath(move[1]);
           recordPosition();
-          const _aiPiece = board[_aiFinalI] || _aiPiece0, _aiSide = sides[_aiFinalI] || _aiSide0, _aiHlth = health[_aiFinalI] || _aiHlth0;
-          const _aiDoHop = (hi) => {
-            if (hi >= _aiHops.length) {
-              checkFireDeath(_aiFinalI); // also check after hop redirects
-              if (isVoidSpace(_aiFinalI) && _aiPiece !== NONE) {
-                const [vx, vy] = xy(_aiFinalI);
-                startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece, _aiSide, _aiFinish);
-              } else { _aiFinish(); }
-              return;
-            }
-            const [fI, tI] = _aiHops[hi];
-            const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-            startAnim([{ toIdx: _aiFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _aiPiece, side: _aiSide, hlth: _aiHlth }], 0, () => _aiDoHop(hi+1));
-          };
-          _aiDoHop(0);
+          if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
+            const [vx, vy] = xy(move[1]);
+            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiFinish);
+          } else { _aiFinish(); }
         });
       }
     } else {
@@ -2108,11 +2126,13 @@ function aiPlay() {
       if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
       neutralPlay(() => {
         merchantPlay(() => {
-          fireSquares.clear();
-          turn = W;
-          aiThinking = false;
-          takeReplaySnapshot();
-          draw();
+          applyRiverFlow(() => {
+            fireSquares.clear();
+            turn = W;
+            aiThinking = false;
+            takeReplaySnapshot();
+            draw();
+          });
         });
       });
     }
@@ -2234,7 +2254,7 @@ function activateItemSpace(item, i) {
 
 // Only auto-applies instant items (Upgrader/KingPromoter) during Team Leap.
 // Interactive items are left on the board until a regular move triggers them.
-// Called after item/obstacle interaction completes; drains queue or ends turn.
+// Called after item interaction completes; drains queue or ends turn.
 function processNextQueuedItem() {
   activeItemSpaceIdx = -1;
   if (pendingItemQueue.length === 0) { endWhiteTurn(); return; }
@@ -2297,7 +2317,7 @@ function merchantPlay(onDone) {
   startAnim([{ toIdx: dest, fromCX, fromCY, toCX, toCY, spriteKey: "merchant" }], 0, onDone);
 }
 
-// After a Team Advance, apply item spaces only — arrows don’t fire since no piece moved.
+// After a Team Advance, apply item spaces.
 function applySpacesAfterAdvance() {
   checkWhiteKingAlive();
   if (gameOver) { takeReplaySnapshot(); draw(); return; }
@@ -2318,130 +2338,6 @@ function _applySpacesAfterAdvancePass2() {
   processNextQueuedItem();
 }
 
-// After any move, check if a piece that was stuck on an arrow space can now redirect.
-function checkArrowSpaces(onDone) {
-  const toProcess = [];
-  for (let i = 0; i < 64; i++) {
-    const sp = specialSpaces[i];
-    if (!sp || sp.type !== 'obstacle') continue;
-    if (board[i] === NONE) continue;
-    if (elements[i] & ELEM_EARTH) continue; // Earth pieces immune to forced redirect
-    const [x, y] = xy(i);
-    const nx = x + sp.dx, ny = y + sp.dy;
-    if (!inB(nx, ny)) continue;
-    const destI = idx(nx, ny);
-    if (isBlockSpace(destI)) continue;
-    const moverSide = sides[i];
-    const destSide = sides[destI];
-    if (destSide !== 0 && destSide === moverSide) continue; // still blocked by friendly
-    if (moverSide === B && destSide === W && health[destI] > 1) continue; // shielded
-    toProcess.push(i);
-  }
-  if (toProcess.length === 0) { onDone(); return; }
-  let qi = 0;
-  const processNext = () => {
-    if (qi >= toProcess.length) { onDone(); return; }
-    const startI = toProcess[qi++];
-    if (board[startI] === NONE) { processNext(); return; } // already moved by prior chain
-    const piece0 = board[startI], side0 = sides[startI], hlth0 = health[startI];
-    const hops = computeObstacleHops(startI);
-    const finalI = applySpecialSpace(startI);
-    const piece = board[finalI] || piece0, side = sides[finalI] || side0, hlth = health[finalI] || hlth0;
-    const doHop = (hi) => {
-      if (hi >= hops.length) {
-        checkFireDeath(finalI); // piece may have been redirected onto fire
-        if (isVoidSpace(finalI) && piece !== NONE) {
-          if (board[finalI] !== NONE) {
-            if (board[finalI] === KING && side === W) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-            else if (board[finalI] === KING && side === B) score++;
-            board[finalI] = NONE; sides[finalI] = 0; health[finalI] = 1;
-          }
-          const [vx, vy] = xy(finalI);
-          startVoidDeath(MARGIN + vx*TILE + TILE/2, BOARD_Y + MARGIN + vy*TILE + TILE/2, piece, side, processNext);
-        } else { processNext(); }
-        return;
-      }
-      const [fI, tI] = hops[hi];
-      const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-      startAnim([{ toIdx: finalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece, side, hlth }], 0, () => doHop(hi+1));
-    };
-    doHop(0);
-  };
-  processNext();
-}
-
-// Dry-run: returns the list of [fromI, toI] hops an obstacle chain would produce,
-// without modifying board state. Used to drive redirect animations.
-function computeObstacleHops(startI) {
-  const visited = new Set();
-  const hops = [];
-  let curI = startI;
-  while (true) {
-    if (visited.has(curI)) break;
-    const sp = specialSpaces[curI];
-    if (!sp || sp.type !== 'obstacle') break;
-    visited.add(curI);
-    const [x, y] = xy(curI);
-    const nx = x + sp.dx, ny = y + sp.dy;
-    if (!inB(nx, ny)) break;
-    const destI = idx(nx, ny);
-    if (isBlockSpace(destI)) break;
-    const moverSide = sides[curI];
-    const destSide = sides[destI];
-    if (destSide !== 0 && destSide === moverSide) break;
-    if (moverSide === B && destSide === W && health[destI] > 1) break;
-    hops.push([curI, destI]);
-    if (isVoidSpace(destI)) break; // animate the slide in, then piece disappears
-    curI = destI;
-  }
-  return hops;
-}
-
-// Applies obstacle (arrow) spaces with chaining. Any piece â€" white or black â€"
-// landing on an obstacle is redirected; if the destination is also an obstacle
-// the chain continues. Visited set prevents infinite loops.
-function applySpecialSpace(startI) {
-  const visited = new Set();
-  let toI = startI;
-  while (true) {
-    if (visited.has(toI)) break; // cycle detected â€" piece stays where it is
-    const sp = specialSpaces[toI];
-    if (!sp || sp.type !== 'obstacle') break;
-    if (elements[toI] & ELEM_EARTH) break; // Earth pieces immune to forced redirect
-    visited.add(toI);
-    const [x, y] = xy(toI);
-    const nx = x + sp.dx, ny = y + sp.dy;
-    if (!inB(nx, ny)) break;
-    const destI = idx(nx, ny);
-    if (isBlockSpace(destI)) break; // wall — stop
-    if (isVoidSpace(destI)) {
-      // piece falls into void — remove it and return the void square
-      const moverSide = sides[toI];
-      if (moverSide === W && board[toI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-      if (moverSide === B && board[toI] === KING) score++;
-      board[toI] = NONE; sides[toI] = 0; health[toI] = 1;
-      return destI;
-    }
-    const moverSide = sides[toI];
-    const destSide = sides[destI];
-    if (destSide !== 0 && destSide === moverSide) break; // friendly blocks
-    // Bounce: black piece hitting shielded white
-    if (moverSide === B && destSide === W && health[destI] > 1) {
-      health[destI]--; break;
-    }
-    if (destSide !== 0 && destSide !== moverSide) {
-      if (board[destI] === KING && moverSide === W) score++;
-      if (moverSide === W) gold += GOLD_VALUE[board[destI]] ?? 0;
-    }
-    if (board[destI] === CHEST && moverSide === W) {
-      addToInventory(_randomItem());
-    }
-    board[destI] = board[toI]; sides[destI] = moverSide; health[destI] = health[toI]; elements[destI] = elements[toI];
-    board[toI] = NONE; sides[toI] = 0; health[toI] = 1; elements[toI] = 0;
-    toI = destI;
-  }
-  return toI;
-}
 
 // --- Leap button geometry ---
 const BOARD_Y = LOGO_H + PREVIEW_H;
@@ -2568,19 +2464,6 @@ for (const b of nextBonuses) {
       ctx.drawImage(iimg, bpx + off2, bpy + off2 + bob2, sz2, sz2);
       ctx.globalAlpha = 1.0;
     }
-  } else if (b.type === 'obstacle') {
-    ctx.fillStyle = "rgba(80,200,255,0.18)";
-    ctx.fillRect(bpx, bpy, TILE, TILE);
-    const pocx = bpx + TILE / 2, pocy = bpy + TILE / 2;
-    const pAngle = Math.atan2(b.dy, b.dx), pLen = TILE * 0.32;
-    const ptx = pocx + Math.cos(pAngle) * pLen, pty = pocy + Math.sin(pAngle) * pLen;
-    const pbx = pocx - Math.cos(pAngle) * pLen * 0.55, pby = pocy - Math.sin(pAngle) * pLen * 0.55;
-    ctx.strokeStyle = "rgba(120,230,255,0.9)"; ctx.lineWidth = 3; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(pbx, pby); ctx.lineTo(ptx, pty); ctx.stroke();
-    ctx.fillStyle = "rgba(120,230,255,0.9)";
-    ctx.save(); ctx.translate(ptx, pty); ctx.rotate(pAngle);
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
-    ctx.restore();
   } else if (b.type === 'void') {
     const vcx = bpx + TILE / 2, vcy = bpy + TILE / 2;
     ctx.save();
@@ -2589,6 +2472,22 @@ for (const b of nextBonuses) {
     ctx.strokeStyle = "rgba(140,0,220,0.6)";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(vcx, vcy, TILE * 0.36, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  } else if (b.type === 'river' && b.col === 0) {
+    // Draw the full river row in the preview once (triggered by col===0 entry)
+    ctx.save();
+    ctx.fillStyle = 'rgba(40,160,220,0.22)';
+    ctx.fillRect(MARGIN, MARGIN - TILE, 8 * TILE, TILE);
+    for (let rx = 0; rx < 8; rx++) {
+      const rcx = MARGIN + rx * TILE + TILE / 2, rcy = MARGIN - TILE + TILE / 2;
+      const aLen = TILE * 0.28, rdx = b.dx;
+      ctx.strokeStyle = 'rgba(100,210,255,0.7)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(rcx - rdx * aLen * 0.6, rcy); ctx.lineTo(rcx + rdx * aLen, rcy); ctx.stroke();
+      ctx.fillStyle = 'rgba(100,210,255,0.7)';
+      ctx.save(); ctx.translate(rcx + rdx * aLen, rcy); ctx.rotate(rdx > 0 ? 0 : Math.PI);
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-11,-5); ctx.lineTo(-11,5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
     ctx.restore();
   } else if (b.type === 'block') {
     drawBlockTile(ctx, bpx, bpy, TILE);
@@ -2698,27 +2597,6 @@ for (let i = 0; i < 64; i++) {
 }
 
 
-// Arrow spaces
-for (let i = 0; i < 64; i++) {
-  const sp = specialSpaces[i];
-  if (!sp || sp.type !== 'obstacle') continue;
-  const [x, y] = xy(i);
-  const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
-  const cx = px + TILE / 2, cy = py + TILE / 2;
-  ctx.fillStyle = "rgba(80,200,255,0.18)";
-  ctx.fillRect(px, py, TILE, TILE);
-  const angle = Math.atan2(sp.dy, sp.dx);
-  const len = TILE * 0.32;
-  const tx2 = cx + Math.cos(angle) * len, ty2 = cy + Math.sin(angle) * len;
-  const bx2 = cx - Math.cos(angle) * len * 0.55, by2 = cy - Math.sin(angle) * len * 0.55;
-  ctx.strokeStyle = "rgba(120,230,255,0.9)";
-  ctx.lineWidth = 3; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(tx2, ty2); ctx.stroke();
-  ctx.fillStyle = "rgba(120,230,255,0.9)";
-  ctx.save(); ctx.translate(tx2, ty2); ctx.rotate(angle);
-  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-13,-6); ctx.lineTo(-13,6); ctx.closePath(); ctx.fill();
-  ctx.restore();
-}
 
 // Void spaces
 let hasVoid = false;
@@ -2741,6 +2619,31 @@ for (let i = 0; i < 64; i++) {
 if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
 const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item');
 if (hasItemSpace && !chestBobRunning && !anim) { chestBobRunning = true; requestAnimationFrame(_chestBobTick); }
+
+// River rows
+for (let y = 0; y < 8; y++) {
+  const cell = specialSpaces[idx(0, y)];
+  if (!cell || cell.type !== 'river') continue;
+  const dx = cell.dx;
+  const py = MARGIN + y * TILE;
+  ctx.save();
+  ctx.fillStyle = 'rgba(40,160,220,0.22)';
+  ctx.fillRect(MARGIN, py, 8 * TILE, TILE);
+  // Arrow in each cell
+  for (let x = 0; x < 8; x++) {
+    const cx2 = MARGIN + x * TILE + TILE / 2, cy2 = py + TILE / 2;
+    const aLen = TILE * 0.28;
+    const tx2 = cx2 + dx * aLen, ty2 = cy2;
+    const bx2 = cx2 - dx * aLen * 0.6, by2 = cy2;
+    ctx.strokeStyle = 'rgba(100,210,255,0.7)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(tx2, ty2); ctx.stroke();
+    ctx.fillStyle = 'rgba(100,210,255,0.7)';
+    ctx.save(); ctx.translate(tx2, ty2); ctx.rotate(dx > 0 ? 0 : Math.PI);
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-11,-5); ctx.lineTo(-11,5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
 
 // Block spaces
 for (let i = 0; i < 64; i++) {
@@ -3844,9 +3747,7 @@ function handleTeleporterClick(cx, cy) {
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
-        const _tHops = computeObstacleHops(i);
-        const _tFinalI = applySpecialSpace(i);
-        const _tPiece = board[_tFinalI] || _tPiece0, _tHlth = health[_tFinalI] || _tHlth0;
+        const _tPiece = board[i] || _tPiece0, _tHlth = health[i] || _tHlth0;
         const _tFinish = () => {
           checkWhiteKingAlive();
           if (gameOver) { takeReplaySnapshot(); draw(); return; }
@@ -3854,30 +3755,17 @@ function handleTeleporterClick(cx, cy) {
             processNextQueuedItem();
           } else {
             firstMoveMade = true; recordPosition();
-            const itm = itemSpaces[_tFinalI];
-            if (itm !== ITEM_NONE && sides[_tFinalI] === W && canItemAffectPiece(itm, _tFinalI)) {
-              const done = activateItemSpace(itm, _tFinalI);
+            const itm = itemSpaces[i];
+            if (itm !== ITEM_NONE && sides[i] === W && canItemAffectPiece(itm, i)) {
+              const done = activateItemSpace(itm, i);
               if (done) endWhiteTurn();
             } else { endWhiteTurn(); }
           }
         };
-        const _tDoHop = (hi) => {
-          if (hi >= _tHops.length) {
-            if (isVoidSpace(_tFinalI) && _tPiece !== NONE) {
-              if (board[_tFinalI] !== NONE) {
-                if (board[_tFinalI] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-                board[_tFinalI] = NONE; sides[_tFinalI] = 0; health[_tFinalI] = 1;
-              }
-              const [vx, vy] = xy(_tFinalI);
-              startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
-            } else { _tFinish(); }
-            return;
-          }
-          const [fI, tI] = _tHops[hi];
-          const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-          startAnim([{ toIdx: _tFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _tPiece, side: W, hlth: _tHlth }], 0, () => _tDoHop(hi+1));
-        };
-        _tDoHop(0);
+        if (isVoidSpace(i) && _tPiece !== NONE) {
+          const [vx, vy] = xy(i);
+          startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
+        } else { _tFinish(); }
         return;
       } else if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     }
@@ -4026,19 +3914,7 @@ function handleBoardClick(cx, cy) {
       if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       selected = -1; validMoves = [];
-      const _wHops = computeObstacleHops(clickedDest);
-      const _wHopCaptures = {};
-      for (const [, tI] of _wHops) {
-        if (board[tI] !== NONE && board[tI] !== CHEST && sides[tI] !== W) {
-          _wHopCaptures[tI] = { piece: board[tI], side: sides[tI] };
-          pendingCaptures[tI] = _wHopCaptures[tI];
-        }
-      }
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
-      const _wFinalI = applySpecialSpace(clickedDest);
-      const _wPiece = board[_wFinalI] || _wPiece0, _wSide = sides[_wFinalI] || _wSide0, _wHlth = health[_wFinalI] || _wHlth0;
-      wAnimPieces[0].toIdx = _wFinalI;
-      wAnimPieces[0].piece = _wPiece; wAnimPieces[0].side = _wSide; wAnimPieces[0].hlth = _wHlth;
       const _wContinue = (movedTo) => {
         pendingCaptures = {};
         checkWhiteKingAlive();
@@ -4050,35 +3926,18 @@ function handleBoardClick(cx, cy) {
           } else { endWhiteTurn(); }
         } else { draw(); }
       };
-      const _wDoHop = (hi) => {
-        if (hi >= _wHops.length) {
-          if (isVoidSpace(_wFinalI) && _wPiece !== NONE) {
-            const [vx, vy] = xy(_wFinalI);
-            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece, _wSide, () => _wContinue(_wFinalI));
-          } else { _wContinue(_wFinalI); }
-          return;
-        }
-        const [fI, tI] = _wHops[hi];
-        const [fx, fy] = xy(fI), [tx, ty] = xy(tI);
-        startAnim([{ toIdx: _wFinalI, fromCX: MARGIN+fx*TILE, fromCY: BOARD_Y+MARGIN+fy*TILE, toCX: MARGIN+tx*TILE, toCY: BOARD_Y+MARGIN+ty*TILE, piece: _wPiece, side: _wSide, hlth: _wHlth }], 0, () => {
-          const cap = _wHopCaptures[tI];
-          if (cap) {
-            delete pendingCaptures[tI];
-            const isPlayerPiece = cap.side === W;
-            const pool = isPlayerPiece ? playerDead : enemyDead;
-            const [tgx, tgy] = graveSlotPos(isPlayerPiece, cap.piece);
-            startFlyAnim(cap.piece, cap.side, MARGIN + tx*TILE + TILE/2, BOARD_Y + MARGIN + ty*TILE + TILE/2, tgx, tgy, () => { pool[cap.piece] = (pool[cap.piece] || 0) + 1; });
-          }
-          _wDoHop(hi+1);
-        });
-      };
       startAnim(wAnimPieces, 0, () => {
         checkWhiteKingAlive();
         if (gameOver) { takeReplaySnapshot(); draw(); return; }
-        const _afterWave = () => { _wDoHop(0); };
+        const _afterWave = () => {
+          if (isVoidSpace(clickedDest) && _wPiece0 !== NONE) {
+            const [vx, vy] = xy(clickedDest);
+            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece0, _wSide0, () => _wContinue(clickedDest));
+          } else { _wContinue(clickedDest); }
+        };
         if (_waveData) {
-          // shoveParams.toI must point to where piece actually landed after arrow redirect
-          _waveData.shoveParams.toI = _wFinalI;
+          // shoveParams.toI must point to where piece actually landed
+          _waveData.shoveParams.toI = clickedDest;
           startWaveAnim(_waveData.squares, _waveData.shoveParams, _afterWave);
         } else {
           _afterWave();
