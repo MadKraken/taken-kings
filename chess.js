@@ -1,4 +1,4 @@
-﻿const VERSION = "278";
+﻿const VERSION = "279";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -394,11 +394,9 @@ function _waveLineSqFromMove(fromI, toI, p) {
   }
   const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
-  let sx = tx, sy = ty;
-  while (inB(sx - dx, sy - dy)) { sx -= dx; sy -= dy; }
-  const sq = [];
-  let cx = sx, cy = sy;
-  while (inB(cx, cy)) { sq.push(idx(cx, cy)); cx += dx; cy += dy; }
+  const sq = [toI]; // wave head lands on destination, then shoves 1 square ahead
+  const nx = tx + dx, ny = ty + dy;
+  if (inB(nx, ny)) sq.push(idx(nx, ny));
   return { squares: sq, shoveParams: { isKnight: false, dx, dy, toI } };
 }
 
