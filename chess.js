@@ -1,4 +1,4 @@
-﻿const VERSION = "357";
+﻿const VERSION = "358";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -407,14 +407,25 @@ function startWaveAnim(squares, shoveParams, onDone) {
     for (const ni of squares) {
       if (ni === sp.toI) continue;
       if (board[ni] === NONE && ni !== merchantIdx) continue;
+      if (elements[ni] & ELEM_EARTH) continue; // Earth is immune — no shove, no drawAt
       const [nx, ny] = xy(ni);
+      const sdx = nx - tx, sdy = ny - ty;
       const releaseK = squareToK.get(ni) ?? 0;
-      const [destX, destY] = [nx + (nx - tx > 0 ? 1 : nx - tx < 0 ? -1 : 0),
-                               ny + (ny - ty > 0 ? 1 : ny - ty < 0 ? -1 : 0)];
+      const destX = nx + (sdx > 0 ? 1 : sdx < 0 ? -1 : 0);
+      const destY = ny + (sdy > 0 ? 1 : sdy < 0 ? -1 : 0);
       if (!inB(destX, destY)) continue;
       const destI = idx(destX, destY);
-      drawAt.set(destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK });
-      shovePiece(ni, nx - tx, ny - ty);
+      // Only set drawAt if the shove would actually succeed (destination unoccupied)
+      if (board[destI] !== NONE && destI !== merchantIdx) continue;
+      const voidDeath = isVoidSpace(destI)
+        ? { p: board[ni], s: sides[ni], cx: MARGIN + destX * TILE + TILE / 2, cy: BOARD_Y + MARGIN + destY * TILE + TILE / 2 }
+        : null;
+      drawAt.set(voidDeath ? ni : destI, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK, voidDeath });
+      const _shoveResult = shovePiece(ni, sdx, sdy);
+      if (_shoveResult?.merchantVoid) {
+        const vdcx = MARGIN + destX * TILE + TILE / 2, vdcy = BOARD_Y + MARGIN + destY * TILE + TILE / 2;
+        drawAt.set(_shoveResult.oldIdx, { cx: MARGIN + nx * TILE, cy: MARGIN + ny * TILE, releaseK, merchantVoidDeath: { cx: vdcx, cy: vdcy } });
+      }
     }
   } else {
     // Pass 1: determine which pieces can move (far-to-near, chain-aware)
