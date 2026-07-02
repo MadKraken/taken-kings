@@ -1,4 +1,4 @@
-﻿const VERSION = "392";
+﻿const VERSION = "393";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1350,6 +1350,17 @@ function airKnightMoves(x, y, s) {
 
 function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 function isBlockSpace(i) { return specialSpaces[i]?.type === 'block'; }
+function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlockSpace(i); }
+
+// Adds a 2-square checkers move (jump capture or Air slide) to moves[]. Bounds checked by caller.
+function _checkersAddJumpSlide(moves, midI, landI, s, isAir) {
+  if (isAir && canLandEmpty(landI)) {
+    moves.push(landI);
+  } else if (sides[midI] !== 0 && sides[midI] !== s && sides[midI] !== N
+      && board[midI] !== NONE && canLandEmpty(landI)) {
+    moves.push(landI);
+  }
+}
 
 function pseudoMoves(x, y) {
   const moves = [];
@@ -1393,54 +1404,30 @@ function pseudoMoves(x, y) {
     for (const dx of [-1, 1]) {
       const nx = x + dx, ny = y + dir;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
-      if (ni >= 0 && board[ni] === NONE && !isVoidSpace(ni) && !isBlockSpace(ni))
-        moves.push(ni);
+      if (ni >= 0 && canLandEmpty(ni)) moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dir;
-      if (ni >= 0 && inB(jx, jy)) {
-        const midI = ni, landI = idx(jx, jy);
-        const midSide = sides[midI];
-        // Air: 2-square slide passing over any mid-square (occupied or not)
-        if (isAir && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
-          moves.push(landI);
-        // Jump capture: mid-square has an enemy (only when not already added by Air slide)
-        else if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
-            && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
-          moves.push(landI);
-      }
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir);
     }
-    // Air bent-path slide: (x, y-2) reachable via two zigzag forward steps
+    // Air bent-path: (x, y+2*dir) reachable via two zigzag forward steps
     if (isAir) {
       const bentI = inB(x, y + 2*dir) ? idx(x, y + 2*dir) : -1;
-      if (bentI >= 0 && board[bentI] === NONE && !isVoidSpace(bentI) && !isBlockSpace(bentI))
-        moves.push(bentI);
+      if (bentI >= 0 && canLandEmpty(bentI)) moves.push(bentI);
     }
   } else if (p === CHECKERS_KING) {
     const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
       const nx = x + dx, ny = y + dy;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
-      if (ni >= 0 && (board[ni] === NONE || sides[ni] === N) && !isVoidSpace(ni) && !isBlockSpace(ni))
+      if (ni >= 0 && (canLandEmpty(ni) || sides[ni] === N) && !isVoidSpace(ni) && !isBlockSpace(ni))
         moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dy;
-      if (ni >= 0 && inB(jx, jy)) {
-        const midI = ni, landI = idx(jx, jy);
-        const midSide = sides[midI];
-        if (isAir && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
-          moves.push(landI);
-        else if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
-            && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
-          moves.push(landI);
-      }
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir);
     }
     // Air bent-path slides: squares reachable via two diagonal steps in different directions
     if (isAir) {
       for (const [bdx, bdy] of [[2,0],[-2,0],[0,2],[0,-2]]) {
         const bx = x + bdx, by = y + bdy;
-        if (inB(bx, by)) {
-          const bentI = idx(bx, by);
-          if (board[bentI] === NONE && !isVoidSpace(bentI) && !isBlockSpace(bentI))
-            moves.push(bentI);
-        }
+        if (inB(bx, by) && canLandEmpty(idx(bx, by))) moves.push(idx(bx, by));
       }
     }
   } else if (p === KNIGHT) {
@@ -2217,6 +2204,8 @@ function simulateLeap() {
   // Simulates fieldAdvance for AI lookahead: everything shifts down, row 7 destroyed
   const newBoard = new Array(64).fill(NONE);
   const newSides = new Array(64).fill(0);
+  const newHealth = new Array(64).fill(1);
+  const newElements = new Array(64).fill(0);
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
@@ -2224,9 +2213,13 @@ function simulateLeap() {
     const ni = idx(x, y + 1);
     newBoard[ni] = board[i];
     newSides[ni] = sides[i];
+    newHealth[ni] = health[i];
+    newElements[ni] = elements[i];
   }
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
+  health.splice(0, 64, ...newHealth);
+  elements.splice(0, 64, ...newElements);
   spawnCount++;
   for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnBonuses(idx(w.x, 0)); }
   for (const b of nextBonuses) {
@@ -2618,8 +2611,7 @@ function _checkersJumpsFrom(i) {
     if (inB(nx, ny) && inB(jx, jy)) {
       const midI = idx(nx, ny), landI = idx(jx, jy);
       const midSide = sides[midI];
-      if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
-          && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+      if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE && canLandEmpty(landI))
         jumps.push(landI);
     }
   }
