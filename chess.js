@@ -1,4 +1,4 @@
-﻿const VERSION = "349";
+﻿const VERSION = "357";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -184,7 +184,7 @@ function itemName(item) {
 let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let _pendingDrag = null; // { slot, startX, startY, startMs } — promoted to dragSlot after threshold
-let playerDead = {}, enemyDead = {}, flyAnims = [];
+let playerDead = {}, enemyDead = {}, flyAnims = [], itemFlyAnims = [], itemFlySlots = new Set();
 let shieldPops = [];
 let warnFlashRunning = false;
 let voidPulseRunning = false;
@@ -364,11 +364,14 @@ function _flyTick() {
       flyAnims.splice(i, 1);
     }
   }
+  for (let i = itemFlyAnims.length - 1; i >= 0; i--) {
+    if (now - itemFlyAnims[i].startMs >= itemFlyAnims[i].dur) { itemFlySlots.delete(itemFlyAnims[i].slotIdx); itemFlyAnims.splice(i, 1); }
+  }
   for (let i = shieldPops.length - 1; i >= 0; i--) {
     if (now - shieldPops[i].startMs >= shieldPops[i].dur) shieldPops.splice(i, 1);
   }
   draw();
-  if (flyAnims.length > 0 || shieldPops.length > 0) requestAnimationFrame(_flyTick);
+  if (flyAnims.length > 0 || itemFlyAnims.length > 0 || shieldPops.length > 0) requestAnimationFrame(_flyTick);
 }
 
 // shoveParams: { isKnight, toI } for Knight; { isKnight: false, dx, dy, toI } for sliders
@@ -617,7 +620,10 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
       exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
+      pendingItemFlies: _pendingCaptureAnims.filter(c => c.type === 'item').map(c => ({...c})),
+      pendingShopFlies: [..._pendingShopFlies],
     });
+    _pendingShopFlies = [];
   }
   const animDur = _miniReplayActive ? ANIM_MS * 2 : ANIM_MS;
   anim = { pieces, boardDy, startMs: performance.now(), dur: animDur, onDone, exitRow: exitRow || null };
@@ -679,9 +685,28 @@ function _randomShopItem() {
 
 function addToInventory(item) {
   for (let i = 0; i < inventory.length; i++) {
-    if (inventory[i] === ITEM_NONE) { inventory[i] = item; return true; }
+    if (inventory[i] === ITEM_NONE) { inventory[i] = item; return i; }
   }
-  return false; // full
+  return -1; // full
+}
+
+function findInventorySlot() {
+  for (let i = 0; i < inventory.length; i++) {
+    if (inventory[i] === ITEM_NONE) return i;
+  }
+  return -1;
+}
+
+function startItemFlyAnim(item, fromX, fromY, slotIdx, skipAdd = false) {
+  if (slotIdx < 0) return;
+  if (!skipAdd) addToInventory(item);
+  itemFlySlots.add(slotIdx);
+  const c = slotIdx % INV_COLS, r = Math.floor(slotIdx / INV_COLS);
+  const invY = INV_PANEL_TOP + 50;
+  const tx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD) + INV_SLOT / 2;
+  const ty = invY + INV_PAD + r * (INV_SLOT + INV_PAD) + INV_SLOT / 2;
+  itemFlyAnims.push({ item, slotIdx, sx: fromX, sy: fromY, tx, ty, startMs: performance.now(), dur: 275 });
+  if (flyAnims.length === 0 && itemFlyAnims.length === 1 && shieldPops.length === 0) requestAnimationFrame(_flyTick);
 }
 
 function removeFromInventory(slot) {
@@ -782,10 +807,19 @@ function _playReplayTransition(snapIdx, onDone) {
     fireSquares = ev.fireSquares ? new Set(ev.fireSquares) : new Set();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
+    if (ev.pendingShopFlies) {
+      for (const f of ev.pendingShopFlies) startItemFlyAnim(f.item, f.sx, f.sy, f.slotIdx, true);
+    }
+    const evOnDone = () => {
+      if (ev.pendingItemFlies) {
+        for (const f of ev.pendingItemFlies) startItemFlyAnim(f.item, f.sx, f.sy, findInventorySlot());
+      }
+      playNext();
+    };
     if (ev.type === 'wave') {
-      startWaveAnim(ev.squares, {...ev.shoveParams}, playNext);
+      startWaveAnim(ev.squares, {...ev.shoveParams}, evOnDone);
     } else {
-      startAnim(ev.pieces, ev.boardDy, playNext, ev.exitRow || undefined);
+      startAnim(ev.pieces, ev.boardDy, evOnDone, ev.exitRow || undefined);
     }
   };
   playNext();
@@ -940,6 +974,7 @@ let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
 let _pendingCaptureAnims = []; // queued by makeMove, drained in startAnim onDone
+let _pendingShopFlies = []; // queued by handleShopClick, attached to next startAnim replayAnimBuffer event
 let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
 let timedMode = false;
 let timedModeSecs = 60;
@@ -970,7 +1005,7 @@ function initBoard() {
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1;
-  playerDead = {}; enemyDead = {}; flyAnims = []; shieldPops = [];
+  playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -1579,7 +1614,13 @@ function makeMove(fromI, toI, visual = false) {
     score += 1;
   }
   if (captured === CHEST && s === W) {
-    addToInventory(_randomItem());
+    const _chestItem = _randomItem();
+    if (visual) {
+      // Delay addToInventory until animation ends so item doesn't pop into slot early
+      _pendingCaptureAnims.push({ type: 'item', item: _chestItem, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
+    } else {
+      addToInventory(_chestItem);
+    }
   }
 
   if (p === KING && s === W) {
@@ -2324,12 +2365,13 @@ function aiPlay() {
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         for (const c of _pendingCaptureAnims) {
+          if (c.type === 'item') continue;
           const [bx, by] = xy(c.boardIdx);
           const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
           _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
         }
         startAnim(_aiAnimPieces, 0, () => {
-          for (const c of _pendingCaptureAnims) startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+          for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
           _pendingCaptureAnims = [];
           checkFireDeath(move[1]);
           recordPosition();
@@ -3269,7 +3311,7 @@ for (let r = 0; r < INV_ROWS; r++) {
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-    if (dragSlot !== slotIdx && inventory[slotIdx] !== ITEM_NONE) {
+    if (dragSlot !== slotIdx && inventory[slotIdx] !== ITEM_NONE && !itemFlySlots.has(slotIdx)) {
       _drawItemInSlot(ctx, inventory[slotIdx], sx, sy, INV_SLOT);
     }
   }
@@ -3607,6 +3649,17 @@ function drawFlyAnims() {
       ctx.restore();
     }
   }
+  for (const f of itemFlyAnims) {
+    const t = Math.min(1, (performance.now() - f.startMs) / f.dur);
+    const cx2 = f.sx + (f.tx - f.sx) * t;
+    const cy2 = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 100;
+    const sz = INV_SLOT * 0.75;
+    ctx.save();
+    ctx.globalAlpha = t > 0.85 ? 1 - (t - 0.85) / 0.15 * 0.5 : 1;
+    _drawItemInSlot(ctx, f.item, cx2 - sz / 2, cy2 - sz / 2, sz);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
 }
 
 }
@@ -3789,12 +3842,12 @@ function draw() {
   drawReplayControls();
   drawGraveyardPanels();
   drawResignConfirm();
-  drawFlyAnims();
   drawShieldPops();
   drawExplosion();
   drawVoidDeath();
   drawPromoDialog();
   drawShopDialog();
+  drawFlyAnims();
   // Logo — topmost layer
   const logoEl = spriteImages["logo"];
   if (logoEl && logoEl.width > 0) {
@@ -3981,7 +4034,11 @@ function handleShopClick(cx, cy) {
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
     if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !merchantSold[i]) {
       gold -= price;
-      addToInventory(shopOffers[i]);
+      const _mSlot = findInventorySlot();
+      if (_mSlot < 0) { draw(); return; }
+      const [_mx, _my] = xy(merchantIdx);
+      _pendingShopFlies.push({ item: shopOffers[i], sx: MARGIN + _mx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + _my * TILE + TILE / 2, slotIdx: _mSlot });
+      startItemFlyAnim(shopOffers[i], cardX + cardW / 2, cardsY + cardH / 2, _mSlot);
       merchantSold[i] = true;
       draw();
       return;
@@ -4051,7 +4108,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
-        if (board[i] === CHEST) addToInventory(_randomItem());
+        if (board[i] === CHEST) { const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         board[i] = board[clonerSelected]; sides[i] = W; health[i] = health[clonerSelected]; elements[i] = elements[clonerSelected];
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
@@ -4090,7 +4147,7 @@ function handleTeleporterClick(cx, cy) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
       if (board[i] === NONE || board[i] === CHEST) {
-        if (board[i] === CHEST) addToInventory(_randomItem());
+        if (board[i] === CHEST) { const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
@@ -4313,6 +4370,7 @@ function handleBoardClick(cx, cy) {
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
       // Hold captured pieces stationary at their squares during the attacker's travel
       for (const c of _pendingCaptureAnims) {
+        if (c.type === 'item') continue; // chest items have no visible piece to hold
         const [bx, by] = xy(c.boardIdx);
         const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
         wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
@@ -4331,7 +4389,7 @@ function handleBoardClick(cx, cy) {
         } else { draw(); }
       };
       startAnim(wAnimPieces, 0, () => {
-        for (const c of _pendingCaptureAnims) startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+        for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
         _pendingCaptureAnims = [];
         checkWhiteKingAlive();
         if (gameOver) { takeReplaySnapshot(); draw(); return; }
