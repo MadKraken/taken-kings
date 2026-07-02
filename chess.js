@@ -1,4 +1,4 @@
-﻿const VERSION = "367";
+﻿const VERSION = "373";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -629,6 +629,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
       elements: [...elements], fireSquares: [...fireSquares],
       nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
+      chestSpaces: [...chestSpaces],
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
       exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
@@ -821,6 +822,7 @@ function _playReplayTransition(snapIdx, onDone) {
     fireSquares = ev.fireSquares ? new Set(ev.fireSquares) : new Set();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
+    if (ev.chestSpaces) chestSpaces = new Set(ev.chestSpaces);
     if (ev.pendingShopFlies) {
       for (const f of ev.pendingShopFlies) startItemFlyAnim(f.item, f.sx, f.sy, f.slotIdx, true);
     }
@@ -985,7 +987,7 @@ function placeWave(row, wave) {
 let firstMoveMade = false;
 let resignConfirm = false;
 let _rewinderSaveOffer = false; // true when King dies but player has a Rewinder
-let _blackKingCheckmateGlow = false; // persists from Black checkmate through White's full turn
+let _blackKingsInCheckmate = new Set(); // indices of Black Kings currently in checkmate; persists through White's full turn
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
@@ -1024,7 +1026,7 @@ function initBoard() {
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
-  _blackKingCheckmateGlow = false;
+  _blackKingsInCheckmate.clear();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -1376,7 +1378,9 @@ function pseudoMoves(x, y) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
+        moves.push(idx(nx, ny));
+      }
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
       if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
@@ -1513,18 +1517,17 @@ function isAttacked(tx, ty, bySide) {
 }
 
 function legalMoves(x, y) {
-  // White has no check restriction â€" all pseudo-legal moves are legal.
-  // Black still can't move into check (keeps AI from hanging its own king).
+  // White has no check restriction — all pseudo-legal moves are legal.
+  // For Black: only the King itself is restricted from moving into check.
+  // Non-King Black pieces move freely; checkmate is handled separately in _isSingleKingCheckmated.
   const s = side(x, y);
   if (s === W) return pseudoMoves(x, y);
+  const movingPiece = board[idx(x, y)];
+  if (movingPiece !== KING) return pseudoMoves(x, y);
+  // Black King: filter out moves that land on a square attacked by White
   return pseudoMoves(x, y).filter(m => {
-    const savBoard = [...board], savSides = [...sides];
-    board[m] = board[idx(x,y)]; sides[m] = sides[idx(x,y)];
-    board[idx(x,y)] = NONE; sides[idx(x,y)] = 0;
-    const [kx, ky] = findKing(B);
-    const inCheck = kx >= 0 && isAttacked(kx, ky, B);
-    board.splice(0,64,...savBoard); sides.splice(0,64,...savSides);
-    return !inCheck;
+    const [nx, ny] = xy(m);
+    return !isAttacked(nx, ny, B);
   });
 }
 
@@ -2256,37 +2259,34 @@ function allPseudoMovesForSide(s) {
   return moves;
 }
 
-function _squareAttackedByWhite(sq) {
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W || board[i] === NONE) continue;
-    const [wx, wy] = xy(i);
-    if (legalMoves(wx, wy).indexOf(sq) >= 0) return true;
-  }
-  return false;
-}
-
-function _isBlackKingCheckmated() {
-  const bki = board.findIndex((p, i) => p === KING && sides[i] === B);
-  if (bki < 0) return false;
-  if (!_squareAttackedByWhite(bki)) return false; // King is not even in check
-  // Try every Black pseudo-legal move; if any leaves the King safe, not checkmate
+// Check if a specific Black King (by board index ki) is in checkmate:
+// it must be in check AND no Black move leaves it safe.
+function _isSingleKingCheckmated(ki) {
+  const [kx, ky] = xy(ki);
+  if (!isAttacked(kx, ky, B)) return false; // King is not in check
   const blackMoves = allLegalMovesForSide(B);
   for (const [from, to] of blackMoves) {
     const st = saveState();
     board[to] = board[from]; sides[to] = sides[from]; board[from] = NONE; sides[from] = 0;
-    const bki2 = board.findIndex((p, i) => p === KING && sides[i] === B);
-    const safe = bki2 >= 0 && !_squareAttackedByWhite(bki2);
+    const newPos = (from === ki) ? to : ki;
+    const [nkx, nky] = xy(newPos);
+    const safe = board[newPos] === KING && sides[newPos] === B && !isAttacked(nkx, nky, B);
     restoreState(st);
     if (safe) return false;
   }
-  return true; // In check, no move escapes — checkmate
+  return true;
 }
 
 function aiBestMove() {
   // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
   let moves = allLegalMovesForSide(B);
-  if (moves.length === 0) { _blackKingCheckmateGlow = true; moves = allPseudoMovesForSide(B); }
-  else if (_isBlackKingCheckmated()) { _blackKingCheckmateGlow = true; }
+  _blackKingsInCheckmate.clear();
+  if (moves.length === 0) {
+    for (let i = 0; i < 64; i++) { if (board[i] === KING && sides[i] === B) _blackKingsInCheckmate.add(i); }
+    moves = allPseudoMovesForSide(B);
+  } else {
+    for (let i = 0; i < 64; i++) { if (board[i] === KING && sides[i] === B && _isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i); }
+  }
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => board[to] === KING && sides[to] === W);
@@ -2371,12 +2371,14 @@ function isCheckmated(s) {
 
 function aiPlay() {
   if (gameOver || turn !== B) return;
-  _blackKingCheckmateGlow = false;
+  _blackKingsInCheckmate.clear();
   aiThinking = true;
   draw();
   setTimeout(() => {
     const move = aiBestMove();
     if (move) {
+      // If a checkmated King is the one making the forced move, follow it to its new index
+      if (_blackKingsInCheckmate.has(move[0])) { _blackKingsInCheckmate.delete(move[0]); _blackKingsInCheckmate.add(move[1]); }
       lastActingSide = B;
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
@@ -3076,7 +3078,7 @@ for (let i = 0; i < 64; i++) {
   const _waveOv = waveAnim?.drawAt?.get(i);
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
   const _drawY = _waveOv ? _waveOv.cy : MARGIN + y * TILE;
-  if (board[i] === KING && sides[i] === B && !_animToSet.has(i) && (_blackKingCheckmateGlow || legalMoves(x, y).length === 0)) {
+  if (board[i] === KING && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
     ctx.save();
     ctx.shadowColor = '#ff1111';
     ctx.shadowBlur = 28;
@@ -3266,7 +3268,7 @@ if (anim && anim.pieces) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
-      const _isCheckmatedBK = ap.piece === KING && ap.side === B && (_blackKingCheckmateGlow || (ap.toIdx >= 0 && legalMoves(...xy(ap.toIdx)).length === 0));
+      const _isCheckmatedBK = ap.piece === KING && ap.side === B && (_blackKingsInCheckmate.has(ap.fromIdx ?? -1) || _blackKingsInCheckmate.has(ap.toIdx ?? -1));
       if (_isCheckmatedBK) {
         ctx.save(); ctx.shadowColor = '#ff1111'; ctx.shadowBlur = 28;
         _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
