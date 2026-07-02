@@ -1,4 +1,4 @@
-﻿const VERSION = "359";
+﻿const VERSION = "363";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -747,7 +747,7 @@ function takeReplaySnapshot() {
     inventory: [...inventory],
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
-    spawnCount, leapCount, shiftCountdown, merchantIdx,
+    spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
     elements: [...elements], fireSquares: [...fireSquares],
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
@@ -764,6 +764,7 @@ function applyReplaySnapshot(snap) {
   playerDead = {...snap.playerDead}; enemyDead = {...snap.enemyDead};
   spawnCount = snap.spawnCount; leapCount = snap.leapCount;
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
+  if (snap.merchantQueued !== undefined) { merchantQueued = snap.merchantQueued; merchantQueuedCol = snap.merchantQueuedCol ?? -1; }
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   fireSquares = snap.fireSquares ? new Set(snap.fireSquares) : new Set();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
@@ -983,6 +984,7 @@ function placeWave(row, wave) {
 
 let firstMoveMade = false;
 let resignConfirm = false;
+let _rewinderSaveOffer = false; // true when King dies but player has a Rewinder
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
@@ -1020,6 +1022,7 @@ function initBoard() {
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   chestSpaces = new Set();
+  _rewinderSaveOffer = false;
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -1423,7 +1426,7 @@ function shovePiece(srcI, dx, dy) {
   if (board[destI] !== NONE || destI === merchantIdx) return; // occupied: blocked
   if (isVoidSpace(destI)) {
     const p = board[srcI], s = sides[srcI];
-    if (p === KING && s === W) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+    if (p === KING && s === W) _triggerGameOver(`Game Over! Score: ${score}`);
     if (s === B) { if (p === KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
     clearSquare(srcI);
     return;
@@ -1791,10 +1794,10 @@ function teamLeap() {
       const ni = idx(x, y - 1);
       if (isVoidSpace(ni)) {
         // piece falls into void — don't place it
-        if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+        if (board[i] === KING) _triggerGameOver(`Game Over! Score: ${score}`);
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); addToInventory(_randomItem()); }
+        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i];
       }
     } else {
@@ -1814,6 +1817,8 @@ function teamLeap() {
   firstMoveMade = true;
   recordPosition();
   startAnim(leapAnimPieces, 0, () => {
+    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
+    _pendingCaptureAnims = [];
     if (_leapVoidDeath) {
       startVoidDeath(_leapVoidDeath.cx, _leapVoidDeath.cy, _leapVoidDeath.piece, _leapVoidDeath.side, applySpacesAfterAdvance);
     } else {
@@ -1833,6 +1838,18 @@ function canManualPitchShift() {
     if (sides[idx(x, 7)] === W) return false;
   }
   return true;
+}
+
+function _placeChestBonus(col) {
+  const ci = idx(col, 0);
+  if (sides[ci] === W) {
+    // White piece already here — award item immediately instead of placing chest
+    const _ci = _randomItem();
+    const [_cx, _cy] = xy(ci);
+    startItemFlyAnim(_ci, MARGIN + _cx * TILE + TILE / 2, BOARD_Y + MARGIN + _cy * TILE + TILE / 2, findInventorySlot());
+  } else {
+    chestSpaces.add(ci);
+  }
 }
 
 function fieldAdvance(playerTriggered = false) {
@@ -1951,7 +1968,7 @@ function fieldAdvance(playerTriggered = false) {
       set(w.x, 0, w.piece, B);
     }
     for (const b of nextBonuses) {
-      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
+      if (b.type === 'chest') _placeChestBonus(b.col);
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   } else if (merchantEntersThisWave) {
@@ -1966,7 +1983,7 @@ function fieldAdvance(playerTriggered = false) {
     }
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
-      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
+      if (b.type === 'chest') _placeChestBonus(b.col);
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   } else {
@@ -1979,7 +1996,7 @@ function fieldAdvance(playerTriggered = false) {
     }
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
-      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
+      if (b.type === 'chest') _placeChestBonus(b.col);
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   }
@@ -2047,7 +2064,9 @@ function saveState() {
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length,
     health: [...health], shiftCountdown,
-    elements: [...elements]
+    elements: [...elements],
+    chestSpaces: new Set(chestSpaces),
+    merchantIdx, merchantQueued, merchantQueuedCol
   };
 }
 
@@ -2064,6 +2083,9 @@ function restoreState(st) {
   health.splice(0, 64, ...st.health);
   shiftCountdown = st.shiftCountdown;
   if (st.elements) elements.splice(0, 64, ...st.elements); else elements.fill(0);
+  if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
+  if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
+  if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
 }
 
 function canSimulateLeap() {
@@ -2239,6 +2261,8 @@ function aiBestMove() {
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => board[to] === KING && sides[to] === W);
+  const kingIdx = board.findIndex((p, i) => p === KING && sides[i] === W);
+  console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
   if (moves.length === 0) return null;
   let bestScore = Infinity;
@@ -2328,9 +2352,9 @@ function aiPlay() {
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
       const mToCX = MARGIN + mtx * TILE, mToCY = BOARD_Y + MARGIN + mty * TILE;
       const _aiFinish = () => {
-        if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-        else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-        if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
+        if (countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
+        else if (isCheckmated(W)) _triggerGameOver(`Checkmate! Score: ${score}`);
+        if (gameOver || _rewinderSaveOffer) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
         neutralPlay(() => {
           merchantPlay(() => {
             applyRiverFlow(() => {
@@ -2411,9 +2435,9 @@ function aiPlay() {
       }
     } else {
       // No Black moves — pass through to neutralPlay/merchantPlay
-      if (countKings(W) === 0) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
-      else if (isCheckmated(W)) { gameOver = true; gameMsg = `Checkmate! Score: ${score}`; }
-      if (gameOver) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
+      if (countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
+      else if (isCheckmated(W)) _triggerGameOver(`Checkmate! Score: ${score}`);
+      if (gameOver || _rewinderSaveOffer) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
       neutralPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
@@ -2452,12 +2476,23 @@ function countKings(s) {
   return n;
 }
 
+function _hasRewinder() {
+  return inventory.indexOf(ITEM_REWINDER) >= 0 && _turnStartSnapIndices.length >= 2;
+}
+
+function _triggerGameOver(msg) {
+  if (_hasRewinder()) {
+    _rewinderSaveOffer = true;
+    gameMsg = msg;
+  } else {
+    gameOver = true;
+    gameMsg = msg;
+  }
+}
+
 function checkWhiteKingAlive() {
   const [kx, ky] = findKing(W);
-  if (kx < 0) {
-    gameOver = true;
-    gameMsg = `Game Over! Score: ${score}`;
-  }
+  if (kx < 0) _triggerGameOver(`Game Over! Score: ${score}`);
 }
 
 function canItemAffectPiece(item, i) {
@@ -2484,7 +2519,7 @@ function detonateBomb(centerI, _alreadyDetonated) {
     const i = idx(nx, ny);
     if (itemSpaces[i] === ITEM_BOMB && !detonated.has(i)) chainBombs.push(i);
     if (board[i] !== NONE) {
-      if (sides[i] === W && board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
+      if (sides[i] === W && board[i] === KING) _triggerGameOver(`Game Over! Score: ${score}`);
       if (sides[i] === B && board[i] === KING) score++;
       if (sides[i] === B) gold += GOLD_VALUE[board[i]] ?? 0;
       startCaptureAnim(board[i], sides[i], MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2);
@@ -2613,7 +2648,7 @@ function merchantPlay(onDone) {
 // After a Team Advance, apply item spaces.
 function applySpacesAfterAdvance() {
   checkWhiteKingAlive();
-  if (gameOver) { takeReplaySnapshot(); draw(); return; }
+  if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
   _applySpacesAfterAdvancePass2();
 }
 
@@ -3653,6 +3688,68 @@ if (!gameOver && resignConfirm) {
 
 }
 
+function drawRewinderSaveOffer() {
+if (!_rewinderSaveOffer) return;
+const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+ctx.fillStyle = "rgba(0,0,0,0.55)";
+ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
+ctx.textAlign = "center"; ctx.textBaseline = "middle";
+ctx.font = "82px Canterbury";
+ctx.fillStyle = "#cc1111";
+ctx.fillText("Your King", boardCX, boardCY - 80);
+ctx.fillText("Has Fallen", boardCX, boardCY);
+const btnW = 180, btnH = 70, gap = 40;
+const labelY = boardCY + 90;
+ctx.font = "52px Canterbury";
+ctx.fillStyle = "#ffffff";
+ctx.fillText("Use Rewinder?", boardCX, labelY);
+const yesX = boardCX - gap / 2 - btnW;
+const noX  = boardCX + gap / 2;
+const btnY = labelY + 46;
+ctx.fillStyle = "#2a6e3f";
+ctx.beginPath(); ctx.roundRect(yesX, btnY, btnW, btnH, 8); ctx.fill();
+ctx.fillStyle = "#7a1a1a";
+ctx.beginPath(); ctx.roundRect(noX, btnY, btnW, btnH, 8); ctx.fill();
+ctx.fillStyle = "#fff"; ctx.font = "52px Canterbury";
+ctx.fillText("YES", yesX + btnW / 2, btnY + btnH / 2);
+ctx.fillText("NO",  noX  + btnW / 2, btnY + btnH / 2);
+ctx.textBaseline = "alphabetic";
+}
+
+function handleRewinderSaveOfferClick(cx, cy) {
+if (!_rewinderSaveOffer) return;
+const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+const btnW = 180, btnH = 70, gap = 40;
+const labelY = boardCY + 90;
+const btnY = labelY + 46;
+const yesX = boardCX - gap / 2 - btnW;
+const noX  = boardCX + gap / 2;
+if (cy >= btnY && cy <= btnY + btnH) {
+  if (cx >= yesX && cx <= yesX + btnW) {
+    // Use Rewinder
+    _rewinderSaveOffer = false;
+    console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
+    if (_turnStartSnapIndices.length < 1) { gameOver = true; draw(); return; }
+    const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
+    console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
+    const targetSnap = replaySnapshots[targetIdx];
+    replaySnapshots.splice(targetIdx + 1);
+    _replayTransitions.splice(targetIdx + 1);
+    applyReplaySnapshot(targetSnap);
+    const rSlot = inventory.indexOf(ITEM_REWINDER);
+    if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
+    turn = W; aiThinking = false; selected = -1; validMoves = [];
+    shopMode = false; gameOver = false; gameMsg = "";
+    draw();
+  } else if (cx >= noX && cx <= noX + btnW) {
+    // Accept game over
+    _rewinderSaveOffer = false;
+    gameOver = true;
+    draw();
+  }
+}
+}
+
 function drawFlyAnims() {
 // Flying pieces (captured pieces arcing to graveyard)
 {
@@ -3871,6 +3968,7 @@ function draw() {
   drawReplayControls();
   drawGraveyardPanels();
   drawResignConfirm();
+  drawRewinderSaveOffer();
   drawShieldPops();
   drawExplosion();
   drawVoidDeath();
@@ -4121,7 +4219,7 @@ function handleBombClick(cx, cy) {
   if (inB(gx, gy)) {
     detonateBomb(idx(gx, gy));
     recordPosition();
-    if (gameOver) { takeReplaySnapshot(); draw(); } else { draw(); }
+    if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); } else { draw(); }
   } else { draw(); }
 }
 
@@ -4186,7 +4284,7 @@ function handleTeleporterClick(cx, cy) {
         const _tPiece = board[i] || _tPiece0, _tHlth = health[i] || _tHlth0;
         const _tFinish = () => {
           checkWhiteKingAlive();
-          if (gameOver) { takeReplaySnapshot(); draw(); return; }
+          if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
           if (fromSpace) {
             processNextQueuedItem();
           } else {
@@ -4421,7 +4519,7 @@ function handleBoardClick(cx, cy) {
         for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
         _pendingCaptureAnims = [];
         checkWhiteKingAlive();
-        if (gameOver) { takeReplaySnapshot(); draw(); return; }
+        if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
         const _afterWave = () => {
           if (isVoidSpace(clickedDest) && _wPiece0 !== NONE) {
             const [vx, vy] = xy(clickedDest);
@@ -4452,6 +4550,7 @@ canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
   if (replayMode) { handleReplayClick(cx, cy); return; }
+  if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
   if (anim || _conquestGifActive) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
