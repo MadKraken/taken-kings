@@ -1,4 +1,4 @@
-﻿const VERSION = "343";
+﻿const VERSION = "344";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -141,7 +141,7 @@ let replayAutoTimer = null;
 let _replayAnimBuffer = [];
 let _replayTransitions = [];
 const ITEM_NONE = 0;
-const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_SHIELD = 7, ITEM_BOMB = 8;
+const ITEM_TELEPORTER = 4, ITEM_CLONER = 6, ITEM_SHIELD = 7, ITEM_BOMB = 8, ITEM_REWINDER = 9;
 const ITEM_PROMOTER_BASE = 100; // encoded: base + to (ROOK/KNIGHT/BISHOP/QUEEN/9=wild); always promotes a Pawn
 const PROMOTER_WILD = 9;
 function isPromoterItem(item) { return item >= ITEM_PROMOTER_BASE && item < 200; }
@@ -174,7 +174,7 @@ function elementizerItemName(item) {
 }
 
 const ITEM_NAMES = {
-  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb"
+  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -239,6 +239,7 @@ const ITEM_PRICES = {
   [ITEM_CLONER]: 45,
   [ITEM_SHIELD]: 20,
   [ITEM_BOMB]: 35,
+  [ITEM_REWINDER]: 50,
   [ITEM_ELEM_FIRE]: 25, [ITEM_ELEM_WATER]: 25, [ITEM_ELEM_EARTH]: 25, [ITEM_ELEM_AIR]: 25,
   [ITEM_ELEM_MYSTERY]: 20,
 };
@@ -664,12 +665,13 @@ function _randomElementalizerItem() {
 }
 
 function _randomShopItem() {
-  const r = randInt(6);
+  const r = randInt(7);
   if (r === 0) return _randomPromoterItem(); // includes Wild via pool
   if (r === 1) return ITEM_TELEPORTER;
   if (r === 2) return ITEM_CLONER;
   if (r === 3) return ITEM_SHIELD;
   if (r === 4) return ITEM_BOMB;
+  if (r === 5) return ITEM_REWINDER;
   return _randomElementalizerItem();
 }
 
@@ -930,6 +932,7 @@ let resignConfirm = false;
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
+let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
 let timedMode = false;
 let timedModeSecs = 60;
 const TIMED_PRESETS = [15, 30, 60, 120, 300];
@@ -951,6 +954,7 @@ function initBoard() {
   spawnCount = 1;
   leapCount = 0;
   stopWhiteTurnTimer();
+  _turnStartSnapIndices = [];
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
@@ -1027,6 +1031,7 @@ function rollSetup() {
 function startGame() {
   gamePhase = 'playing';
   takeReplaySnapshot();
+  _turnStartSnapIndices.push(replaySnapshots.length - 1);
   draw();
   startWhiteTurnTimer();
 }
@@ -2258,6 +2263,7 @@ function aiPlay() {
               turn = W;
               aiThinking = false;
               takeReplaySnapshot();
+              _turnStartSnapIndices.push(replaySnapshots.length - 1);
               draw();
               startWhiteTurnTimer();
             });
@@ -2331,6 +2337,7 @@ function aiPlay() {
             turn = W;
             aiThinking = false;
             takeReplaySnapshot();
+            _turnStartSnapIndices.push(replaySnapshots.length - 1);
             draw();
             startWhiteTurnTimer();
           });
@@ -3194,6 +3201,17 @@ function _drawItemInSlot(ctx, item, sx, sy, size) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
     ctx.fillText(letter, cx2, cy2);
+    ctx.shadowBlur = 0;
+  } else if (item === ITEM_REWINDER) {
+    const cx2 = sx + size / 2, cy2 = sy + size / 2, r = (size - pad * 2) / 2;
+    ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#6a2a9a'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.floor(size * 0.52)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
+    ctx.fillText('↺', cx2, cy2 + size * 0.04);
     ctx.shadowBlur = 0;
   } else {
     const img = spriteImages[ITEM_SPRITE_KEYS[item]];
@@ -4148,6 +4166,20 @@ function handleInventoryClick(cx, cy) {
       };
       if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterTo = promoterTo(item); };
       if (isElementalizerItem(item)) modeMap[item] = () => { elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false); };
+      // Rewinder: immediate action, no board-interaction mode
+      if (item === ITEM_REWINDER) {
+        if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
+        _turnStartSnapIndices.pop(); // discard current turn start
+        const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
+        replaySnapshots.splice(targetIdx + 1);
+        _replayTransitions.splice(targetIdx + 1);
+        applyReplaySnapshot(replaySnapshots[targetIdx]);
+        turn = W; aiThinking = false; selected = -1; validMoves = [];
+        removeFromInventory(slotIdx);
+        stopWhiteTurnTimer(); startWhiteTurnTimer();
+        draw();
+        return true;
+      }
       if (modeMap[item]) {
         modeMap[item]();
         selected = -1; validMoves = [];
