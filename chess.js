@@ -1,4 +1,4 @@
-﻿const VERSION = "336";
+﻿const VERSION = "339";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -928,6 +928,13 @@ let firstMoveMade = false;
 let resignConfirm = false;
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
+let timedMode = false;
+let timedModeSecs = 60;
+const TIMED_PRESETS = [15, 30, 60, 120, 300];
+let _timerEnd = 0;        // Date.now() when White's turn expires (0 = not running)
+let _timerDisplay = 0;    // last computed seconds-left value; frozen when timer stops
+let _timerRafId = null;   // rAF handle for clock-redraw loop
+let _timerTimeoutId = null;
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -941,6 +948,7 @@ function initBoard() {
   board.fill(NONE); sides.fill(0);
   spawnCount = 1;
   leapCount = 0;
+  stopWhiteTurnTimer();
   selected = -1; validMoves = []; turn = W;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
@@ -1018,6 +1026,40 @@ function startGame() {
   gamePhase = 'playing';
   takeReplaySnapshot();
   draw();
+  startWhiteTurnTimer();
+}
+
+function startWhiteTurnTimer() {
+  if (!timedMode || gameOver || replayMode) return;
+  stopWhiteTurnTimer();
+  _timerDisplay = timedModeSecs;
+  _timerEnd = Date.now() + timedModeSecs * 1000;
+  // rAF loop keeps the clock display updating every frame
+  const tick = () => {
+    if (!_timerRafId) return;
+    if (!anim && flyAnims.length === 0) draw();
+    _timerRafId = requestAnimationFrame(tick);
+  };
+  _timerRafId = requestAnimationFrame(tick);
+  // setTimeout fires when time is up; retries if blocked by animation/shop
+  const onExpire = () => {
+    if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
+    if (anim || isItemActive() || shopMode) {
+      _timerTimeoutId = setTimeout(onExpire, 100);
+      return;
+    }
+    stopWhiteTurnTimer();
+    selected = -1; validMoves = [];
+    endWhiteTurn();
+  };
+  _timerTimeoutId = setTimeout(onExpire, timedModeSecs * 1000);
+}
+
+function stopWhiteTurnTimer() {
+  if (_timerEnd > 0) _timerDisplay = Math.max(0, Math.ceil((_timerEnd - Date.now()) / 1000));
+  if (_timerRafId) { cancelAnimationFrame(_timerRafId); _timerRafId = null; }
+  if (_timerTimeoutId) { clearTimeout(_timerTimeoutId); _timerTimeoutId = null; }
+  _timerEnd = 0;
 }
 
 const CONQUEST_FPS = 30;
@@ -1564,6 +1606,7 @@ function makeMove(fromI, toI, visual = false) {
 }
 
 function endWhiteTurn() {
+  stopWhiteTurnTimer();
   lastActingSide = W;
   shiftCountdown--;
   if (shiftCountdown <= 0) {
@@ -2214,6 +2257,7 @@ function aiPlay() {
               aiThinking = false;
               takeReplaySnapshot();
               draw();
+              startWhiteTurnTimer();
             });
           });
         });
@@ -2286,6 +2330,7 @@ function aiPlay() {
             aiThinking = false;
             takeReplaySnapshot();
             draw();
+            startWhiteTurnTimer();
           });
         });
       });
@@ -2538,6 +2583,20 @@ if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
   ctx.fillStyle = "#fff";
   ctx.fillText(`Taken Kings: ${score}`, MARGIN + BOARD_PX, LOGO_H * 0.35);
   ctx.fillText(`Gold: ${gold}`, MARGIN + BOARD_PX, LOGO_H * 0.70);
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+}
+
+// Turn timer — centered above the board
+if (timedMode && !replayMode && gamePhase === 'playing' && !gameOver) {
+  const secsLeft = _timerEnd > 0 ? Math.max(0, Math.ceil((_timerEnd - Date.now()) / 1000)) : _timerDisplay;
+  if (_timerEnd > 0) _timerDisplay = secsLeft; // keep display in sync while running
+  const urgent = secsLeft <= 10;
+  const mins = Math.floor(secsLeft / 60), secs = secsLeft % 60;
+  const timeStr = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : `${secs}s`;
+  ctx.font = "52px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 8; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = urgent ? "#ff4444" : "#ffffff";
+  ctx.fillText(`⏱ ${timeStr}`, MARGIN + BOARD_PX / 2, LOGO_H / 2);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 }
 }
@@ -3225,6 +3284,49 @@ if (!gameOver && isItemActive()) {
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.fillStyle = _conquestFramesReady ? "#fff" : "#888"; ctx.font = "42px Canterbury";
   ctx.fillText(_conquestFramesReady ? "▶ Go!" : "Loading...", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+
+  // Timed Mode toggle row
+  {
+    const tmY = COUNTDOWN_Y;
+    const tmCX = MARGIN + BOARD_PX / 2; // center divider: labels right-align here, chips left-align here
+    const chipW = 86, chipH = 44, chipGap = 10;
+    ctx.font = "42px Canterbury"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Timed:", tmCX - 12, tmY);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    const offX = tmCX + 12, onX = tmCX + 12 + chipW + chipGap;
+    // OFF chip
+    ctx.fillStyle = !timedMode ? "#4a3a7a" : "#333";
+    ctx.beginPath(); ctx.roundRect(offX, tmY - chipH / 2, chipW, chipH, 6); ctx.fill();
+    ctx.fillStyle = !timedMode ? "#fff" : "#888"; ctx.font = "34px Canterbury"; ctx.textAlign = "center";
+    ctx.fillText("OFF", offX + chipW / 2, tmY);
+    // ON chip
+    ctx.fillStyle = timedMode ? "#2a6e3f" : "#333";
+    ctx.beginPath(); ctx.roundRect(onX, tmY - chipH / 2, chipW, chipH, 6); ctx.fill();
+    ctx.fillStyle = timedMode ? "#fff" : "#888";
+    ctx.fillText("ON", onX + chipW / 2, tmY);
+
+    if (timedMode) {
+      const psY = tmY + 62;
+      ctx.font = "42px Canterbury"; ctx.textAlign = "right";
+      ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+      ctx.fillStyle = "#fff";
+      ctx.fillText("Seconds per turn:", tmCX - 12, psY);
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      const labels = ["15s", "30s", "1m", "2m", "5m"];
+      const pW = chipW, pGap = chipGap;
+      let px = tmCX + 12;
+      TIMED_PRESETS.forEach((secs, i) => {
+        const active = timedModeSecs === secs;
+        ctx.fillStyle = active ? "#1a5a8a" : "#333";
+        ctx.beginPath(); ctx.roundRect(px, psY - 22, pW, 44, 6); ctx.fill();
+        ctx.fillStyle = active ? "#fff" : "#888"; ctx.textAlign = "center";
+        ctx.fillText(labels[i], px + pW / 2, psY);
+        px += pW + pGap;
+      });
+    }
+  }
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
   if (!replayMode) {
@@ -4208,6 +4310,22 @@ canvas.addEventListener("click", (e) => {
         cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
     if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
         cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { if (_conquestFramesReady) playConquestGif(); return; }
+    // Timed mode toggle
+    {
+      const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
+      const tmCX = MARGIN + BOARD_PX / 2;
+      const offX = tmCX + 12, onX = tmCX + 12 + chipW + chipGap;
+      if (cx >= offX && cx <= offX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { timedMode = false; draw(); return; }
+      if (cx >= onX && cx <= onX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { timedMode = true; draw(); return; }
+      if (timedMode) {
+        const psY = tmY + 62, pW = chipW, pGap = chipGap;
+        let px = tmCX + 12;
+        for (let i = 0; i < TIMED_PRESETS.length; i++) {
+          if (cx >= px && cx <= px + pW && cy >= psY - 22 && cy <= psY + 22) { timedModeSecs = TIMED_PRESETS[i]; draw(); return; }
+          px += pW + pGap;
+        }
+      }
+    }
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
