@@ -1,4 +1,4 @@
-﻿const VERSION = "342";
+﻿const VERSION = "343";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -616,14 +616,15 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
     });
   }
-  anim = { pieces, boardDy, startMs: performance.now(), onDone, exitRow: exitRow || null };
+  const animDur = _miniReplayActive ? ANIM_MS * 2 : ANIM_MS;
+  anim = { pieces, boardDy, startMs: performance.now(), dur: animDur, onDone, exitRow: exitRow || null };
   requestAnimationFrame(_animTick);
 }
 
 function _animTick() {
   if (!anim) return;
   draw();
-  if ((performance.now() - anim.startMs) < ANIM_MS) {
+  if ((performance.now() - anim.startMs) < anim.dur) {
     requestAnimationFrame(_animTick);
   } else {
     const done = anim.onDone;
@@ -2555,7 +2556,7 @@ const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
 const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 8, w: 160, h: 60 };
-const LAST_MOVE_BTN = { x: RESIGN_BTN.x + RESIGN_BTN.w + 16, y: RESIGN_BTN.y, w: 220, h: 60 };
+const LAST_MOVE_BTN = { x: RESIGN_BTN.x + RESIGN_BTN.w + 16, y: RESIGN_BTN.y, w: 280, h: 60 };
 const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
 const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
@@ -3722,7 +3723,7 @@ if (shopMode) {
 }
 
 function draw() {
-  const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / ANIM_MS)) : 1;
+  const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
     const s = new Set();
     if (anim && anim.pieces) {
