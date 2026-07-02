@@ -1,4 +1,4 @@
-﻿const VERSION = "358";
+﻿const VERSION = "359";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -185,6 +185,7 @@ let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let _pendingDrag = null; // { slot, startX, startY, startMs } — promoted to dragSlot after threshold
 let playerDead = {}, enemyDead = {}, flyAnims = [], itemFlyAnims = [], itemFlySlots = new Set();
+let chestSpaces = new Set(); // floor-marker chests — coexist with any board piece
 let shieldPops = [];
 let warnFlashRunning = false;
 let voidPulseRunning = false;
@@ -742,7 +743,7 @@ function takeReplaySnapshot() {
   replaySnapshots.push({
     board: [...board], sides: [...sides], health: [...health],
     specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
-    itemSpaces: [...itemSpaces],
+    itemSpaces: [...itemSpaces], chestSpaces: [...chestSpaces],
     inventory: [...inventory],
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
@@ -765,6 +766,7 @@ function applyReplaySnapshot(snap) {
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   fireSquares = snap.fireSquares ? new Set(snap.fireSquares) : new Set();
+  chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
   if (snap.nextBonuses) nextBonuses = snap.nextBonuses.map(b => ({...b}));
 }
@@ -1017,6 +1019,7 @@ function initBoard() {
   _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
+  chestSpaces = new Set();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   pendingItemQueue = [];
@@ -1249,7 +1252,7 @@ function slidingMoves(moves, x, y, dirs, s) {
       if (s !== W && fireSquares.has(ni)) { moves.push(ni); break; }
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
-      if (piece(nx, ny) !== NONE && piece(nx, ny) !== CHEST) break;
+      if (piece(nx, ny) !== NONE) break;
       nx += dx; ny += dy;
     }
   }
@@ -1308,7 +1311,7 @@ function pseudoMoves(x, y) {
       const dir = -1;
       const fwd = piece(x, y + dir);
       const fwdI = idx(x, y + dir);
-      if (inB(x, y + dir) && (fwd === NONE || fwd === CHEST) && fwdI !== merchantIdx && !isVoidSpace(fwdI) && !isBlockSpace(fwdI)) {
+      if (inB(x, y + dir) && fwd === NONE && fwdI !== merchantIdx && !isVoidSpace(fwdI) && !isBlockSpace(fwdI)) {
         moves.push(fwdI);
         if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE && !isVoidSpace(idx(x, y - 2)) && !isBlockSpace(idx(x, y - 2))) moves.push(idx(x, y - 2));
       }
@@ -1329,7 +1332,7 @@ function pseudoMoves(x, y) {
       }
       for (const dx of [-1, 1]) {
         const nx = x + dx, ny = y + dir;
-        if (inB(nx, ny) && side(nx, ny) === e && piece(nx, ny) !== CHEST && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+        if (inB(nx, ny) && side(nx, ny) === e && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
       }
     }
   } else if (p === CHECKERS) {
@@ -1345,7 +1348,7 @@ function pseudoMoves(x, y) {
       if (inB(nx, ny) && inB(jx, jy)) {
         const midI = idx(nx, ny), landI = idx(jx, jy);
         const midSide = sides[midI];
-        if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE && board[midI] !== CHEST
+        if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
             && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
           moves.push(landI);
       }
@@ -1614,20 +1617,20 @@ function makeMove(fromI, toI, visual = false) {
     return;
   }
 
-  if (visual && captured !== NONE && captured !== CHEST && capSide !== s) {
+  if (visual && captured !== NONE && capSide !== s) {
     _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
-  if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
+  if (captured !== NONE && sides[toI] !== s && s === W) {
     gold += GOLD_VALUE[captured] ?? 0;
   }
   if (captured === KING && sides[toI] !== s && s === W) {
     score += 1;
   }
-  if (captured === CHEST && s === W) {
+  if (chestSpaces.has(toI) && s === W) {
+    chestSpaces.delete(toI);
     const _chestItem = _randomItem();
     if (visual) {
-      // Delay addToInventory until animation ends so item doesn't pop into slot early
       _pendingCaptureAnims.push({ type: 'item', item: _chestItem, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
     } else {
       addToInventory(_chestItem);
@@ -1758,7 +1761,7 @@ function teamLeap() {
     if (!canMoveUp[i]) continue;
     const [ax2, ay2] = xy(i);
     const ni2 = idx(ax2, ay2 - 1);
-    if (sides[ni2] === B && board[ni2] !== NONE && board[ni2] !== CHEST) {
+    if (sides[ni2] === B && board[ni2] !== NONE) {
       const capPiece = board[ni2];
       startCaptureAnim(capPiece, B, MARGIN + ax2 * TILE + TILE / 2, BOARD_Y + MARGIN + (ay2 - 1) * TILE + TILE / 2);
     }
@@ -1791,7 +1794,7 @@ function teamLeap() {
         if (board[i] === KING) { gameOver = true; gameMsg = `Game Over! Score: ${score}`; }
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (newBoard[ni] === CHEST) addToInventory(_randomItem());
+        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); addToInventory(_randomItem()); }
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i];
       }
     } else {
@@ -1919,6 +1922,14 @@ function fieldAdvance(playerTriggered = false) {
   }
   fireSquares = newFireSquares;
 
+  // Shift chest spaces down one row, drop any that fall off row 7
+  const newChestSpaces = new Set();
+  for (const ci of chestSpaces) {
+    const [cx2, cy2] = xy(ci);
+    if (cy2 < 7) newChestSpaces.add(idx(cx2, cy2 + 1));
+  }
+  chestSpaces = newChestSpaces;
+
   spawnCount++;
   leapCount++;
 
@@ -1936,10 +1947,11 @@ function fieldAdvance(playerTriggered = false) {
     // Normal wave placement this advance
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      if (chestSpaces.has(idx(w.x, 0))) continue;
       set(w.x, 0, w.piece, B);
     }
     for (const b of nextBonuses) {
-      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   } else if (merchantEntersThisWave) {
@@ -1949,11 +1961,12 @@ function fieldAdvance(playerTriggered = false) {
     merchantSold = [false, false, false];
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
+      if (chestSpaces.has(idx(w.x, 0))) continue;
       set(w.x, 0, w.piece, B);
     }
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
-      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   } else {
@@ -1961,11 +1974,12 @@ function fieldAdvance(playerTriggered = false) {
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (idx(w.x, 0) === merchantIdx) continue;
+      if (chestSpaces.has(idx(w.x, 0))) continue;
       set(w.x, 0, w.piece, B);
     }
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
-      if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+      if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
       if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
     }
   }
@@ -2100,9 +2114,9 @@ function simulateLeap() {
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
   spawnCount++;
-  placeWave(0, nextWave);
+  for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnBonuses(idx(w.x, 0)); }
   for (const b of nextBonuses) {
-    if (b.type === 'chest') set(b.col, 0, CHEST, 0);
+    if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
     if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); }
   }
   nextWave = generateWave(spawnCount + 1);
@@ -2427,7 +2441,7 @@ function adjacentClonerDests(i) {
   const dests = [];
   for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
     const nx = x + dx, ny = y + dy;
-    if (inB(nx, ny) && (board[idx(nx, ny)] === NONE || board[idx(nx, ny)] === CHEST)) dests.push(idx(nx, ny));
+    if (inB(nx, ny) && board[idx(nx, ny)] === NONE) dests.push(idx(nx, ny));
   }
   return dests;
 }
@@ -2842,6 +2856,17 @@ for (const m of validMoves) {
   ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
 }
 
+// Chest spaces (floor markers — rendered before pieces so pieces show on top)
+{ const _cp = 6;
+  for (const ci of chestSpaces) {
+    const [cx2, cy2] = xy(ci);
+    const img = spriteImages["chest"];
+    if (img && img.complete) {
+      ctx.drawImage(img, MARGIN + cx2 * TILE + _cp, MARGIN + cy2 * TILE + _cp, TILE - _cp * 2, TILE - _cp * 2);
+    }
+  }
+}
+
 // Item spaces (rendered before pieces so pieces show on top)
 for (let i = 0; i < 64; i++) {
   if (itemSpaces[i] === ITEM_NONE) continue;
@@ -2986,14 +3011,7 @@ for (let i = 0; i < 64; i++) {
   const _waveOv = waveAnim?.drawAt?.get(i);
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
   const _drawY = _waveOv ? _waveOv.cy : MARGIN + y * TILE;
-  if (board[i] === CHEST) {
-    const img = spriteImages["chest"];
-    if (img && img.complete) {
-      ctx.drawImage(img, _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
-    }
-  } else {
-    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
-  }
+  _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
   // Elemental badges: labeled dots at bottom of tile
   if (elements[i]) {
     const present = ELEM_ALL.filter(e => elements[i] & e);
@@ -4119,7 +4137,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
-        if (board[i] === CHEST) { const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         board[i] = board[clonerSelected]; sides[i] = W; health[i] = health[clonerSelected]; elements[i] = elements[clonerSelected];
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
@@ -4157,8 +4175,8 @@ function handleTeleporterClick(cx, cy) {
     if (teleporterSelected < 0) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
-      if (board[i] === NONE || board[i] === CHEST) {
-        if (board[i] === CHEST) { const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+      if (board[i] === NONE) {
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
@@ -4549,7 +4567,7 @@ function _aiScoreMove(fromI, toI) {
     score += _aiItemVal(itemSpaces[toI]) * 3;
   }
   // Land on chest
-  if (board[toI] === CHEST) {
+  if (chestSpaces.has(toI)) {
     score += 600;
   }
   // Positional: mild bonus for advancing non-King pieces toward enemies
@@ -4670,10 +4688,10 @@ function _aiTeamAdvanceScore() {
       if (sides[toI] === B && board[toI] !== NONE) {
         score += _aiPieceVal(board[toI]) * 10;
         canAnyMove = true;
-      } else if (board[toI] === NONE || board[toI] === CHEST) {
+      } else if (board[toI] === NONE) {
         canAnyMove = true;
         if (itemSpaces[toI] !== ITEM_NONE) score += _aiItemVal(itemSpaces[toI]) * 3;
-        if (board[toI] === CHEST) score += 600;
+        if (chestSpaces.has(toI)) score += 600;
       }
       if (sides[toI] === N) score += (_aiPieceVal(board[toI]) + 200) * 10;
       // Hard stop: don't leap King into void or check
@@ -4784,7 +4802,7 @@ function _aiUseTeleporter(slot) {
   // Find best empty destination (score by proximity to enemies)
   let bestDestI = -1, bestDestScore = -Infinity;
   for (let i = 0; i < 64; i++) {
-    if (board[i] !== NONE && board[i] !== CHEST) continue;
+    if (board[i] !== NONE || chestSpaces.has(i)) continue;
     if (i === merchantIdx) continue;
     const [tx, ty] = xy(i);
     let s = (7 - ty) * 20;
@@ -4985,7 +5003,7 @@ function _aiCompleteActiveMode() {
     } else {
       let bestDestI = -1, bestDestScore = -Infinity;
       for (let i = 0; i < 64; i++) {
-        if (board[i] !== NONE && board[i] !== CHEST) continue;
+        if (board[i] !== NONE || chestSpaces.has(i)) continue;
         if (i === merchantIdx || isVoidSpace(i)) continue;
         const [,ty] = xy(i); let s = (7-ty)*20; if (itemSpaces[i] !== ITEM_NONE) s += 300;
         if (s > bestDestScore) { bestDestScore = s; bestDestI = i; }
