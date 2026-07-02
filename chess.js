@@ -1,4 +1,4 @@
-﻿const VERSION = "388";
+﻿const VERSION = "392";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -921,7 +921,9 @@ function generateWave(count) {
     const c = randInt(8);
     if (!cols.includes(c)) cols.push(c);
   }
-  const wave = [{x: cols[0], piece: KING}];
+  // 1% chance the guaranteed King is a Checkers King (must land on a dark square)
+  const kingPiece = (randInt(100) === 0 && isDarkSquare(cols[0], 0)) ? CHECKERS_KING : KING;
+  const wave = [{x: cols[0], piece: kingPiece}];
   for (let i = 1; i < cols.length; i++) {
     let piece = _randomEnemyPiece();
     // Checkers pieces must spawn on dark squares (pieces enter at row 0)
@@ -1108,19 +1110,22 @@ function rollSetup() {
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
 
-  // Place guaranteed King at a random position in rows 6–7
+  // Place guaranteed King at a random position in rows 6–7; 1% chance it's a Checkers King
   const positions = [];
   for (let y = 6; y <= 7; y++) for (let x = 0; x < 8; x++) positions.push({ x, y });
   shuffle(positions);
-  set(positions[0].x, positions[0].y, KING, W);
+  const startKing = (randInt(100) === 0 && isDarkSquare(positions[0].x, positions[0].y)) ? CHECKERS_KING : KING;
+  set(positions[0].x, positions[0].y, startKing, W);
   _rollSpawnBonuses(idx(positions[0].x, positions[0].y), 64);
 
-  // Queen is guaranteed; remaining 14 slots are random (Pawn/Rook/Knight/Bishop only)
+  // Queen is guaranteed; remaining 14 slots random
   set(positions[1].x, positions[1].y, QUEEN, W);
   _rollSpawnBonuses(idx(positions[1].x, positions[1].y), 64);
   for (let i = 2; i < 16; i++) {
-    const r = randInt(15);
-    let p = r < 8 ? PAWN : r < 10 ? ROOK : r < 12 ? KNIGHT : r < 14 ? BISHOP : CHECKERS;
+    let p;
+    if (randInt(100) === 0) p = CHECKERS;
+    else if (randInt(2) === 0) p = PAWN;
+    else { const r = randInt(3); p = r === 0 ? ROOK : r === 1 ? BISHOP : KNIGHT; }
     // Checkers pieces must start on dark squares
     if (p === CHECKERS && !isDarkSquare(positions[i].x, positions[i].y)) p = PAWN;
     set(positions[i].x, positions[i].y, p, W);
