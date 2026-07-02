@@ -1,4 +1,4 @@
-﻿const VERSION = "375";
+﻿const VERSION = "377";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -150,6 +150,7 @@ let sides = new Array(64).fill(0);
 let health = new Array(64).fill(1);
 let selected = -1;
 let validMoves = [];
+let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
@@ -2321,6 +2322,12 @@ function aiBestMove() {
   const kingIdx = board.findIndex((p, i) => p === KING && sides[i] === W);
   console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
+  // Also compelled: Checkers jumps whose chain will reach a White King
+  const chainKingAttacks = moves.filter(([from, to]) => {
+    if (board[from] !== CHECKERS || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
+    const st = saveState(); makeMove(from, to); const ok = _checkersChainCanKillKing(to); restoreState(st); return ok;
+  });
+  if (chainKingAttacks.length > 0) return chainKingAttacks[randInt(chainKingAttacks.length)];
   if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
@@ -2484,13 +2491,14 @@ function aiPlay() {
           _pendingCaptureAnims = [];
           checkFireDeath(move[1]);
           recordPosition();
+          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, _aiFinish);
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
-            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiFinish);
+            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiAfterLand);
           } else if (_aiWaveData) {
             _aiWaveData.shoveParams.toI = move[1];
-            startWaveAnim(_aiWaveData.squares, _aiWaveData.shoveParams, _aiFinish);
-          } else { _aiFinish(); }
+            startWaveAnim(_aiWaveData.squares, _aiWaveData.shoveParams, _aiAfterLand);
+          } else { _aiAfterLand(); }
         });
       }
     } else {
@@ -2518,6 +2526,73 @@ function aiPlay() {
 function findKing(s) {
   for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === s) return xy(i);
   return [-1, -1];
+}
+
+function _checkersChainCanKillKing(i) {
+  const jumps = _checkersJumpsFrom(i);
+  for (const jd of jumps) {
+    const [ix, iy] = xy(i), [jx, jy] = xy(jd);
+    const midI = idx((ix + jx) >> 1, (iy + jy) >> 1);
+    if (board[midI] === KING) return true;
+    const st = saveState();
+    makeMove(i, jd);
+    const result = _checkersChainCanKillKing(jd);
+    restoreState(st);
+    if (result) return true;
+  }
+  return false;
+}
+
+function _checkersJumpsFrom(i) {
+  const [x, y] = xy(i);
+  const s = sides[i];
+  if (!s) return [];
+  const dir = s === W ? -1 : 1;
+  const jumps = [];
+  for (const dx of [-1, 1]) {
+    const nx = x + dx, ny = y + dir;
+    const jx = x + 2 * dx, jy = y + 2 * dir;
+    if (inB(nx, ny) && inB(jx, jy)) {
+      const midI = idx(nx, ny), landI = idx(jx, jy);
+      const midSide = sides[midI];
+      if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
+          && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+        jumps.push(landI);
+    }
+  }
+  return jumps;
+}
+
+function _aiTryChainJump(landI, wasJump, onDone) {
+  if (!wasJump || board[landI] !== CHECKERS || sides[landI] !== B) { onDone(); return; }
+  const chainJumps = _checkersJumpsFrom(landI);
+  if (chainJumps.length === 0) { onDone(); return; }
+  // Pick the chain jump that captures the highest-value piece
+  let nextTo = chainJumps[0], bestCapVal = -1;
+  const [lx, ly] = xy(landI);
+  for (const jd of chainJumps) {
+    const [jx, jy] = xy(jd);
+    const capVal = PIECE_VALUE[board[idx((lx + jx) >> 1, (ly + jy) >> 1)]] ?? 0;
+    if (capVal > bestCapVal) { bestCapVal = capVal; nextTo = jd; }
+  }
+  const [fx, fy] = xy(landI), [tx, ty] = xy(nextTo);
+  const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
+  const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
+  makeMove(landI, nextTo, true);
+  const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
+  const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, arc: TILE * 1.5 }];
+  for (const c of _pendingCaptureAnims) {
+    if (c.type === 'item') continue;
+    const [bx, by] = xy(c.boardIdx);
+    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth });
+  }
+  startAnim(chainAnims, 0, () => {
+    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
+    _pendingCaptureAnims = [];
+    checkFireDeath(nextTo);
+    recordPosition();
+    _aiTryChainJump(nextTo, true, onDone);
+  });
 }
 
 function adjacentClonerDests(i) {
@@ -4584,6 +4659,17 @@ function handleBoardClick(cx, cy) {
         pendingCaptures = {};
         checkWhiteKingAlive();
         if (!gameOver) {
+          if (_isCheckersJump && board[movedTo] === CHECKERS && sides[movedTo] === W) {
+            const chainJumps = _checkersJumpsFrom(movedTo);
+            if (chainJumps.length > 0) {
+              _checkersChainIdx = movedTo;
+              selected = movedTo;
+              validMoves = chainJumps;
+              draw();
+              return;
+            }
+          }
+          _checkersChainIdx = -1;
           const item = itemSpaces[movedTo];
           if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
             const done = activateItemSpace(item, movedTo);
@@ -4612,11 +4698,11 @@ function handleBoardClick(cx, cy) {
       });
       return;
     } else if (clicked === selected) {
-      selected = -1; validMoves = [];
+      if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
-      selected = clicked; validMoves = legalMoves(gx, gy);
+      if (_checkersChainIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
     } else {
-      selected = -1; validMoves = [];
+      if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     }
   }
   draw();
