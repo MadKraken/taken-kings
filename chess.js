@@ -1,4 +1,4 @@
-﻿const VERSION = "386";
+﻿const VERSION = "388";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -923,10 +923,15 @@ function generateWave(count) {
   }
   const wave = [{x: cols[0], piece: KING}];
   for (let i = 1; i < cols.length; i++) {
-    wave.push({x: cols[i], piece: _randomEnemyPiece()});
+    let piece = _randomEnemyPiece();
+    // Checkers pieces must spawn on dark squares (pieces enter at row 0)
+    if ((piece === CHECKERS || piece === CHECKERS_KING) && !isDarkSquare(cols[i], 0)) piece = PAWN;
+    wave.push({x: cols[i], piece});
   }
   return wave;
 }
+
+function isDarkSquare(x, y) { return (x + y) % 2 === 1; }
 
 // Each open column has a 1-in-5 chance of becoming a bonus.
 function generateRowBonuses(wave) {
@@ -951,7 +956,10 @@ function generateRowBonuses(wave) {
     } else if (type === 'block') {
       bonuses.push({ type: 'block', col: x });
     } else if (type === 'neutral') {
-      bonuses.push({ type: 'neutral', col: x, piece: _randomSetupPiece() });
+      let neutralPiece = _randomSetupPiece();
+      // Checkers pieces must spawn on dark squares (neutrals enter at row 0)
+      if ((neutralPiece === CHECKERS || neutralPiece === CHECKERS_KING) && !isDarkSquare(x, 0)) neutralPiece = PAWN;
+      bonuses.push({ type: 'neutral', col: x, piece: neutralPiece });
     }
   }
   return bonuses;
@@ -1111,8 +1119,10 @@ function rollSetup() {
   set(positions[1].x, positions[1].y, QUEEN, W);
   _rollSpawnBonuses(idx(positions[1].x, positions[1].y), 64);
   for (let i = 2; i < 16; i++) {
-    const r = randInt(14);
-    const p = r < 8 ? PAWN : r < 10 ? ROOK : r < 12 ? KNIGHT : BISHOP;
+    const r = randInt(15);
+    let p = r < 8 ? PAWN : r < 10 ? ROOK : r < 12 ? KNIGHT : r < 14 ? BISHOP : CHECKERS;
+    // Checkers pieces must start on dark squares
+    if (p === CHECKERS && !isDarkSquare(positions[i].x, positions[i].y)) p = PAWN;
     set(positions[i].x, positions[i].y, p, W);
     _rollSpawnBonuses(idx(positions[i].x, positions[i].y), 64);
   }
@@ -1393,6 +1403,12 @@ function pseudoMoves(x, y) {
           moves.push(landI);
       }
     }
+    // Air bent-path slide: (x, y-2) reachable via two zigzag forward steps
+    if (isAir) {
+      const bentI = inB(x, y + 2*dir) ? idx(x, y + 2*dir) : -1;
+      if (bentI >= 0 && board[bentI] === NONE && !isVoidSpace(bentI) && !isBlockSpace(bentI))
+        moves.push(bentI);
+    }
   } else if (p === CHECKERS_KING) {
     const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
@@ -1409,6 +1425,17 @@ function pseudoMoves(x, y) {
         else if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
             && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
           moves.push(landI);
+      }
+    }
+    // Air bent-path slides: squares reachable via two diagonal steps in different directions
+    if (isAir) {
+      for (const [bdx, bdy] of [[2,0],[-2,0],[0,2],[0,-2]]) {
+        const bx = x + bdx, by = y + bdy;
+        if (inB(bx, by)) {
+          const bentI = idx(bx, by);
+          if (board[bentI] === NONE && !isVoidSpace(bentI) && !isBlockSpace(bentI))
+            moves.push(bentI);
+        }
       }
     }
   } else if (p === KNIGHT) {
@@ -1648,7 +1675,7 @@ function makeMove(fromI, toI, visual = false) {
   const capSide = sides[toI];
 
   // Checkers / Checkers King jump: leaps 2 diagonally — remove the piece in the middle square (only if it's an enemy, not an Air slide)
-  if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2) {
+  if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2 && Math.abs(ty - fy) === 2) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
     if (capPiece !== NONE && capSide !== s && capSide !== N) {
@@ -4673,7 +4700,7 @@ function handleBoardClick(cx, cy) {
       }
       const _fromElems = elements[selected], _fromPiece = board[selected], _fromSide = sides[selected], _fromI = selected;
       const _waveData = (_fromElems & ELEM_WATER) ? _waveLineSqFromMove(selected, clickedDest, _fromPiece) : null;
-      const _midI2 = (Math.abs(ptx - pfx) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
+      const _midI2 = (Math.abs(ptx - pfx) === 2 && Math.abs(pty - pfy) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
       const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
       makeMove(selected, clicked, true);
