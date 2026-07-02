@@ -1,4 +1,4 @@
-﻿const VERSION = "374";
+﻿const VERSION = "375";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2523,7 +2523,7 @@ function findKing(s) {
 function adjacentClonerDests(i) {
   const [x, y] = xy(i);
   const dests = [];
-  for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+  for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]]) {
     const nx = x + dx, ny = y + dy;
     if (inB(nx, ny) && board[idx(nx, ny)] === NONE) dests.push(idx(nx, ny));
   }
