@@ -1819,7 +1819,20 @@ function trashActiveItem() {
 }
 
 function canTeamLeap() {
-  return !(gameOver || turn !== W || aiThinking);
+  if (gameOver || turn !== W || aiThinking) return false;
+  for (let x = 0; x < 8; x++) {
+    const occupied = new Set();
+    for (let y = 0; y < 8; y++) {
+      if (sides[idx(x, y)] === B || sides[idx(x, y)] === N) occupied.add(y);
+      if (merchantIdx >= 0 && idx(x, y) === merchantIdx) occupied.add(y);
+    }
+    for (let y = 0; y < 8; y++) {
+      if (sides[idx(x, y)] !== W) continue;
+      if (y === 0 || occupied.has(y - 1) || isBlockSpace(idx(x, y - 1))) { occupied.add(y); }
+      else { return true; }
+    }
+  }
+  return false;
 }
 
 function teamLeap() {
