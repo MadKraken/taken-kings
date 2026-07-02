@@ -1,4 +1,4 @@
-﻿const VERSION = "339";
+﻿const VERSION = "341";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -928,6 +928,7 @@ let firstMoveMade = false;
 let resignConfirm = false;
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
+let _miniReplayActive = false;
 let timedMode = false;
 let timedModeSecs = 60;
 const TIMED_PRESETS = [15, 30, 60, 120, 300];
@@ -2554,6 +2555,7 @@ const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
 const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 8, w: 160, h: 60 };
+const LAST_MOVE_BTN = { x: RESIGN_BTN.x + RESIGN_BTN.w + 16, y: RESIGN_BTN.y, w: 220, h: 60 };
 const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
 const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
@@ -3329,7 +3331,7 @@ if (!gameOver && isItemActive()) {
   }
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
-  if (!replayMode) {
+  if (!replayMode || _miniReplayActive) {
     // Team Leap
     const canLeap = canTeamLeap();
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
@@ -3356,7 +3358,7 @@ if (!gameOver && isItemActive()) {
     ctx.fillText("Field Advance", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
   }
   // Auto-advance countdown — flush under inventory in replay, normal position otherwise
-  const cdY = replayMode ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
+  const cdY = (replayMode && !_miniReplayActive) ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
   ctx.font = "42px Canterbury";
   ctx.textAlign = "center";
   const cdText = `Field Auto-Advances In ${shiftCountdown} ${shiftCountdown === 1 ? 'Turn' : 'Turns'}`;
@@ -3365,7 +3367,7 @@ if (!gameOver && isItemActive()) {
   ctx.fillText(cdText, MARGIN + BOARD_PX / 2, cdY);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
-  if (!replayMode) {
+  if (!replayMode || _miniReplayActive) {
     // Resign
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#993333";
@@ -3385,6 +3387,18 @@ if (!gameOver && isItemActive()) {
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#fff";
     ctx.fillText(autoPlay ? "⏸ Auto" : "▶ Auto", AUTO_BTN.x + AUTO_BTN.w / 2, AUTO_BTN.y + AUTO_BTN.h / 2);
+
+    // Last Move replay button
+    if (replaySnapshots.length > 1) {
+      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+      ctx.fillStyle = "#1a4a7a";
+      ctx.beginPath();
+      ctx.roundRect(LAST_MOVE_BTN.x, LAST_MOVE_BTN.y, LAST_MOVE_BTN.w, LAST_MOVE_BTN.h, 6);
+      ctx.fill();
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.fillStyle = "#fff";
+      ctx.fillText("⟳ Last Move", LAST_MOVE_BTN.x + LAST_MOVE_BTN.w / 2, LAST_MOVE_BTN.y + LAST_MOVE_BTN.h / 2);
+    }
   }
 }
 }
@@ -3421,7 +3435,7 @@ if (gameOver && !replayMode) {
 }
 
 function drawReplayControls() {
-if (replayMode) {
+if (replayMode && !_miniReplayActive) {
   // Replay nav controls — placed right below the countdown label
   const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 90;
   const ctrlW = BOARD_PX, ctrlH = 130;
@@ -4296,6 +4310,16 @@ canvas.addEventListener("click", (e) => {
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
       cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { resignConfirm = true; draw(); return; }
+  if (!gameOver && replaySnapshots.length > 1 &&
+      cx >= LAST_MOVE_BTN.x && cx <= LAST_MOVE_BTN.x + LAST_MOVE_BTN.w &&
+      cy >= LAST_MOVE_BTN.y && cy <= LAST_MOVE_BTN.y + LAST_MOVE_BTN.h) {
+    replayMode = true; _miniReplayActive = true;
+    _playReplayTransition(replaySnapshots.length - 1, () => {
+      replayMode = false; _miniReplayActive = false;
+      draw();
+    });
+    return;
+  }
   if (!gameOver && cx >= AUTO_BTN.x && cx <= AUTO_BTN.x + AUTO_BTN.w &&
       cy >= AUTO_BTN.y && cy <= AUTO_BTN.y + AUTO_BTN.h) {
     autoPlay = !autoPlay; draw();
