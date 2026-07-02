@@ -1,4 +1,4 @@
-﻿const VERSION = "341";
+﻿const VERSION = "342";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3472,7 +3472,7 @@ if (replayMode && !_miniReplayActive) {
 
 function drawGraveyardPanels() {
 // Graveyard panels (hidden while using an item or in replay mode)
-if (!isItemActive() && gamePhase === 'playing' && !replayMode) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+if (!isItemActive() && gamePhase === 'playing' && (!replayMode || _miniReplayActive)) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
   ctx.font = "42px Canterbury";
   ctx.textAlign = "center"; ctx.textBaseline = "bottom";
