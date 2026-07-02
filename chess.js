@@ -1,4 +1,4 @@
-﻿const VERSION = "335";
+﻿const VERSION = "336";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1023,10 +1023,11 @@ function startGame() {
 const CONQUEST_FPS = 30;
 const CONQUEST_FRAME_COUNT = 94;
 const _conquestFrames = new Array(CONQUEST_FRAME_COUNT).fill(null).map(() => new Image());
+let _conquestFramesReady = false;
 
 // Preload all frames sequentially at startup so they're ready before the player hits Go
 (function _preloadConquest(i) {
-  if (i >= CONQUEST_FRAME_COUNT) return;
+  if (i >= CONQUEST_FRAME_COUNT) { _conquestFramesReady = true; draw(); return; }
   _conquestFrames[i].onload = () => _preloadConquest(i + 1);
   _conquestFrames[i].onerror = () => _preloadConquest(i + 1);
   _conquestFrames[i].src = `animations/begin conquest frames/Begin Conquest -${i}.png`;
@@ -3219,11 +3220,11 @@ if (!gameOver && isItemActive()) {
   ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
   ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-  ctx.fillStyle = "#2a6e3f";
+  ctx.fillStyle = _conquestFramesReady ? "#2a6e3f" : "#3a3a3a";
   ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
-  ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+  ctx.fillStyle = _conquestFramesReady ? "#fff" : "#888"; ctx.font = "42px Canterbury";
+  ctx.fillText(_conquestFramesReady ? "▶ Go!" : "Loading...", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
   if (!replayMode) {
@@ -4206,7 +4207,7 @@ canvas.addEventListener("click", (e) => {
     if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
         cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
     if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playConquestGif(); return; }
+        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { if (_conquestFramesReady) playConquestGif(); return; }
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
