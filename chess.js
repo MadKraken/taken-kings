@@ -1,4 +1,4 @@
-﻿const VERSION = "377";
+﻿const VERSION = "386";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -20,11 +20,11 @@ const MOVE_COLOR = "rgba(100,180,60,0.55)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
 
-const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7, CHECKERS = 8;
+const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7, CHECKERS = 8, CHECKERS_KING = 9;
 const W = 1, B = 2, N = 3;
-const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS];
+const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS, CHECKERS_KING];
 
-const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king", [CHECKERS]: "checkers" };
+const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king", [CHECKERS]: "checkers", [CHECKERS_KING]: "checkers_king" };
 const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
@@ -63,7 +63,7 @@ function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh) {
 
 // _drawTinted for callers that pass an img directly (fly/void-death animations).
 function _drawTinted(ctx, img, side, dx, dy, dw, dh) {
-  for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
+  for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS, CHECKERS_KING]) {
     if (spriteImages[`${W}_${p}`] === img) { _drawPieceSprite(ctx, side, p, dx, dy, dw, dh); return; }
   }
   // Fallback: bake inline (should rarely happen)
@@ -116,6 +116,7 @@ function loadSprites() {
     [`${W}_${BISHOP}`,  'sprites/bishop_1.png'],
     [`${W}_${ROOK}`,    'sprites/rook.png'],
     [`${W}_${CHECKERS}`, `sprites/w_${PIECE_NAMES[CHECKERS]}.svg`],
+    [`${W}_${CHECKERS_KING}`, `sprites/w_${PIECE_NAMES[CHECKERS_KING]}.svg`],
     ['chest',           'sprites/chest.svg'],
     ['item_teleporter', 'sprites/item_teleporter.svg'],
     ['item_cloner',     'sprites/item_cloner.svg'],
@@ -248,7 +249,7 @@ let merchantQueued = false; // merchant is waiting in the fog preview row
 let merchantQueuedCol = -1; // which column he'll enter from
 let merchantPendingRespawn = false; // pushed into void mid-play; re-queue on next field advance
 let elements = new Array(64).fill(0); // elemental bitmask per board square, travels with piece
-let fireSquares = new Set(); // indices of squares on fire (White-placed, kills non-White pieces)
+let fireSquares = new Map(); // Map<boardIdx, side> — squares on fire; kills pieces of the opposing side
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
@@ -281,8 +282,8 @@ let aiThinking = false;
 
 const AI_DEPTH = 3;
 const HINT_DEPTH = 5;
-const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150 };
-const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2 };
+const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
+const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 4 };
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 const ANIM_MS = 180;
@@ -416,7 +417,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
       inventory: [...inventory],
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
-      fireSquares: [...fireSquares],
+      fireSquares: [...fireSquares.entries()],
       nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       squares: [...squares],
       shoveParams: {...shoveParams},
@@ -796,7 +797,7 @@ function applyReplaySnapshot(snap) {
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
   if (snap.merchantQueued !== undefined) { merchantQueued = snap.merchantQueued; merchantQueuedCol = snap.merchantQueuedCol ?? -1; }
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
-  fireSquares = snap.fireSquares ? new Set(snap.fireSquares) : new Set();
+  fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
   if (snap.nextBonuses) nextBonuses = snap.nextBonuses.map(b => ({...b}));
@@ -848,7 +849,7 @@ function _playReplayTransition(snapIdx, onDone) {
     merchantIdx = ev.merchantIdx ?? -1;
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
-    fireSquares = ev.fireSquares ? new Set(ev.fireSquares) : new Set();
+    fireSquares = ev.fireSquares ? new Map(ev.fireSquares) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
     if (ev.chestSpaces) chestSpaces = new Set(ev.chestSpaces);
@@ -1062,7 +1063,7 @@ function initBoard() {
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
-  elements.fill(0); fireSquares = new Set(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
+  elements.fill(0); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
@@ -1222,7 +1223,7 @@ function neutralMovesFor(i) {
   if (p === PAWN) {
     if (canLand(x, y - 1)) moves.push(idx(x, y - 1));
     if (canLand(x, y + 1)) moves.push(idx(x, y + 1));
-  } else if (p === CHECKERS) {
+  } else if (p === CHECKERS || p === CHECKERS_KING) {
     for (const [dx, dy] of [[1,1],[1,-1],[-1,1],[-1,-1]])
       if (canLand(x + dx, y + dy)) moves.push(idx(x + dx, y + dy));
   } else if (p === KNIGHT) {
@@ -1285,7 +1286,7 @@ function slidingMoves(moves, x, y, dirs, s) {
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break;
       // Enemy fire: non-White sliders can land here but can't slide through
-      if (s !== W && fireSquares.has(ni)) { moves.push(ni); break; }
+      if (fireSquares.has(ni) && fireSquares.get(ni) !== s) { moves.push(ni); break; }
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
       if (piece(nx, ny) !== NONE) break;
@@ -1373,18 +1374,39 @@ function pseudoMoves(x, y) {
     }
   } else if (p === CHECKERS) {
     const dir = s === W ? -1 : 1;
-    const e = enemy(s);
+    const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const dx of [-1, 1]) {
       const nx = x + dx, ny = y + dir;
-      // Step move: forward diagonal to empty square
-      if (inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny)))
-        moves.push(idx(nx, ny));
-      // Jump capture: leap over an enemy to the empty square beyond
+      const ni = inB(nx, ny) ? idx(nx, ny) : -1;
+      if (ni >= 0 && board[ni] === NONE && !isVoidSpace(ni) && !isBlockSpace(ni))
+        moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dir;
-      if (inB(nx, ny) && inB(jx, jy)) {
-        const midI = idx(nx, ny), landI = idx(jx, jy);
+      if (ni >= 0 && inB(jx, jy)) {
+        const midI = ni, landI = idx(jx, jy);
         const midSide = sides[midI];
-        if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
+        // Air: 2-square slide passing over any mid-square (occupied or not)
+        if (isAir && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+          moves.push(landI);
+        // Jump capture: mid-square has an enemy (only when not already added by Air slide)
+        else if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
+            && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+          moves.push(landI);
+      }
+    }
+  } else if (p === CHECKERS_KING) {
+    const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
+    for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
+      const nx = x + dx, ny = y + dy;
+      const ni = inB(nx, ny) ? idx(nx, ny) : -1;
+      if (ni >= 0 && (board[ni] === NONE || sides[ni] === N) && !isVoidSpace(ni) && !isBlockSpace(ni))
+        moves.push(ni);
+      const jx = x + 2*dx, jy = y + 2*dy;
+      if (ni >= 0 && inB(jx, jy)) {
+        const midI = ni, landI = idx(jx, jy);
+        const midSide = sides[midI];
+        if (isAir && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
+          moves.push(landI);
+        else if (midSide !== 0 && midSide !== s && midSide !== N && board[midI] !== NONE
             && board[landI] === NONE && !isVoidSpace(landI) && !isBlockSpace(landI))
           moves.push(landI);
       }
@@ -1423,14 +1445,15 @@ function pseudoMoves(x, y) {
 
 // --- Elemental effect functions ---
 
-function applyFireTrail(fromI, toI, p) {
-  fireSquares.add(fromI);
-  if (p === KNIGHT) return;
+function applyFireTrail(fromI, toI, p, s) {
+  fireSquares.set(fromI, s);
+  // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
+  if (p === KNIGHT || p === CHECKERS || p === CHECKERS_KING) return;
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
   let cx = fx + dx, cy = fy + dy;
-  while (cx !== tx || cy !== ty) { fireSquares.add(idx(cx, cy)); cx += dx; cy += dy; }
+  while (cx !== tx || cy !== ty) { fireSquares.set(idx(cx, cy), s); cx += dx; cy += dy; }
 }
 
 function _shoveMerchant(dx, dy) {
@@ -1461,8 +1484,8 @@ function shovePiece(srcI, dx, dy) {
   if (board[destI] !== NONE || destI === merchantIdx) return; // occupied: blocked
   if (isVoidSpace(destI)) {
     const p = board[srcI], s = sides[srcI];
-    if (p === KING && s === W) _triggerGameOver(`Game Over! Score: ${score}`);
-    if (s === B) { if (p === KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
+    if ((p === KING || p === CHECKERS_KING) && s === W) _triggerGameOver(`Game Over! Score: ${score}`);
+    if (s === B) { if (p === KING || p === CHECKERS_KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
     clearSquare(srcI);
     return;
   }
@@ -1502,9 +1525,9 @@ function applyWaterWave(fromI, toI, p) {
 
 function checkFireDeath(i) {
   if (!fireSquares.has(i)) return false;
-  if (sides[i] === W || board[i] === NONE) return false; // fire doesn't hurt White
+  if (board[i] === NONE || fireSquares.get(i) === sides[i]) return false; // own-faction fire is harmless
   const p = board[i], s = sides[i];
-  if (p === KING && s === B) score++;
+  if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
   clearSquare(i);
   return true;
@@ -1624,16 +1647,16 @@ function makeMove(fromI, toI, visual = false) {
   const captured = board[toI];
   const capSide = sides[toI];
 
-  // Checkers jump: leaps 2 diagonally — remove the piece in the middle square
-  if (p === CHECKERS && Math.abs(tx - fx) === 2) {
+  // Checkers / Checkers King jump: leaps 2 diagonally — remove the piece in the middle square (only if it's an enemy, not an Air slide)
+  if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
-    if (visual && capPiece !== NONE) {
-      _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
+    if (capPiece !== NONE && capSide !== s && capSide !== N) {
+      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
+      if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
+      if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) score += 1;
+      board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
     }
-    if (capSide !== s && s === W) gold += GOLD_VALUE[capPiece] ?? 0;
-    if (capPiece === KING && capSide !== s && s === W) score += 1;
-    board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
   }
 
   // Bounce: white piece attacks neutral â€" attacker bounces back, neutral is hired
@@ -1661,7 +1684,7 @@ function makeMove(fromI, toI, visual = false) {
   if (captured !== NONE && sides[toI] !== s && s === W) {
     gold += GOLD_VALUE[captured] ?? 0;
   }
-  if (captured === KING && sides[toI] !== s && s === W) {
+  if ((captured === KING || captured === CHECKERS_KING) && sides[toI] !== s && s === W) {
     score += 1;
   }
   if (chestSpaces.has(toI) && s === W) {
@@ -1707,7 +1730,10 @@ function makeMove(fromI, toI, visual = false) {
 
   const movedHealth = health[fromI];
   const movedElem = elements[fromI];
-  board[toI] = p; sides[toI] = s; health[toI] = movedHealth;
+  let landPiece = p;
+  // Checkers Man promotion: reaches the far back rank
+  if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
+  board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
   elements[toI] = movedElem; // carry elements to destination (overwrites captured piece's elements)
   clearSquare(fromI);
 
@@ -1828,7 +1854,7 @@ function teamLeap() {
       const ni = idx(x, y - 1);
       if (isVoidSpace(ni)) {
         // piece falls into void — don't place it
-        if (board[i] === KING) _triggerGameOver(`Game Over! Score: ${score}`);
+        if (board[i] === KING || board[i] === CHECKERS_KING) _triggerGameOver(`Game Over! Score: ${score}`);
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
@@ -1914,7 +1940,7 @@ function fieldAdvance(playerTriggered = false) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
     if (y === 7) { // destroyed
-      if (playerTriggered && sides[i] === B && board[i] === KING) score++;
+      if (playerTriggered && sides[i] === B && (board[i] === KING || board[i] === CHECKERS_KING)) score++;
       startCaptureAnim(board[i], sides[i], MARGIN + x * TILE + TILE / 2, BOARD_Y + MARGIN + y * TILE + TILE / 2);
       continue;
     }
@@ -1966,10 +1992,10 @@ function fieldAdvance(playerTriggered = false) {
   itemSpaces.splice(0, 64, ...newItemSpaces);
 
   // Shift fire squares down one row, drop any that fall off row 7
-  const newFireSquares = new Set();
-  for (const fi of fireSquares) {
+  const newFireSquares = new Map();
+  for (const [fi, fs] of fireSquares) {
     const [fx, fy] = xy(fi);
-    if (fy < 7) newFireSquares.add(idx(fx, fy + 1));
+    if (fy < 7) newFireSquares.set(idx(fx, fy + 1), fs);
   }
   fireSquares = newFireSquares;
 
@@ -2324,7 +2350,7 @@ function aiBestMove() {
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
-    if (board[from] !== CHECKERS || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
+    if ((board[from] !== CHECKERS && board[from] !== CHECKERS_KING) || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
     const st = saveState(); makeMove(from, to); const ok = _checkersChainCanKillKing(to); restoreState(st); return ok;
   });
   if (chainKingAttacks.length > 0) return chainKingAttacks[randInt(chainKingAttacks.length)];
@@ -2468,12 +2494,13 @@ function aiPlay() {
           }
         });
       } else {
-        const _aiFromElems = elements[move[0]];
-        const _aiWaveData = (_aiFromElems & ELEM_WATER) ? _waveLineSqFromMove(move[0], move[1], board[move[0]]) : null;
+        const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
+        const _aiWaveData = (_aiFromElems & ELEM_WATER) ? _waveLineSqFromMove(move[0], move[1], _aiFromPiece0) : null;
         makeMove(move[0], move[1], true);
+        if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
         if (move[1] === merchantIdx) respawnMerchant();
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
-        const _aiIsCheckersJump = _aiPiece0 === CHECKERS && Math.abs(mtx - mfx) === 2;
+        const _aiIsCheckersJump = (_aiPiece0 === CHECKERS || _aiPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2;
         const _aiAnimPieces = [{
           toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
@@ -2492,10 +2519,11 @@ function aiPlay() {
           checkFireDeath(move[1]);
           recordPosition();
           const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, _aiFinish);
+          const _aiChainContinues = _aiIsCheckersJump && _checkersJumpsFrom(move[1]).length > 0;
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiAfterLand);
-          } else if (_aiWaveData) {
+          } else if (_aiWaveData && !_aiChainContinues) {
             _aiWaveData.shoveParams.toI = move[1];
             startWaveAnim(_aiWaveData.squares, _aiWaveData.shoveParams, _aiAfterLand);
           } else { _aiAfterLand(); }
@@ -2524,7 +2552,7 @@ function aiPlay() {
 }
 
 function findKing(s) {
-  for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === s) return xy(i);
+  for (let i = 0; i < 64; i++) if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === s) return xy(i);
   return [-1, -1];
 }
 
@@ -2546,12 +2574,15 @@ function _checkersChainCanKillKing(i) {
 function _checkersJumpsFrom(i) {
   const [x, y] = xy(i);
   const s = sides[i];
+  const p = board[i];
   if (!s) return [];
-  const dir = s === W ? -1 : 1;
+  const dirs = (p === CHECKERS_KING)
+    ? [[-1,-1],[1,-1],[-1,1],[1,1]]
+    : (s === W ? [[-1,-1],[1,-1]] : [[-1,1],[1,1]]);
   const jumps = [];
-  for (const dx of [-1, 1]) {
-    const nx = x + dx, ny = y + dir;
-    const jx = x + 2 * dx, jy = y + 2 * dir;
+  for (const [dx, dy] of dirs) {
+    const nx = x + dx, ny = y + dy;
+    const jx = x + 2 * dx, jy = y + 2 * dy;
     if (inB(nx, ny) && inB(jx, jy)) {
       const midI = idx(nx, ny), landI = idx(jx, jy);
       const midSide = sides[midI];
@@ -2564,7 +2595,7 @@ function _checkersJumpsFrom(i) {
 }
 
 function _aiTryChainJump(landI, wasJump, onDone) {
-  if (!wasJump || board[landI] !== CHECKERS || sides[landI] !== B) { onDone(); return; }
+  if (!wasJump || (board[landI] !== CHECKERS && board[landI] !== CHECKERS_KING) || sides[landI] !== B) { onDone(); return; }
   const chainJumps = _checkersJumpsFrom(landI);
   if (chainJumps.length === 0) { onDone(); return; }
   // Pick the chain jump that captures the highest-value piece
@@ -2578,7 +2609,10 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   const [fx, fy] = xy(landI), [tx, ty] = xy(nextTo);
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
   const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
+  const chainElems = elements[landI], chainPiece0 = board[landI], chainSide0 = sides[landI];
+  const chainWaveData = (chainElems & ELEM_WATER) ? _waveLineSqFromMove(landI, nextTo, chainPiece0) : null;
   makeMove(landI, nextTo, true);
+  if (chainElems & ELEM_FIRE) applyFireTrail(landI, nextTo, chainPiece0, chainSide0);
   const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
   const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, arc: TILE * 1.5 }];
   for (const c of _pendingCaptureAnims) {
@@ -2591,7 +2625,12 @@ function _aiTryChainJump(landI, wasJump, onDone) {
     _pendingCaptureAnims = [];
     checkFireDeath(nextTo);
     recordPosition();
-    _aiTryChainJump(nextTo, true, onDone);
+    const isFinalJump = _checkersJumpsFrom(nextTo).length === 0;
+    const afterChain = () => _aiTryChainJump(nextTo, true, onDone);
+    if (chainWaveData && isFinalJump) {
+      chainWaveData.shoveParams.toI = nextTo;
+      startWaveAnim(chainWaveData.squares, chainWaveData.shoveParams, afterChain);
+    } else { afterChain(); }
   });
 }
 
@@ -2607,7 +2646,7 @@ function adjacentClonerDests(i) {
 
 function countKings(s) {
   let n = 0;
-  for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === s) n++;
+  for (let i = 0; i < 64; i++) if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === s) n++;
   return n;
 }
 
@@ -3161,7 +3200,7 @@ if (waveAnim) {
 }
 
 // Fire squares: orange overlay
-for (const fi of fireSquares) {
+for (const fi of fireSquares.keys()) {
   const [fx, fy] = xy(fi);
   ctx.fillStyle = 'rgba(255,80,0,0.38)';
   ctx.fillRect(MARGIN + fx * TILE, MARGIN + fy * TILE, TILE, TILE);
@@ -3785,7 +3824,7 @@ if (!isItemActive() && gamePhase === 'playing' && (!replayMode || _miniReplayAct
     const cy = pieceCY;
     const isKing = pt === KING;
     if (count === 0) {
-      if (pt !== CHECKERS) {
+      if (pt !== CHECKERS && pt !== CHECKERS_KING) {
         ctx.globalAlpha = 0.15;
         _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
         ctx.globalAlpha = 1;
@@ -4632,12 +4671,13 @@ function handleBoardClick(cx, cy) {
         });
         return;
       }
-      const _fromElems = elements[selected], _fromPiece = board[selected], _fromI = selected;
+      const _fromElems = elements[selected], _fromPiece = board[selected], _fromSide = sides[selected], _fromI = selected;
       const _waveData = (_fromElems & ELEM_WATER) ? _waveLineSqFromMove(selected, clickedDest, _fromPiece) : null;
+      const _midI2 = (Math.abs(ptx - pfx) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
+      const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
+        && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
       makeMove(selected, clicked, true);
-      if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece);
-      recordPosition();
-      const _isCheckersJump = board[clickedDest] === CHECKERS && Math.abs(ptx - pfx) === 2;
+      if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece, _fromSide);
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
@@ -4659,7 +4699,7 @@ function handleBoardClick(cx, cy) {
         pendingCaptures = {};
         checkWhiteKingAlive();
         if (!gameOver) {
-          if (_isCheckersJump && board[movedTo] === CHECKERS && sides[movedTo] === W) {
+          if (_isCheckersJump && (board[movedTo] === CHECKERS || board[movedTo] === CHECKERS_KING) && sides[movedTo] === W) {
             const chainJumps = _checkersJumpsFrom(movedTo);
             if (chainJumps.length > 0) {
               _checkersChainIdx = movedTo;
@@ -4688,8 +4728,11 @@ function handleBoardClick(cx, cy) {
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece0, _wSide0, () => _wContinue(clickedDest));
           } else { _wContinue(clickedDest); }
         };
-        if (_waveData) {
-          // shoveParams.toI must point to where piece actually landed
+        // For Water Checkers chains: suppress wave on non-final jumps; final jump applies its own wave
+        const _chainContinues = _isCheckersJump
+          && (board[clickedDest] === CHECKERS || board[clickedDest] === CHECKERS_KING)
+          && _checkersJumpsFrom(clickedDest).length > 0;
+        if (_waveData && !_chainContinues) {
           _waveData.shoveParams.toI = clickedDest;
           startWaveAnim(_waveData.squares, _waveData.shoveParams, _afterWave);
         } else {
