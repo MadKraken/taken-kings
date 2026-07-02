@@ -1,4 +1,4 @@
-﻿const VERSION = "344";
+﻿const VERSION = "349";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -384,6 +384,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
       fireSquares: [...fireSquares],
+      nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       squares: [...squares],
       shoveParams: {...shoveParams},
     });
@@ -612,6 +613,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
       elements: [...elements], fireSquares: [...fireSquares],
+      nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
       exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
@@ -709,7 +711,8 @@ function takeReplaySnapshot() {
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx,
-    elements: [...elements], fireSquares: [...fireSquares]
+    elements: [...elements], fireSquares: [...fireSquares],
+    nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
 }
 
@@ -726,6 +729,8 @@ function applyReplaySnapshot(snap) {
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   fireSquares = snap.fireSquares ? new Set(snap.fireSquares) : new Set();
+  if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
+  if (snap.nextBonuses) nextBonuses = snap.nextBonuses.map(b => ({...b}));
 }
 
 function enterReplay() {
@@ -775,6 +780,8 @@ function _playReplayTransition(snapIdx, onDone) {
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
     fireSquares = ev.fireSquares ? new Set(ev.fireSquares) : new Set();
+    if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
+    if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
     if (ev.type === 'wave') {
       startWaveAnim(ev.squares, {...ev.shoveParams}, playNext);
     } else {
@@ -932,6 +939,7 @@ let resignConfirm = false;
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
+let _pendingCaptureAnims = []; // queued by makeMove, drained in startAnim onDone
 let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
 let timedMode = false;
 let timedModeSecs = 60;
@@ -1533,9 +1541,9 @@ function makeMove(fromI, toI, visual = false) {
   // Checkers jump: leaps 2 diagonally — remove the piece in the middle square
   if (p === CHECKERS && Math.abs(tx - fx) === 2) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
-    const capPiece = board[midI], capSide = sides[midI];
+    const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
     if (visual && capPiece !== NONE) {
-      startCaptureAnim(capPiece, capSide, MARGIN + ((fx+tx)/2)*TILE + TILE/2, BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2);
+      _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
     }
     if (capSide !== s && s === W) gold += GOLD_VALUE[capPiece] ?? 0;
     if (capPiece === KING && capSide !== s && s === W) score += 1;
@@ -1561,7 +1569,7 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && captured !== CHEST && capSide !== s) {
-    startCaptureAnim(captured, capSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + ty * TILE + TILE / 2);
+    _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
   if (captured !== NONE && captured !== CHEST && sides[toI] !== s && s === W) {
@@ -1588,10 +1596,11 @@ function makeMove(fromI, toI, visual = false) {
 
   if (p === PAWN && toI === epTarget) {
     const capY = ty + (s === W ? 1 : -1);
+    const epI = idx(tx, capY);
     const epPiece = piece(tx, capY);
     const epSide = side(tx, capY);
     if (visual && epPiece !== NONE) {
-      startCaptureAnim(epPiece, epSide, MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + capY * TILE + TILE / 2);
+      _pendingCaptureAnims.push({ piece: epPiece, side: epSide, hlth: health[epI], boardIdx: epI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + capY * TILE + TILE / 2 });
     }
     if (epPiece === KING && s === W) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
@@ -2308,12 +2317,20 @@ function aiPlay() {
         if (move[1] === merchantIdx) respawnMerchant();
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
         const _aiIsCheckersJump = _aiPiece0 === CHECKERS && Math.abs(mtx - mfx) === 2;
-        startAnim([{
+        const _aiAnimPieces = [{
           toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
           piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0,
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
-        }], 0, () => {
+        }];
+        for (const c of _pendingCaptureAnims) {
+          const [bx, by] = xy(c.boardIdx);
+          const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
+          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
+        }
+        startAnim(_aiAnimPieces, 0, () => {
+          for (const c of _pendingCaptureAnims) startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+          _pendingCaptureAnims = [];
           checkFireDeath(move[1]);
           recordPosition();
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
@@ -4171,11 +4188,22 @@ function handleInventoryClick(cx, cy) {
         if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
         _turnStartSnapIndices.pop(); // discard current turn start
         const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
+        const targetSnap = replaySnapshots[targetIdx];
+        console.log('[Rewinder] targetIdx:', targetIdx, 'of', replaySnapshots.length,
+          '| turn indices:', JSON.stringify(_turnStartSnapIndices),
+          '| snap.turn:', targetSnap.turn,
+          '| snap.playerDead:', JSON.stringify(targetSnap.playerDead),
+          '| snap.board (64):', JSON.stringify(targetSnap.board));
         replaySnapshots.splice(targetIdx + 1);
         _replayTransitions.splice(targetIdx + 1);
-        applyReplaySnapshot(replaySnapshots[targetIdx]);
+        applyReplaySnapshot(targetSnap);
+        // removeFromInventory must NOT use pre-restore slotIdx — the restore already
+        // replaces inventory with the snapshot's state (which predates the Rewinder).
+        // If the Rewinder somehow persisted in the restored inventory, remove it now.
+        const rSlot = inventory.indexOf(ITEM_REWINDER);
+        if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        removeFromInventory(slotIdx);
+        shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
         return true;
@@ -4283,6 +4311,12 @@ function handleBoardClick(cx, cy) {
       }];
       if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
+      // Hold captured pieces stationary at their squares during the attacker's travel
+      for (const c of _pendingCaptureAnims) {
+        const [bx, by] = xy(c.boardIdx);
+        const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
+        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
+      }
       selected = -1; validMoves = [];
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wContinue = (movedTo) => {
@@ -4297,6 +4331,8 @@ function handleBoardClick(cx, cy) {
         } else { draw(); }
       };
       startAnim(wAnimPieces, 0, () => {
+        for (const c of _pendingCaptureAnims) startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+        _pendingCaptureAnims = [];
         checkWhiteKingAlive();
         if (gameOver) { takeReplaySnapshot(); draw(); return; }
         const _afterWave = () => {
