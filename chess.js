@@ -1,4 +1,4 @@
-﻿const VERSION = "373";
+﻿const VERSION = "374";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -28,6 +28,8 @@ const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHO
 const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
+let _loadCount = 0, _loadTotal = 0;
+let _splashRafId = null;
 
 const SIDE_TINT = { [B]: 'rgb(40,30,80)', [N]: 'rgb(180,140,60)' };
 
@@ -68,53 +70,79 @@ function _drawTinted(ctx, img, side, dx, dy, dw, dh) {
   ctx.drawImage(_makeTinted(img, SIDE_TINT[side]), 0, 0, 256, 256, dx, dy, dw, dh);
 }
 
-function loadSprites() {
-  let count = 0;
-  const total = 16; // 1 logo + 7 W pieces + 8 other sprites (B/N derived from W)
-  const done = () => { count++; if (count >= total && !spritesLoaded) { spritesLoaded = true; draw(); } };
-  const logoImg = new Image();
-  logoImg.src = "sprites/logo_2.png?v=1";
-  logoImg.onload = () => { spriteImages["logo"] = logoImg; done(); };
-  logoImg.onerror = (e) => { console.log("logo FAILED", e); done(); };
-  for (const p of [PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING, CHECKERS]) {
-    const key = `${W}_${p}`;
-    const img = new Image();
-    img.src = (p === PAWN) ? "sprites/pawn.png" : (p === KING) ? "sprites/king.png" : (p === QUEEN) ? "sprites/Queen.png" : (p === KNIGHT) ? "sprites/knight.png" : (p === BISHOP) ? "sprites/bishop_1.png" : (p === ROOK) ? "sprites/rook.png" : `sprites/w_${PIECE_NAMES[p]}.svg`;
-    img.onload = () => { spriteImages[key] = img; done(); };
-    img.onerror = done;
+function _drawSplash() {
+  const W2 = canvas.width, H2 = canvas.height;
+  ctx.clearRect(0, 0, W2, H2);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, W2, H2);
+  const cx = W2 / 2, cy = H2 * 0.38;
+  // Logo if available
+  const logo = spriteImages['logo'];
+  if (logo && logo.complete && logo.naturalWidth > 0) {
+    const lw = Math.min(W2 * 0.55, 340), lh = lw * (logo.naturalHeight / logo.naturalWidth);
+    ctx.drawImage(logo, cx - lw / 2, cy - lh / 2 - 60, lw, lh);
+  } else {
+    ctx.fillStyle = '#c8a060';
+    ctx.font = 'bold 72px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Taken Kings', cx, cy - 40);
   }
-  const chestImg = new Image();
-  chestImg.src = "sprites/chest.svg";
-  chestImg.onload = done; chestImg.onerror = done;
-  spriteImages["chest"] = chestImg;
-  const teleImg = new Image();
-  teleImg.src = "sprites/item_teleporter.svg";
-  teleImg.onload = done; teleImg.onerror = done;
-  spriteImages["item_teleporter"] = teleImg;
-  const clonerImg = new Image();
-  clonerImg.src = "sprites/item_cloner.svg";
-  clonerImg.onload = done; clonerImg.onerror = done;
-  spriteImages["item_cloner"] = clonerImg;
-  const upgraderImg = new Image();
-  upgraderImg.src = "sprites/item_upgrader.svg?v=2";
-  upgraderImg.onload = done; upgraderImg.onerror = done;
-  spriteImages["item_upgrader"] = upgraderImg;
-  const bombImg = new Image();
-  bombImg.src = "sprites/item_bomb.svg";
-  bombImg.onload = done; bombImg.onerror = done;
-  spriteImages["item_bomb"] = bombImg;
-  const explosionImg = new Image();
-  explosionImg.src = "sprites/explosion.svg";
-  explosionImg.onload = done; explosionImg.onerror = done;
-  spriteImages["explosion"] = explosionImg;
-  const groundImg = new Image();
-  groundImg.src = "sprites/Ground.png";
-  groundImg.onload = done; groundImg.onerror = done;
-  spriteImages["ground"] = groundImg;
-  const merchantImg = new Image();
-  merchantImg.src = "sprites/merchant.svg";
-  merchantImg.onload = done; merchantImg.onerror = done;
-  spriteImages["merchant"] = merchantImg;
+  // Progress bar
+  const barW = Math.min(W2 * 0.55, 340), barH = 18, barX = cx - barW / 2, barY = cy + 80;
+  const pct = _loadTotal > 0 ? _loadCount / _loadTotal : 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, barH / 2); ctx.fill();
+  if (pct > 0) {
+    ctx.fillStyle = '#c8a060';
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW * pct, barH, barH / 2); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Loading…', cx, barY + barH + 16);
+  ctx.textBaseline = 'alphabetic';
+  if (!spritesLoaded) _splashRafId = requestAnimationFrame(_drawSplash);
+}
+
+function loadSprites() {
+  const spriteList = [
+    ['logo',            'sprites/logo_2.png?v=1'],
+    [`${W}_${PAWN}`,    'sprites/pawn.png'],
+    [`${W}_${KING}`,    'sprites/king.png'],
+    [`${W}_${QUEEN}`,   'sprites/Queen.png'],
+    [`${W}_${KNIGHT}`,  'sprites/knight.png'],
+    [`${W}_${BISHOP}`,  'sprites/bishop_1.png'],
+    [`${W}_${ROOK}`,    'sprites/rook.png'],
+    [`${W}_${CHECKERS}`, `sprites/w_${PIECE_NAMES[CHECKERS]}.svg`],
+    ['chest',           'sprites/chest.svg'],
+    ['item_teleporter', 'sprites/item_teleporter.svg'],
+    ['item_cloner',     'sprites/item_cloner.svg'],
+    ['item_upgrader',   'sprites/item_upgrader.svg?v=2'],
+    ['item_bomb',       'sprites/item_bomb.svg'],
+    ['explosion',       'sprites/explosion.svg'],
+    ['ground',          'sprites/Ground.png'],
+    ['merchant',        'sprites/merchant.svg'],
+  ];
+  _loadTotal = spriteList.length;
+  _loadCount = 0;
+  const done = (key, img) => {
+    if (key === 'logo') spriteImages['logo'] = img; // make logo available for splash ASAP
+    _loadCount++;
+    if (_loadCount >= _loadTotal && !spritesLoaded) {
+      spritesLoaded = true;
+      if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
+      draw();
+    }
+  };
+  for (const [key, src] of spriteList) {
+    const img = new Image();
+    spriteImages[key] = img;
+    img.onload = () => done(key, img);
+    img.onerror = () => done(key, img);
+    img.src = src;
+  }
 }
 
 let board = new Array(64).fill(NONE);
@@ -3984,6 +4012,7 @@ if (shopMode) {
 }
 
 function draw() {
+  if (!spritesLoaded) { _drawSplash(); return; }
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
     const s = new Set();
@@ -5214,6 +5243,9 @@ setInterval(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 initBoard();
+// Start splash immediately so the canvas is never blank while assets load
+_loadTotal = 16; // matches spriteList length in loadSprites
+_drawSplash();
 document.fonts.load("42px Canterbury").then(() => loadSprites());
 
 window.setupTest = function(preset) {
