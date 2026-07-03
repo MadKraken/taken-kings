@@ -1,4 +1,4 @@
-﻿const VERSION = "417";
+﻿const VERSION = "419";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -321,6 +321,8 @@ function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; }
+function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; }
+function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
@@ -1048,8 +1050,7 @@ function applyRiverFlow(onDone) {
         if (board[di] !== NONE || di === merchantIdx) continue;
         {
           animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
-          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i]; statuses[di] = statuses[i]; attacks[di] = attacks[i]; speeds[di] = speeds[i];
-          clearSquare(i);
+          movePiece(i, di);
         }
         continue;
       }
@@ -1575,8 +1576,7 @@ function shovePiece(srcI, dx, dy) {
     clearSquare(srcI);
     return;
   }
-  board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI]; statuses[destI] = statuses[srcI]; attacks[destI] = attacks[srcI]; speeds[destI] = speeds[srcI];
-  clearSquare(srcI);
+  movePiece(srcI, destI);
 }
 
 function applyWaterWave(fromI, toI, p) {
@@ -1695,19 +1695,15 @@ function applyShieldBounceState(atkI, defI, p) {
     const bonkDest = calcEarthBonkDest(atkI, defI, p);
     if (bonkDest >= 0) {
       // Move defender to bonkDest, attacker occupies defI
-      board[bonkDest] = board[defI]; sides[bonkDest] = sides[defI];
-      health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI]; statuses[bonkDest] = statuses[defI]; attacks[bonkDest] = attacks[defI]; speeds[bonkDest] = speeds[defI];
-      board[defI] = board[atkI]; sides[defI] = sides[atkI];
-      health[defI] = health[atkI]; elements[defI] = elements[atkI]; statuses[defI] = statuses[atkI]; attacks[defI] = attacks[atkI]; speeds[defI] = speeds[atkI];
+      copyPiece(defI, bonkDest);
+      copyPiece(atkI, defI);
       clearSquare(atkI);
       return { mode: 'earth-bonk', bonkDest };
     }
   }
   const bounceI = calcBouncePos(atkI, defI, p);
   if (bounceI !== atkI) {
-    board[bounceI] = board[atkI]; sides[bounceI] = sides[atkI];
-    elements[bounceI] = elements[atkI]; statuses[bounceI] = statuses[atkI]; attacks[bounceI] = attacks[atkI]; speeds[bounceI] = speeds[atkI];
-    board[atkI] = NONE; sides[atkI] = 0; elements[atkI] = 0; statuses[atkI] = 0; attacks[atkI] = 1; speeds[atkI] = 1;
+    movePiece(atkI, bounceI);
   }
   return { mode: 'attacker-bounce', bounceI };
 }
@@ -1750,8 +1746,7 @@ function makeMove(fromI, toI, visual = false) {
     sides[toI] = W;
     const bounceI = calcBouncePos(fromI, toI, p);
     if (bounceI !== fromI) {
-      board[bounceI] = p; sides[bounceI] = W; health[bounceI] = health[fromI];
-      elements[bounceI] = elements[fromI]; statuses[bounceI] = statuses[fromI]; attacks[bounceI] = attacks[fromI]; speeds[bounceI] = speeds[fromI];
+      copyPiece(fromI, bounceI); sides[bounceI] = W;
       clearSquare(fromI);
     }
     return;
@@ -4664,7 +4659,7 @@ function handleClonerClick(cx, cy) {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
         if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
-        board[i] = board[clonerSelected]; sides[i] = W; health[i] = health[clonerSelected]; elements[i] = elements[clonerSelected];
+        copyPiece(clonerSelected, i); sides[i] = W;
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
