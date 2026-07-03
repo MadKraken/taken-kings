@@ -212,8 +212,8 @@ const ITEM_BLOODTHIRSTIFIER = 300;
 const ITEM_SWORD = 301;
 
 const ITEM_NAMES = {
-  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
-  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Sword"
+  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Defense Up", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
+  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Attack Up"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
