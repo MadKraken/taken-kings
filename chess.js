@@ -1,4 +1,4 @@
-﻿const VERSION = "419";
+﻿const VERSION = "420";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1087,6 +1087,23 @@ let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
 let _pendingCaptureAnims = []; // queued by makeMove, drained in startAnim onDone
+// Append stationary ghost entries for each pending captured piece into an anim array.
+function _appendCaptureGhosts(animArr) {
+  for (const c of _pendingCaptureAnims) {
+    if (c.type === 'item') continue;
+    const [bx, by] = xy(c.boardIdx);
+    const cx = MARGIN + bx * TILE, cy = BOARD_Y + MARGIN + by * TILE;
+    animArr.push({ toIdx: c.boardIdx, fromCX: cx, fromCY: cy, toCX: cx, toCY: cy, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
+  }
+}
+// Fire off capture/item animations for all pending entries and clear the queue.
+function _drainCaptureAnims() {
+  for (const c of _pendingCaptureAnims) {
+    if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot());
+    else startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+  }
+  _pendingCaptureAnims = [];
+}
 let _pendingShopFlies = []; // queued by handleShopClick, attached to next startAnim replayAnimBuffer event
 let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
 let timedMode = false;
@@ -1984,8 +2001,7 @@ function teamLeap() {
   firstMoveMade = true;
   recordPosition();
   startAnim(leapAnimPieces, 0, () => {
-    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
-    _pendingCaptureAnims = [];
+    _drainCaptureAnims();
     if (_leapVoidDeath) {
       startVoidDeath(_leapVoidDeath.cx, _leapVoidDeath.cy, _leapVoidDeath.piece, _leapVoidDeath.side, applySpacesAfterAdvance);
     } else {
@@ -2649,15 +2665,9 @@ function aiPlay() {
           piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[move[1]], spd: speeds[move[1]],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
-        for (const c of _pendingCaptureAnims) {
-          if (c.type === 'item') continue;
-          const [bx, by] = xy(c.boardIdx);
-          const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
-        }
+        _appendCaptureGhosts(_aiAnimPieces);
         startAnim(_aiAnimPieces, 0, () => {
-          for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
-          _pendingCaptureAnims = [];
+          _drainCaptureAnims();
           checkFireDeath(move[1]);
           recordPosition();
           const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () => _aiSpeedContinue(move[1], 0, _aiFinish));
@@ -2756,14 +2766,9 @@ function _aiSpeedContinue(dest, movesUsed, onDone) {
   if (spElems & ELEM_FIRE) applyFireTrail(dest, best, spPiece0, spSide0);
   const sp0 = board[best], ss0 = sides[best], sh0 = health[best];
   const spAnims = [{ toIdx: best, fromCX, fromCY, toCX, toCY, piece: sp0, side: ss0, hlth: sh0, atk: attacks[best], spd: speeds[best] }];
-  for (const c of _pendingCaptureAnims) {
-    if (c.type === 'item') continue;
-    const [bx, by] = xy(c.boardIdx);
-    spAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
-  }
+  _appendCaptureGhosts(spAnims);
   startAnim(spAnims, 0, () => {
-    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
-    _pendingCaptureAnims = [];
+    _drainCaptureAnims();
     checkFireDeath(best);
     recordPosition();
     const afterSp = () => _aiSpeedContinue(best, movesUsed + 1, onDone);
@@ -2793,14 +2798,9 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   if (chainElems & ELEM_FIRE) applyFireTrail(landI, nextTo, chainPiece0, chainSide0);
   const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
   const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, atk: attacks[nextTo], spd: speeds[nextTo], arc: TILE * 1.5 }];
-  for (const c of _pendingCaptureAnims) {
-    if (c.type === 'item') continue;
-    const [bx, by] = xy(c.boardIdx);
-    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
-  }
+  _appendCaptureGhosts(chainAnims);
   startAnim(chainAnims, 0, () => {
-    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
-    _pendingCaptureAnims = [];
+    _drainCaptureAnims();
     checkFireDeath(nextTo);
     recordPosition();
     const isFinalJump = _checkersJumpsFrom(nextTo).length === 0;
@@ -4979,12 +4979,7 @@ function handleBoardClick(cx, cy) {
       if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)], atk: attacks[idx(5,7)], spd: speeds[idx(5,7)] });
       if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)], atk: attacks[idx(3,7)], spd: speeds[idx(3,7)] });
       // Hold captured pieces stationary at their squares during the attacker's travel
-      for (const c of _pendingCaptureAnims) {
-        if (c.type === 'item') continue; // chest items have no visible piece to hold
-        const [bx, by] = xy(c.boardIdx);
-        const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
-      }
+      _appendCaptureGhosts(wAnimPieces);
       selected = -1; validMoves = [];
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wContinue = (movedTo) => {
@@ -5032,8 +5027,7 @@ function handleBoardClick(cx, cy) {
         } else { draw(); }
       };
       startAnim(wAnimPieces, 0, () => {
-        for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
-        _pendingCaptureAnims = [];
+        _drainCaptureAnims();
         checkWhiteKingAlive();
         if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
         const _afterWave = () => {
