@@ -1,4 +1,4 @@
-﻿const VERSION = "400";
+﻿const VERSION = "417";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -123,6 +123,7 @@ function loadSprites() {
     ['item_upgrader',   'sprites/item_upgrader.svg?v=2'],
     ['item_bomb',       'sprites/item_bomb.svg'],
     ['item_sword',      'sprites/item_sword.svg'],
+    ['item_boots',      'sprites/item_boots.svg'],
     ['explosion',       'sprites/explosion.svg'],
     ['ground',          'sprites/Ground.png'],
     ['merchant',        'sprites/merchant.svg'],
@@ -210,10 +211,11 @@ function elementizerItemName(item) {
 
 const ITEM_BLOODTHIRSTIFIER = 300;
 const ITEM_SWORD = 301;
+const ITEM_BOOTS = 302;
 
 const ITEM_NAMES = {
   [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Defense Up", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
-  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Attack Up"
+  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Attack Up", [ITEM_BOOTS]: "Speed Up"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -259,20 +261,25 @@ let merchantQueuedCol = -1; // which column he'll enter from
 let merchantPendingRespawn = false; // pushed into void mid-play; re-queue on next field advance
 let elements = new Array(64).fill(0); // elemental bitmask per board square, travels with piece
 let statuses = new Array(64).fill(0); // status bitmask per board square (e.g. STATUS_BLOODTHIRSTY)
-let attacks = new Array(64).fill(1);  // attack power per board square; starts at 1, Sword adds +1
+let attacks = new Array(64).fill(1);  // attack power per board square; starts at 1, Attack Up adds +1
+let speeds = new Array(64).fill(1);   // move count per turn; starts at 1, Speed Up adds +1
 let fireSquares = new Map(); // Map<boardIdx, side> — squares on fire; kills pieces of the opposing side
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
 let bloodthirstifierMode = false;
 let swordMode = false;
+let speedMode = false;
+let _speedIdx = -1;       // board index of piece currently in a speed multi-move sequence
+let _speedMovesUsed = 0;  // extra speed moves used so far this turn
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
   [ITEM_CLONER]: "item_cloner",
   [ITEM_SHIELD]: "item_upgrader",
   [ITEM_BOMB]: "item_bomb",
-  [ITEM_SWORD]: "item_sword"
+  [ITEM_SWORD]: "item_sword",
+  [ITEM_BOOTS]: "item_boots"
 };
 const _PROMOTER_TO_PRICE = { [ROOK]: 25, [KNIGHT]: 20, [BISHOP]: 20, [QUEEN]: 30, [PROMOTER_WILD]: 15 };
 function itemPrice(item) {
@@ -289,6 +296,7 @@ const ITEM_PRICES = {
   [ITEM_ELEM_MYSTERY]: 20,
   [ITEM_BLOODTHIRSTIFIER]: 30,
   [ITEM_SWORD]: 20,
+  [ITEM_BOOTS]: 20,
 };
 
 let wkMoved = false;
@@ -312,7 +320,7 @@ function piece(x, y) { return inB(x, y) ? board[idx(x, y)] : NONE; }
 function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
-function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; }
+function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
@@ -427,7 +435,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
     _replayAnimBuffer.push({
       type: 'wave',
       board: [...board], sides: [...sides], health: [...health],
-      elements: [...elements], statuses: [...statuses], attacks: [...attacks],
+      elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
       specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
       itemSpaces: [...itemSpaces],
       inventory: [...inventory],
@@ -673,7 +681,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       inventory: [...inventory],
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
-      elements: [...elements], statuses: [...statuses], attacks: [...attacks],
+      elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
       fireSquares: [...fireSquares],
       nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       chestSpaces: [...chestSpaces],
@@ -719,13 +727,14 @@ function _randomPromoterItem() {
 }
 
 function _randomItem() {
-  const r = randInt(7);
+  const r = randInt(8);
   if (r === 0) return ITEM_TELEPORTER;
   if (r === 1) return ITEM_CLONER;
   if (r === 2) return ITEM_SHIELD;
   if (r === 3) return ITEM_BOMB;
   if (r === 4) return ITEM_BLOODTHIRSTIFIER;
   if (r === 5) return ITEM_SWORD;
+  if (r === 6) return ITEM_BOOTS;
   return _randomElementalizerItem();
 }
 
@@ -744,6 +753,7 @@ function _randomShopItem() {
   if (r === 5) return ITEM_REWINDER;
   if (r === 6) return ITEM_BLOODTHIRSTIFIER;
   if (r === 7) return ITEM_SWORD;
+  if (r === 8) return ITEM_BOOTS;
   return _randomElementalizerItem();
 }
 
@@ -800,7 +810,7 @@ function takeReplaySnapshot() {
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
-    elements: [...elements], statuses: [...statuses], attacks: [...attacks], fireSquares: [...fireSquares],
+    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], fireSquares: [...fireSquares],
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
 }
@@ -820,6 +830,7 @@ function applyReplaySnapshot(snap) {
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   if (snap.statuses) statuses.splice(0, 64, ...snap.statuses); else statuses.fill(0);
   if (snap.attacks) attacks.splice(0, 64, ...snap.attacks); else attacks.fill(1);
+  if (snap.speeds) speeds.splice(0, 64, ...snap.speeds); else speeds.fill(1);
   fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
@@ -874,6 +885,7 @@ function _playReplayTransition(snapIdx, onDone) {
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
     if (ev.statuses) statuses.splice(0, 64, ...ev.statuses); else statuses.fill(0);
     if (ev.attacks) attacks.splice(0, 64, ...ev.attacks); else attacks.fill(1);
+    if (ev.speeds) speeds.splice(0, 64, ...ev.speeds); else speeds.fill(1);
     fireSquares = ev.fireSquares ? new Map(ev.fireSquares) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
@@ -992,15 +1004,29 @@ function generateRowBonuses(wave) {
   return bonuses;
 }
 
-function _rollSpawnBonuses(i, odds = 32) {
-  while (randInt(odds) === 0) {
-    if (randInt(2) === 0) elements[i] = ELEM_ALL[randInt(4)];
-    else health[i]++;
+function _rollSpawnEffects(i) {
+  // 6.25% (1/16) per roll; reroll until false.
+  // Pool: Attack+1, Health+1, Speed+1, Bloodthirsty, Fire, Water, Earth, Air.
+  // Statuses/elements removed from pool once granted; stats may stack.
+  let pool = [
+    'atk', 'hlth', 'spd',
+    'bt', 'fire', 'water', 'earth', 'air'
+  ];
+  while (randInt(16) === 0 && pool.length > 0) {
+    const pick = pool[randInt(pool.length)];
+    if (pick === 'atk')   { attacks[i]++; }
+    else if (pick === 'hlth')  { health[i]++; }
+    else if (pick === 'spd')   { speeds[i]++; }
+    else if (pick === 'bt')    { statuses[i] |= STATUS_BLOODTHIRSTY; pool = pool.filter(x => x !== 'bt'); }
+    else if (pick === 'fire')  { elements[i] |= ELEM_FIRE;  pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
+    else if (pick === 'water') { elements[i] |= ELEM_WATER; pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
+    else if (pick === 'earth') { elements[i] |= ELEM_EARTH; pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
+    else if (pick === 'air')   { elements[i] |= ELEM_AIR;   pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
   }
 }
-function _rollSpawnStatuses(i, odds = 32) {
-  if (randInt(odds) === 0) statuses[i] |= STATUS_BLOODTHIRSTY;
-}
+// Legacy aliases kept for any remaining direct callers during transition
+function _rollSpawnBonuses(i) { _rollSpawnEffects(i); }
+function _rollSpawnStatuses(i) { /* merged into _rollSpawnEffects */ }
 
 function applyRiverFlow(onDone) {
   const animPieces = [];
@@ -1021,8 +1047,8 @@ function applyRiverFlow(onDone) {
         if (elements[i] & (ELEM_EARTH | ELEM_WATER)) continue;
         if (board[di] !== NONE || di === merchantIdx) continue;
         {
-          animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i] });
-          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i]; statuses[di] = statuses[i]; attacks[di] = attacks[i];
+          animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
+          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i]; statuses[di] = statuses[i]; attacks[di] = attacks[i]; speeds[di] = speeds[i];
           clearSquare(i);
         }
         continue;
@@ -1090,7 +1116,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1;
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _speedIdx = -1; _speedMovesUsed = 0;
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
@@ -1101,7 +1127,7 @@ function initBoard() {
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
-  elements.fill(0); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
+  elements.fill(0); speeds.fill(1); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
@@ -1109,29 +1135,33 @@ function initBoard() {
 }
 
 function _randomSetupPiece() {
-  const r = randInt(65);
-  if (r < 32) return PAWN;
-  if (r < 40) return ROOK;
-  if (r < 48) return BISHOP;
-  if (r < 56) return KNIGHT;
-  if (r < 60) return QUEEN;
-  if (r < 64) return KING;
-  return CHECKERS;             // 1/65 ≈ 1/64
+  // Weights: King 100, Queen 100, Pawn 800, Rook 200, Bishop 200, Knight 200, Checkers Man 10, Checkers King 1 = 1611
+  const r = randInt(1611);
+  if (r < 100)  return KING;
+  if (r < 200)  return QUEEN;
+  if (r < 1000) return PAWN;
+  if (r < 1200) return ROOK;
+  if (r < 1400) return BISHOP;
+  if (r < 1600) return KNIGHT;
+  if (r < 1610) return CHECKERS;
+  return CHECKERS_KING;
 }
 
 function _randomEnemyPiece() {
-  const r = randInt(65);
-  if (r < 32) return PAWN;
-  if (r < 40) return ROOK;
-  if (r < 48) return BISHOP;
-  if (r < 56) return KNIGHT;
-  if (r < 64) return QUEEN;
-  return CHECKERS;             // 1/65 ≈ 1/64
+  // Weights mirror White setup: Queen 100, Pawn 800, Rook 200, Bishop 200, Knight 200, Checkers Man 10, Checkers King 1 = 1511
+  const r = randInt(1511);
+  if (r < 100)  return QUEEN;
+  if (r < 900)  return PAWN;
+  if (r < 1100) return ROOK;
+  if (r < 1300) return BISHOP;
+  if (r < 1500) return KNIGHT;
+  if (r < 1510) return CHECKERS;
+  return CHECKERS_KING;
 }
 
 function rollSetup() {
   // Clear all pieces and regenerate enemy wave
-  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1);
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
@@ -1151,11 +1181,18 @@ function rollSetup() {
   _rollSpawnBonuses(idx(positions[1].x, positions[1].y), 64); _rollSpawnStatuses(idx(positions[1].x, positions[1].y), 64);
   for (let i = 2; i < 16; i++) {
     let p;
-    if (randInt(128) === 0) p = KING;
-    else if (randInt(1280) === 0) p = CHECKERS;
-    else { const r = randInt(64); p = r < 32 ? PAWN : r < 40 ? ROOK : r < 48 ? BISHOP : r < 56 ? KNIGHT : QUEEN; }
+    // Weights: King 11, Queen 100, Pawn 800, Rook 200, Bishop 200, Knight 200, Checkers Man 10, Checkers King 1 = 1522
+    const r = randInt(1522);
+    if      (r < 11)   p = KING;
+    else if (r < 111)  p = QUEEN;
+    else if (r < 911)  p = PAWN;
+    else if (r < 1111) p = ROOK;
+    else if (r < 1311) p = BISHOP;
+    else if (r < 1511) p = KNIGHT;
+    else if (r < 1521) p = CHECKERS;
+    else               p = CHECKERS_KING;
     // Checkers pieces must start on dark squares
-    if (p === CHECKERS && !isDarkSquare(positions[i].x, positions[i].y)) p = PAWN;
+    if ((p === CHECKERS || p === CHECKERS_KING) && !isDarkSquare(positions[i].x, positions[i].y)) p = PAWN;
     set(positions[i].x, positions[i].y, p, W);
     _rollSpawnBonuses(idx(positions[i].x, positions[i].y), 64); _rollSpawnStatuses(idx(positions[i].x, positions[i].y), 64);
   }
@@ -1538,7 +1575,7 @@ function shovePiece(srcI, dx, dy) {
     clearSquare(srcI);
     return;
   }
-  board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI]; statuses[destI] = statuses[srcI]; attacks[destI] = attacks[srcI];
+  board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI]; statuses[destI] = statuses[srcI]; attacks[destI] = attacks[srcI]; speeds[destI] = speeds[srcI];
   clearSquare(srcI);
 }
 
@@ -1659,9 +1696,9 @@ function applyShieldBounceState(atkI, defI, p) {
     if (bonkDest >= 0) {
       // Move defender to bonkDest, attacker occupies defI
       board[bonkDest] = board[defI]; sides[bonkDest] = sides[defI];
-      health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI]; statuses[bonkDest] = statuses[defI]; attacks[bonkDest] = attacks[defI];
+      health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI]; statuses[bonkDest] = statuses[defI]; attacks[bonkDest] = attacks[defI]; speeds[bonkDest] = speeds[defI];
       board[defI] = board[atkI]; sides[defI] = sides[atkI];
-      health[defI] = health[atkI]; elements[defI] = elements[atkI]; statuses[defI] = statuses[atkI]; attacks[defI] = attacks[atkI];
+      health[defI] = health[atkI]; elements[defI] = elements[atkI]; statuses[defI] = statuses[atkI]; attacks[defI] = attacks[atkI]; speeds[defI] = speeds[atkI];
       clearSquare(atkI);
       return { mode: 'earth-bonk', bonkDest };
     }
@@ -1669,8 +1706,8 @@ function applyShieldBounceState(atkI, defI, p) {
   const bounceI = calcBouncePos(atkI, defI, p);
   if (bounceI !== atkI) {
     board[bounceI] = board[atkI]; sides[bounceI] = sides[atkI];
-    elements[bounceI] = elements[atkI]; statuses[bounceI] = statuses[atkI]; attacks[bounceI] = attacks[atkI];
-    board[atkI] = NONE; sides[atkI] = 0; elements[atkI] = 0; statuses[atkI] = 0; attacks[atkI] = 1;
+    elements[bounceI] = elements[atkI]; statuses[bounceI] = statuses[atkI]; attacks[bounceI] = attacks[atkI]; speeds[bounceI] = speeds[atkI];
+    board[atkI] = NONE; sides[atkI] = 0; elements[atkI] = 0; statuses[atkI] = 0; attacks[atkI] = 1; speeds[atkI] = 1;
   }
   return { mode: 'attacker-bounce', bounceI };
 }
@@ -1701,7 +1738,7 @@ function makeMove(fromI, toI, visual = false) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
     if (capPiece !== NONE && capSide !== s && capSide !== N) {
-      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
+      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], spd: speeds[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
       if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
       if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) score += 1;
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
@@ -1714,7 +1751,7 @@ function makeMove(fromI, toI, visual = false) {
     const bounceI = calcBouncePos(fromI, toI, p);
     if (bounceI !== fromI) {
       board[bounceI] = p; sides[bounceI] = W; health[bounceI] = health[fromI];
-      elements[bounceI] = elements[fromI]; statuses[bounceI] = statuses[fromI]; attacks[bounceI] = attacks[fromI];
+      elements[bounceI] = elements[fromI]; statuses[bounceI] = statuses[fromI]; attacks[bounceI] = attacks[fromI]; speeds[bounceI] = speeds[fromI];
       clearSquare(fromI);
     }
     return;
@@ -1727,7 +1764,7 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && capSide !== s) {
-    _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
+    _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], spd: speeds[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
   if (captured !== NONE && sides[toI] !== s && s === W) {
@@ -1764,7 +1801,7 @@ function makeMove(fromI, toI, visual = false) {
     const epPiece = piece(tx, capY);
     const epSide = side(tx, capY);
     if (visual && epPiece !== NONE) {
-      _pendingCaptureAnims.push({ piece: epPiece, side: epSide, hlth: health[epI], atk: attacks[epI], boardIdx: epI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + capY * TILE + TILE / 2 });
+      _pendingCaptureAnims.push({ piece: epPiece, side: epSide, hlth: health[epI], atk: attacks[epI], spd: speeds[epI], boardIdx: epI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + capY * TILE + TILE / 2 });
     }
     if (epPiece === KING && s === W) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
@@ -1781,11 +1818,12 @@ function makeMove(fromI, toI, visual = false) {
   const movedElem = elements[fromI];
   const movedStatus = statuses[fromI];
   const movedAtk = attacks[fromI];
+  const movedSpd = speeds[fromI];
   let landPiece = p;
   // Checkers Man promotion: reaches the far back rank
   if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
   board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
-  elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk;
+  elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
   clearSquare(fromI);
 
 }
@@ -1806,14 +1844,14 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || bloodthirstifierMode || swordMode;
+  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || bloodthirstifierMode || swordMode || speedMode;
 }
 
 function cancelItemMode() {
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
-  bloodthirstifierMode = false; swordMode = false;
+  bloodthirstifierMode = false; swordMode = false; speedMode = false;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
@@ -1880,7 +1918,7 @@ function teamLeap() {
       toIdx: idx(ax, ay - 1),
       fromCX: MARGIN + ax * TILE, fromCY: BOARD_Y + MARGIN + ay * TILE,
       toCX: MARGIN + ax * TILE, toCY: BOARD_Y + MARGIN + (ay - 1) * TILE,
-      piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i]
+      piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i]
     });
   }
 
@@ -1901,6 +1939,7 @@ function teamLeap() {
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
+  const newSpeeds = new Array(64).fill(1);
 
   // Enemies stay
   for (let i = 0; i < 64; i++) {
@@ -1911,6 +1950,7 @@ function teamLeap() {
       newElements[i] = elements[i];
       newStatuses[i] = statuses[i];
       newAttacks[i] = attacks[i];
+      newSpeeds[i] = speeds[i];
     }
   }
 
@@ -1927,10 +1967,10 @@ function teamLeap() {
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
-        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i];
+        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i];
       }
     } else {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i];
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i];
     }
   }
 
@@ -1940,6 +1980,7 @@ function teamLeap() {
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
   attacks.splice(0, 64, ...newAttacks);
+  speeds.splice(0, 64, ...newSpeeds);
 
   epTarget = -1;
   selected = -1;
@@ -1990,7 +2031,7 @@ function fieldAdvance(playerTriggered = false) {
   const exitRow = [];
   for (let x = 0; x < 8; x++) {
     const i = idx(x, 7);
-    exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i] });
+    exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
   }
   // If merchant is on row 7 he slides off with the exit row
   const merchantAtRow7 = merchantIdx >= 0 && xy(merchantIdx)[1] === 7;
@@ -2008,6 +2049,7 @@ function fieldAdvance(playerTriggered = false) {
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
+  const newSpeeds = new Array(64).fill(1);
 
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
@@ -2024,6 +2066,7 @@ function fieldAdvance(playerTriggered = false) {
     newElements[ni] = elements[i];
     newStatuses[ni] = statuses[i];
     newAttacks[ni] = attacks[i];
+    newSpeeds[ni] = speeds[i];
   }
 
   board.splice(0, 64, ...newBoard);
@@ -2032,6 +2075,7 @@ function fieldAdvance(playerTriggered = false) {
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
   attacks.splice(0, 64, ...newAttacks);
+  speeds.splice(0, 64, ...newSpeeds);
 
   // Scroll special spaces down
   const newSpecialSpaces = new Array(64).fill(null);
@@ -2204,6 +2248,7 @@ function saveState() {
     elements: [...elements],
     statuses: [...statuses],
     attacks: [...attacks],
+    speeds: [...speeds],
     chestSpaces: new Set(chestSpaces),
     merchantIdx, merchantQueued, merchantQueuedCol
   };
@@ -2224,6 +2269,7 @@ function restoreState(st) {
   if (st.elements) elements.splice(0, 64, ...st.elements); else elements.fill(0);
   if (st.statuses) statuses.splice(0, 64, ...st.statuses); else statuses.fill(0);
   if (st.attacks) attacks.splice(0, 64, ...st.attacks); else attacks.fill(1);
+  if (st.speeds) speeds.splice(0, 64, ...st.speeds); else speeds.fill(1);
   if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
@@ -2241,9 +2287,10 @@ function simulateTeamAdvance() {
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
+  const newSpeeds = new Array(64).fill(1);
   // Enemies stay in place
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; }
+    if (sides[i] !== W) { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i]; }
   }
   // White pieces try to move up (y-1); blocked by occupied squares or row 0
   const blocked = new Set();
@@ -2254,15 +2301,15 @@ function simulateTeamAdvance() {
     if (sides[i] !== W) continue;
     const [x, y] = xy(i);
     if (y === 0 || isBlockSpace(idx(x, y - 1)) || newBoard[idx(x, y - 1)] !== NONE) {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i];
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i];
     } else {
       const ni = idx(x, y - 1);
-      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i];
+      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i];
     }
   }
   board.splice(0, 64, ...newBoard); sides.splice(0, 64, ...newSides);
   health.splice(0, 64, ...newHealth); elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses); attacks.splice(0, 64, ...newAttacks);
+  statuses.splice(0, 64, ...newStatuses); attacks.splice(0, 64, ...newAttacks); speeds.splice(0, 64, ...newSpeeds);
 }
 
 function simulateLeap() {
@@ -2273,6 +2320,7 @@ function simulateLeap() {
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
+  const newSpeeds = new Array(64).fill(1);
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
@@ -2284,6 +2332,7 @@ function simulateLeap() {
     newElements[ni] = elements[i];
     newStatuses[ni] = statuses[i];
     newAttacks[ni] = attacks[i];
+    newSpeeds[ni] = speeds[i];
   }
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
@@ -2291,6 +2340,8 @@ function simulateLeap() {
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
   attacks.splice(0, 64, ...newAttacks);
+  speeds.splice(0, 64, ...newSpeeds);
+  speeds.splice(0, 64, ...newSpeeds);
   spawnCount++;
   for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnBonuses(idx(w.x, 0)); _rollSpawnStatuses(idx(w.x, 0)); }
   for (const b of nextBonuses) {
@@ -2575,7 +2626,7 @@ function aiPlay() {
             // Attacker already at move[1]; animate defender being bonked to bonkDest
             const [bdx, bdy] = xy(result.bonkDest);
             const bonkCX = MARGIN + bdx * TILE, bonkCY = BOARD_Y + MARGIN + bdy * TILE;
-            startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest] }], 0, () => {
+            startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest], spd: speeds[result.bonkDest] }], 0, () => {
               if (wasLastShield) startShieldPop(hitCX, hitCY);
               _aiFinish();
             });
@@ -2600,21 +2651,21 @@ function aiPlay() {
         const _aiAnimPieces = [{
           toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[move[1]],
+          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[move[1]], spd: speeds[move[1]],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         for (const c of _pendingCaptureAnims) {
           if (c.type === 'item') continue;
           const [bx, by] = xy(c.boardIdx);
           const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
+          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
         }
         startAnim(_aiAnimPieces, 0, () => {
           for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
           _pendingCaptureAnims = [];
           checkFireDeath(move[1]);
           recordPosition();
-          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, _aiFinish);
+          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () => _aiSpeedContinue(move[1], 0, _aiFinish));
           const _aiChainContinues = _aiIsCheckersJump && _checkersJumpsFrom(move[1]).length > 0;
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
@@ -2689,6 +2740,43 @@ function _checkersJumpsFrom(i) {
   return jumps;
 }
 
+function _aiSpeedContinue(dest, movesUsed, onDone) {
+  if (board[dest] === NONE || sides[dest] !== B || speeds[dest] <= 1 || movesUsed >= speeds[dest] - 1) { onDone(); return; }
+  const [dx, dy] = xy(dest);
+  // Collect legal moves for just this piece
+  const pMoves = legalMoves(dx, dy);
+  if (pMoves.length === 0) { onDone(); return; }
+  // Pick greedily: capture > advance (lower y = closer to White)
+  let best = pMoves[0];
+  for (const m of pMoves) {
+    if (board[m] !== NONE && sides[m] === W) { best = m; break; }
+    if (xy(m)[1] > xy(best)[1]) best = m;
+  }
+  const [fx, fy] = xy(dest), [tx, ty] = xy(best);
+  const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
+  const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
+  const spElems = elements[dest], spPiece0 = board[dest], spSide0 = sides[dest];
+  const spWaveData = (spElems & ELEM_WATER) ? _waveLineSqFromMove(dest, best, spPiece0) : null;
+  makeMove(dest, best, true);
+  if (spElems & ELEM_FIRE) applyFireTrail(dest, best, spPiece0, spSide0);
+  const sp0 = board[best], ss0 = sides[best], sh0 = health[best];
+  const spAnims = [{ toIdx: best, fromCX, fromCY, toCX, toCY, piece: sp0, side: ss0, hlth: sh0, atk: attacks[best], spd: speeds[best] }];
+  for (const c of _pendingCaptureAnims) {
+    if (c.type === 'item') continue;
+    const [bx, by] = xy(c.boardIdx);
+    spAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
+  }
+  startAnim(spAnims, 0, () => {
+    for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
+    _pendingCaptureAnims = [];
+    checkFireDeath(best);
+    recordPosition();
+    const afterSp = () => _aiSpeedContinue(best, movesUsed + 1, onDone);
+    if (spWaveData) { spWaveData.shoveParams.toI = best; startWaveAnim(spWaveData.squares, spWaveData.shoveParams, afterSp); }
+    else afterSp();
+  });
+}
+
 function _aiTryChainJump(landI, wasJump, onDone) {
   if (!wasJump || (board[landI] !== CHECKERS && board[landI] !== CHECKERS_KING) || sides[landI] !== B) { onDone(); return; }
   const chainJumps = _checkersJumpsFrom(landI);
@@ -2709,11 +2797,11 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   makeMove(landI, nextTo, true);
   if (chainElems & ELEM_FIRE) applyFireTrail(landI, nextTo, chainPiece0, chainSide0);
   const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
-  const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, atk: attacks[nextTo], arc: TILE * 1.5 }];
+  const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, atk: attacks[nextTo], spd: speeds[nextTo], arc: TILE * 1.5 }];
   for (const c of _pendingCaptureAnims) {
     if (c.type === 'item') continue;
     const [bx, by] = xy(c.boardIdx);
-    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
+    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
   }
   startAnim(chainAnims, 0, () => {
     for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
@@ -2774,6 +2862,7 @@ function canItemAffectPiece(item, i) {
     case ITEM_BOMB: return true;
     case ITEM_BLOODTHIRSTIFIER: return true;
     case ITEM_SWORD: return true;
+    case ITEM_BOOTS: return true;
     default: if (isElementalizerItem(item)) return true; return false;
   }
 }
@@ -2822,6 +2911,10 @@ function activateItemSpace(item, i) {
       return true;
     case ITEM_SWORD:
       attacks[i]++;
+      activeItemSpaceIdx = -1;
+      return true;
+    case ITEM_BOOTS:
+      speeds[i]++;
       activeItemSpaceIdx = -1;
       return true;
     default:
@@ -3144,7 +3237,7 @@ if (_fieldAnim && anim.exitRow) {
     const eimg = spriteImages[ekey];
     if (eimg && eimg.complete)
       ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
-    if (ep.side === W) _drawPieceBadges(ctx, MARGIN + ep.x * TILE, MARGIN + BOARD_PX, ep.hlth, ep.atk ?? 1, 30);
+    if (ep.side === W) _drawPieceBadges(ctx, MARGIN + ep.x * TILE, MARGIN + BOARD_PX, ep.hlth, ep.atk ?? 1, ep.spd ?? 1, 30);
   }
 }
 
@@ -3363,7 +3456,7 @@ for (let i = 0; i < 64; i++) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('B', bx, by + 1);
   }
-  if (sides[i] === W) _drawPieceBadges(ctx, _drawX, _drawY, health[i], attacks[i]);
+  _drawPieceBadges(ctx, _drawX, _drawY, health[i], attacks[i], speeds[i]);
 }
 
 // Draw ghost sprites for void-bound wave pieces (already removed from board)
@@ -3430,7 +3523,7 @@ if (clonerMode) {
 }
 
 // Upgrader highlight â€" all white pieces selectable
-if (shieldMode || bloodthirstifierMode || swordMode) {
+if (shieldMode || bloodthirstifierMode || swordMode || speedMode) {
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [px, py] = xy(i);
@@ -3516,7 +3609,22 @@ if (anim && anim.pieces) {
         _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
       }
     }
-    if (ap.side === W) _drawPieceBadges(ctx, acx, acy, ap.hlth, ap.atk ?? 1);
+    _drawPieceBadges(ctx, acx, acy, ap.hlth, ap.atk ?? 1, ap.spd ?? 1);
+    // Bloodthirsty badge at interpolated position
+    const apStatus = ap.toIdx >= 0 ? statuses[ap.toIdx] : 0;
+    if (apStatus & STATUS_BLOODTHIRSTY) {
+      const dotR = 11;
+      const bx = acx + dotR + 4, by = acy + dotR + 4;
+      ctx.beginPath(); ctx.arc(bx, by, dotR + 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(bx, by, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = '#cc0000'; ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.font = `bold ${dotR}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('B', bx, by + 1);
+    }
     // Element badges at interpolated position
     const apElems = ap.toIdx >= 0 ? elements[ap.toIdx] : 0;
     if (apElems) {
@@ -3556,7 +3664,7 @@ ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
 }
 
 
-function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, sz = 45) {
+function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, spd, sz = 45) {
   if (hlth > 1) {
     const bx = drawX + TILE - sz - 2, by = drawY + (TILE - sz) / 2;
     const shieldImg = spriteImages["item_upgrader"];
@@ -3576,6 +3684,16 @@ function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, sz = 45) {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.strokeText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
     ctx.fillText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
+  }
+  if (spd > 1) {
+    const bx = drawX + TILE - sz - 2, by = drawY + TILE - sz - 2;
+    const bootsImg = spriteImages["item_boots"];
+    if (bootsImg && bootsImg.complete) ctx.drawImage(bootsImg, bx, by, sz, sz);
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
+    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeText(spd - 1, bx + sz / 2, by + sz / 2 + 1);
+    ctx.fillText(spd - 1, bx + sz / 2, by + sz / 2 + 1);
   }
 }
 
@@ -4047,6 +4165,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     const rSlot = inventory.indexOf(ITEM_REWINDER);
     if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
     turn = W; aiThinking = false; selected = -1; validMoves = [];
+    _speedIdx = -1; _speedMovesUsed = 0;
     shopMode = false; gameOver = false; gameMsg = "";
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
@@ -4674,6 +4793,24 @@ function handleSwordClick(cx, cy) {
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
+function handleSpeedClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
+    const i = idx(gx, gy);
+    speeds[i]++;
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+    const fromSpace = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1; speedMode = false;
+    if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
+    return;
+  }
+  const fromSpace = activeItemSpaceIdx >= 0;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  activeItemSpaceIdx = -1; speedMode = false;
+  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
+}
+
 function handleResignConfirmClick(cx, cy) {
   const confirmY = GRAVE_Y + GRAVE_H + 12;
   const panelH = 72, btnW = 100, btnH = 52, gap = 16;
@@ -4714,6 +4851,7 @@ function handleInventoryClick(cx, cy) {
       if (isElementalizerItem(item)) modeMap[item] = () => { elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false); };
       if (item === ITEM_BLOODTHIRSTIFIER) modeMap[item] = () => { bloodthirstifierMode = true; };
       if (item === ITEM_SWORD) modeMap[item] = () => { swordMode = true; };
+      if (item === ITEM_BOOTS) modeMap[item] = () => { speedMode = true; };
       // Rewinder: immediate action, no board-interaction mode
       if (item === ITEM_REWINDER) {
         if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
@@ -4734,6 +4872,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
+        _speedIdx = -1; _speedMovesUsed = 0;
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
@@ -4809,7 +4948,7 @@ function handleBoardClick(cx, cy) {
       // Engage merchant: bounce attacker, open shop, then end turn
       if (clicked === merchantIdx) {
         const fromI = selected;
-        const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI];
+        const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI], attackStat = statuses[fromI], attackAtk = attacks[fromI], attackSpd = speeds[fromI];
         // Always bounce to the square directly adjacent to the merchant on the attacker's side.
         const [_mfx, _mfy] = xy(fromI), [_mtx, _mty] = xy(clicked);
         const _mdx = Math.sign(_mtx - _mfx), _mdy = Math.sign(_mty - _mfy);
@@ -4821,7 +4960,7 @@ function handleBoardClick(cx, cy) {
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, fromI, attackPiece, W, attackHlth, () => {
           // Move piece to bounce square only after animation finishes to avoid mid-anim flash.
           if (bounceI !== fromI) {
-            board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem;
+            board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem; statuses[bounceI] = attackStat; attacks[bounceI] = attackAtk; speeds[bounceI] = attackSpd;
             clearSquare(fromI);
           }
           openMerchantShop(endWhiteTurn);
@@ -4839,17 +4978,17 @@ function handleBoardClick(cx, cy) {
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
-        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest], atk: attacks[clickedDest],
+        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest], atk: attacks[clickedDest], spd: speeds[clickedDest],
         arc: _isCheckersJump ? TILE * 1.5 : 0
       }];
-      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)], atk: attacks[idx(5,7)] });
-      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)], atk: attacks[idx(3,7)] });
+      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)], atk: attacks[idx(5,7)], spd: speeds[idx(5,7)] });
+      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)], atk: attacks[idx(3,7)], spd: speeds[idx(3,7)] });
       // Hold captured pieces stationary at their squares during the attacker's travel
       for (const c of _pendingCaptureAnims) {
         if (c.type === 'item') continue; // chest items have no visible piece to hold
         const [bx, by] = xy(c.boardIdx);
         const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
+        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
       }
       selected = -1; validMoves = [];
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
@@ -4873,11 +5012,23 @@ function handleBoardClick(cx, cy) {
             const [_btx, _bty] = xy(movedTo);
             const _btMoves = legalMoves(_btx, _bty);
             if (_btMoves.length > 0) {
+              _speedMovesUsed = 0; // capture resets speed budget
               _bloodthirstyIdx = movedTo; selected = movedTo; validMoves = _btMoves;
               draw(); return;
             }
           }
           _bloodthirstyIdx = -1;
+          // Speed: piece gets (speeds[i] - 1) extra moves per turn, no capture required
+          if (speeds[movedTo] > 1 && _speedMovesUsed < speeds[movedTo] - 1) {
+            const [_spx, _spy] = xy(movedTo);
+            const _spMoves = legalMoves(_spx, _spy);
+            if (_spMoves.length > 0) {
+              _speedMovesUsed++; _speedIdx = movedTo;
+              selected = movedTo; validMoves = _spMoves;
+              draw(); return;
+            }
+          }
+          _speedIdx = -1; _speedMovesUsed = 0;
           const item = itemSpaces[movedTo];
           if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
             const done = activateItemSpace(item, movedTo);
@@ -4909,11 +5060,11 @@ function handleBoardClick(cx, cy) {
       });
       return;
     } else if (clicked === selected) {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { selected = -1; validMoves = []; }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
     } else {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { selected = -1; validMoves = []; }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = -1; validMoves = []; }
     }
   }
   draw();
@@ -4936,6 +5087,7 @@ canvas.addEventListener("click", (e) => {
   if (elementizerMode) { handleElementizerClick(cx, cy); return; }
   if (bloodthirstifierMode) { handleBloodthirstifierClick(cx, cy); return; }
   if (swordMode) { handleSwordClick(cx, cy); return; }
+  if (speedMode) { handleSpeedClick(cx, cy); return; }
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&

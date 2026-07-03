@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- shaft of boot -->
+  <rect x="10" y="6" width="14" height="24" rx="4" fill="#8a5a00" stroke="#4a2e00" stroke-width="1.5"/>
+  <!-- toe box -->
+  <path d="M10,28 Q10,38 16,40 L38,40 Q44,40 44,35 Q44,30 38,30 L24,30 L24,28 Z" fill="#8a5a00" stroke="#4a2e00" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- sole -->
+  <path d="M12,40 Q12,44 18,44 L36,44 Q42,44 42,40 Z" fill="#5a3a00" stroke="#2a1a00" stroke-width="1"/>
+  <!-- shaft highlight -->
+  <rect x="13" y="9" width="5" height="14" rx="2" fill="rgba(255,200,100,0.3)"/>
+  <!-- lace/buckle detail -->
+  <rect x="10" y="18" width="14" height="3" rx="1" fill="#c8a800" stroke="#7a6200" stroke-width="0.8"/>
+</svg>
