@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- blade: pentagon shape, tip at top -->
+  <polygon points="25,3 36,17 32,30 18,30 14,17" fill="#c8a800" stroke="#7a6200" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- crossguard -->
+  <rect x="10" y="29" width="30" height="5" rx="2" fill="#8a5a00" stroke="#4a2e00" stroke-width="1"/>
+  <!-- grip -->
+  <rect x="22" y="34" width="6" height="10" rx="1" fill="#8a5a00" stroke="#4a2e00" stroke-width="1"/>
+  <!-- pommel -->
+  <ellipse cx="25" cy="45" rx="5" ry="3.5" fill="#c8a800" stroke="#7a6200" stroke-width="1"/>
+  <!-- blade shine -->
+  <polygon points="25,6 28,20 25,26 22,20" fill="rgba(255,255,180,0.4)"/>
+</svg>

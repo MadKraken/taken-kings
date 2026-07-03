@@ -1,4 +1,4 @@
-﻿const VERSION = "398";
+﻿const VERSION = "400";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -122,6 +122,7 @@ function loadSprites() {
     ['item_cloner',     'sprites/item_cloner.svg'],
     ['item_upgrader',   'sprites/item_upgrader.svg?v=2'],
     ['item_bomb',       'sprites/item_bomb.svg'],
+    ['item_sword',      'sprites/item_sword.svg'],
     ['explosion',       'sprites/explosion.svg'],
     ['ground',          'sprites/Ground.png'],
     ['merchant',        'sprites/merchant.svg'],
@@ -208,10 +209,11 @@ function elementizerItemName(item) {
 }
 
 const ITEM_BLOODTHIRSTIFIER = 300;
+const ITEM_SWORD = 301;
 
 const ITEM_NAMES = {
   [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
-  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier"
+  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Sword"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -257,17 +259,20 @@ let merchantQueuedCol = -1; // which column he'll enter from
 let merchantPendingRespawn = false; // pushed into void mid-play; re-queue on next field advance
 let elements = new Array(64).fill(0); // elemental bitmask per board square, travels with piece
 let statuses = new Array(64).fill(0); // status bitmask per board square (e.g. STATUS_BLOODTHIRSTY)
+let attacks = new Array(64).fill(1);  // attack power per board square; starts at 1, Sword adds +1
 let fireSquares = new Map(); // Map<boardIdx, side> — squares on fire; kills pieces of the opposing side
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
 let bloodthirstifierMode = false;
+let swordMode = false;
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
   [ITEM_CLONER]: "item_cloner",
   [ITEM_SHIELD]: "item_upgrader",
-  [ITEM_BOMB]: "item_bomb"
+  [ITEM_BOMB]: "item_bomb",
+  [ITEM_SWORD]: "item_sword"
 };
 const _PROMOTER_TO_PRICE = { [ROOK]: 25, [KNIGHT]: 20, [BISHOP]: 20, [QUEEN]: 30, [PROMOTER_WILD]: 15 };
 function itemPrice(item) {
@@ -283,6 +288,7 @@ const ITEM_PRICES = {
   [ITEM_ELEM_FIRE]: 25, [ITEM_ELEM_WATER]: 25, [ITEM_ELEM_EARTH]: 25, [ITEM_ELEM_AIR]: 25,
   [ITEM_ELEM_MYSTERY]: 20,
   [ITEM_BLOODTHIRSTIFIER]: 30,
+  [ITEM_SWORD]: 20,
 };
 
 let wkMoved = false;
@@ -306,7 +312,7 @@ function piece(x, y) { return inB(x, y) ? board[idx(x, y)] : NONE; }
 function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
-function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; }
+function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
@@ -421,7 +427,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
     _replayAnimBuffer.push({
       type: 'wave',
       board: [...board], sides: [...sides], health: [...health],
-      elements: [...elements],
+      elements: [...elements], statuses: [...statuses], attacks: [...attacks],
       specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
       itemSpaces: [...itemSpaces],
       inventory: [...inventory],
@@ -667,7 +673,8 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       inventory: [...inventory],
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
-      elements: [...elements], fireSquares: [...fireSquares],
+      elements: [...elements], statuses: [...statuses], attacks: [...attacks],
+      fireSquares: [...fireSquares],
       nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       chestSpaces: [...chestSpaces],
       pieces: pieces.map(p => ({...p})),
@@ -712,12 +719,13 @@ function _randomPromoterItem() {
 }
 
 function _randomItem() {
-  const r = randInt(6);
+  const r = randInt(7);
   if (r === 0) return ITEM_TELEPORTER;
   if (r === 1) return ITEM_CLONER;
   if (r === 2) return ITEM_SHIELD;
   if (r === 3) return ITEM_BOMB;
   if (r === 4) return ITEM_BLOODTHIRSTIFIER;
+  if (r === 5) return ITEM_SWORD;
   return _randomElementalizerItem();
 }
 
@@ -727,7 +735,7 @@ function _randomElementalizerItem() {
 }
 
 function _randomShopItem() {
-  const r = randInt(8);
+  const r = randInt(9);
   if (r === 0) return _randomPromoterItem(); // includes Wild via pool
   if (r === 1) return ITEM_TELEPORTER;
   if (r === 2) return ITEM_CLONER;
@@ -735,6 +743,7 @@ function _randomShopItem() {
   if (r === 4) return ITEM_BOMB;
   if (r === 5) return ITEM_REWINDER;
   if (r === 6) return ITEM_BLOODTHIRSTIFIER;
+  if (r === 7) return ITEM_SWORD;
   return _randomElementalizerItem();
 }
 
@@ -791,7 +800,7 @@ function takeReplaySnapshot() {
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
-    elements: [...elements], statuses: [...statuses], fireSquares: [...fireSquares],
+    elements: [...elements], statuses: [...statuses], attacks: [...attacks], fireSquares: [...fireSquares],
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
 }
@@ -810,6 +819,7 @@ function applyReplaySnapshot(snap) {
   if (snap.merchantQueued !== undefined) { merchantQueued = snap.merchantQueued; merchantQueuedCol = snap.merchantQueuedCol ?? -1; }
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   if (snap.statuses) statuses.splice(0, 64, ...snap.statuses); else statuses.fill(0);
+  if (snap.attacks) attacks.splice(0, 64, ...snap.attacks); else attacks.fill(1);
   fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
@@ -862,6 +872,8 @@ function _playReplayTransition(snapIdx, onDone) {
     merchantIdx = ev.merchantIdx ?? -1;
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
+    if (ev.statuses) statuses.splice(0, 64, ...ev.statuses); else statuses.fill(0);
+    if (ev.attacks) attacks.splice(0, 64, ...ev.attacks); else attacks.fill(1);
     fireSquares = ev.fireSquares ? new Map(ev.fireSquares) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
@@ -1009,8 +1021,8 @@ function applyRiverFlow(onDone) {
         if (elements[i] & (ELEM_EARTH | ELEM_WATER)) continue;
         if (board[di] !== NONE || di === merchantIdx) continue;
         {
-          animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i] });
-          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i]; statuses[di] = statuses[i];
+          animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i] });
+          board[di] = board[i]; sides[di] = sides[i]; health[di] = health[i]; elements[di] = elements[i]; statuses[di] = statuses[i]; attacks[di] = attacks[i];
           clearSquare(i);
         }
         continue;
@@ -1119,7 +1131,7 @@ function _randomEnemyPiece() {
 
 function rollSetup() {
   // Clear all pieces and regenerate enemy wave
-  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0);
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1);
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
@@ -1526,7 +1538,7 @@ function shovePiece(srcI, dx, dy) {
     clearSquare(srcI);
     return;
   }
-  board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI];
+  board[destI] = board[srcI]; sides[destI] = sides[srcI]; health[destI] = health[srcI]; elements[destI] = elements[srcI]; statuses[destI] = statuses[srcI]; attacks[destI] = attacks[srcI];
   clearSquare(srcI);
 }
 
@@ -1647,9 +1659,9 @@ function applyShieldBounceState(atkI, defI, p) {
     if (bonkDest >= 0) {
       // Move defender to bonkDest, attacker occupies defI
       board[bonkDest] = board[defI]; sides[bonkDest] = sides[defI];
-      health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI];
+      health[bonkDest] = health[defI]; elements[bonkDest] = elements[defI]; statuses[bonkDest] = statuses[defI]; attacks[bonkDest] = attacks[defI];
       board[defI] = board[atkI]; sides[defI] = sides[atkI];
-      health[defI] = health[atkI]; elements[defI] = elements[atkI];
+      health[defI] = health[atkI]; elements[defI] = elements[atkI]; statuses[defI] = statuses[atkI]; attacks[defI] = attacks[atkI];
       clearSquare(atkI);
       return { mode: 'earth-bonk', bonkDest };
     }
@@ -1657,8 +1669,8 @@ function applyShieldBounceState(atkI, defI, p) {
   const bounceI = calcBouncePos(atkI, defI, p);
   if (bounceI !== atkI) {
     board[bounceI] = board[atkI]; sides[bounceI] = sides[atkI];
-    elements[bounceI] = elements[atkI];
-    board[atkI] = NONE; sides[atkI] = 0; elements[atkI] = 0;
+    elements[bounceI] = elements[atkI]; statuses[bounceI] = statuses[atkI]; attacks[bounceI] = attacks[atkI];
+    board[atkI] = NONE; sides[atkI] = 0; elements[atkI] = 0; statuses[atkI] = 0; attacks[atkI] = 1;
   }
   return { mode: 'attacker-bounce', bounceI };
 }
@@ -1689,7 +1701,7 @@ function makeMove(fromI, toI, visual = false) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
     if (capPiece !== NONE && capSide !== s && capSide !== N) {
-      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
+      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
       if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
       if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) score += 1;
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
@@ -1702,20 +1714,20 @@ function makeMove(fromI, toI, visual = false) {
     const bounceI = calcBouncePos(fromI, toI, p);
     if (bounceI !== fromI) {
       board[bounceI] = p; sides[bounceI] = W; health[bounceI] = health[fromI];
-      elements[bounceI] = elements[fromI]; statuses[bounceI] = statuses[fromI];
+      elements[bounceI] = elements[fromI]; statuses[bounceI] = statuses[fromI]; attacks[bounceI] = attacks[fromI];
       clearSquare(fromI);
     }
     return;
   }
 
-  // Bounce: attacker hits a shielded piece (health > 1) — damage but no capture (or Earth bonk)
-  if (sides[toI] !== s && sides[toI] !== N && health[toI] > 1) {
+  // Bounce: attacker hits a piece with more health than attacker's attack power
+  if (sides[toI] !== s && sides[toI] !== N && health[toI] > attacks[fromI]) {
     applyShieldBounceState(fromI, toI, p);
     return;
   }
 
   if (visual && captured !== NONE && capSide !== s) {
-    _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
+    _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
   if (captured !== NONE && sides[toI] !== s && s === W) {
@@ -1752,7 +1764,7 @@ function makeMove(fromI, toI, visual = false) {
     const epPiece = piece(tx, capY);
     const epSide = side(tx, capY);
     if (visual && epPiece !== NONE) {
-      _pendingCaptureAnims.push({ piece: epPiece, side: epSide, hlth: health[epI], boardIdx: epI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + capY * TILE + TILE / 2 });
+      _pendingCaptureAnims.push({ piece: epPiece, side: epSide, hlth: health[epI], atk: attacks[epI], boardIdx: epI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + capY * TILE + TILE / 2 });
     }
     if (epPiece === KING && s === W) score += 1;
     if (s === W) gold += GOLD_VALUE[epPiece] ?? 0;
@@ -1768,11 +1780,12 @@ function makeMove(fromI, toI, visual = false) {
   const movedHealth = health[fromI];
   const movedElem = elements[fromI];
   const movedStatus = statuses[fromI];
+  const movedAtk = attacks[fromI];
   let landPiece = p;
   // Checkers Man promotion: reaches the far back rank
   if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
   board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
-  elements[toI] = movedElem; statuses[toI] = movedStatus;
+  elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk;
   clearSquare(fromI);
 
 }
@@ -1793,14 +1806,14 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || bloodthirstifierMode;
+  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || bloodthirstifierMode || swordMode;
 }
 
 function cancelItemMode() {
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
-  bloodthirstifierMode = false;
+  bloodthirstifierMode = false; swordMode = false;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
@@ -1867,7 +1880,7 @@ function teamLeap() {
       toIdx: idx(ax, ay - 1),
       fromCX: MARGIN + ax * TILE, fromCY: BOARD_Y + MARGIN + ay * TILE,
       toCX: MARGIN + ax * TILE, toCY: BOARD_Y + MARGIN + (ay - 1) * TILE,
-      piece: board[i], side: sides[i], hlth: health[i]
+      piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i]
     });
   }
 
@@ -1887,6 +1900,7 @@ function teamLeap() {
   const newHealth = new Array(64).fill(1);
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
+  const newAttacks = new Array(64).fill(1);
 
   // Enemies stay
   for (let i = 0; i < 64; i++) {
@@ -1896,6 +1910,7 @@ function teamLeap() {
       newHealth[i] = health[i];
       newElements[i] = elements[i];
       newStatuses[i] = statuses[i];
+      newAttacks[i] = attacks[i];
     }
   }
 
@@ -1912,10 +1927,10 @@ function teamLeap() {
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
-        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i];
+        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i];
       }
     } else {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i];
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i];
     }
   }
 
@@ -1924,6 +1939,7 @@ function teamLeap() {
   health.splice(0, 64, ...newHealth);
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
+  attacks.splice(0, 64, ...newAttacks);
 
   epTarget = -1;
   selected = -1;
@@ -1974,7 +1990,7 @@ function fieldAdvance(playerTriggered = false) {
   const exitRow = [];
   for (let x = 0; x < 8; x++) {
     const i = idx(x, 7);
-    exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i] });
+    exitRow.push({ x, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i] });
   }
   // If merchant is on row 7 he slides off with the exit row
   const merchantAtRow7 = merchantIdx >= 0 && xy(merchantIdx)[1] === 7;
@@ -1991,6 +2007,7 @@ function fieldAdvance(playerTriggered = false) {
   const newHealth = new Array(64).fill(1);
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
+  const newAttacks = new Array(64).fill(1);
 
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
@@ -2006,6 +2023,7 @@ function fieldAdvance(playerTriggered = false) {
     newHealth[ni] = health[i];
     newElements[ni] = elements[i];
     newStatuses[ni] = statuses[i];
+    newAttacks[ni] = attacks[i];
   }
 
   board.splice(0, 64, ...newBoard);
@@ -2013,6 +2031,7 @@ function fieldAdvance(playerTriggered = false) {
   health.splice(0, 64, ...newHealth);
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
+  attacks.splice(0, 64, ...newAttacks);
 
   // Scroll special spaces down
   const newSpecialSpaces = new Array(64).fill(null);
@@ -2184,6 +2203,7 @@ function saveState() {
     health: [...health], shiftCountdown,
     elements: [...elements],
     statuses: [...statuses],
+    attacks: [...attacks],
     chestSpaces: new Set(chestSpaces),
     merchantIdx, merchantQueued, merchantQueuedCol
   };
@@ -2203,6 +2223,7 @@ function restoreState(st) {
   shiftCountdown = st.shiftCountdown;
   if (st.elements) elements.splice(0, 64, ...st.elements); else elements.fill(0);
   if (st.statuses) statuses.splice(0, 64, ...st.statuses); else statuses.fill(0);
+  if (st.attacks) attacks.splice(0, 64, ...st.attacks); else attacks.fill(1);
   if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
@@ -2219,9 +2240,10 @@ function simulateTeamAdvance() {
   const newHealth = new Array(64).fill(1);
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
+  const newAttacks = new Array(64).fill(1);
   // Enemies stay in place
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; }
+    if (sides[i] !== W) { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; }
   }
   // White pieces try to move up (y-1); blocked by occupied squares or row 0
   const blocked = new Set();
@@ -2232,15 +2254,15 @@ function simulateTeamAdvance() {
     if (sides[i] !== W) continue;
     const [x, y] = xy(i);
     if (y === 0 || isBlockSpace(idx(x, y - 1)) || newBoard[idx(x, y - 1)] !== NONE) {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i];
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i];
     } else {
       const ni = idx(x, y - 1);
-      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i];
+      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i];
     }
   }
   board.splice(0, 64, ...newBoard); sides.splice(0, 64, ...newSides);
   health.splice(0, 64, ...newHealth); elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses);
+  statuses.splice(0, 64, ...newStatuses); attacks.splice(0, 64, ...newAttacks);
 }
 
 function simulateLeap() {
@@ -2250,6 +2272,7 @@ function simulateLeap() {
   const newHealth = new Array(64).fill(1);
   const newElements = new Array(64).fill(0);
   const newStatuses = new Array(64).fill(0);
+  const newAttacks = new Array(64).fill(1);
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
@@ -2260,12 +2283,14 @@ function simulateLeap() {
     newHealth[ni] = health[i];
     newElements[ni] = elements[i];
     newStatuses[ni] = statuses[i];
+    newAttacks[ni] = attacks[i];
   }
   board.splice(0, 64, ...newBoard);
   sides.splice(0, 64, ...newSides);
   health.splice(0, 64, ...newHealth);
   elements.splice(0, 64, ...newElements);
   statuses.splice(0, 64, ...newStatuses);
+  attacks.splice(0, 64, ...newAttacks);
   spawnCount++;
   for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnBonuses(idx(w.x, 0)); _rollSpawnStatuses(idx(w.x, 0)); }
   for (const b of nextBonuses) {
@@ -2535,7 +2560,7 @@ function aiPlay() {
       };
 
       // Shield bounce: attacker slides in, then bounces back (or Earth bonks defender forward)
-      if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > 1) {
+      if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
         const attackPiece = board[move[0]], attackHlth = health[move[0]];
         const defPiece = board[move[1]], defSide = sides[move[1]], defHlth = health[move[1]];
         const wasLastShield = health[move[1]] === 2;
@@ -2550,7 +2575,7 @@ function aiPlay() {
             // Attacker already at move[1]; animate defender being bonked to bonkDest
             const [bdx, bdy] = xy(result.bonkDest);
             const bonkCX = MARGIN + bdx * TILE, bonkCY = BOARD_Y + MARGIN + bdy * TILE;
-            startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1 }], 0, () => {
+            startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest] }], 0, () => {
               if (wasLastShield) startShieldPop(hitCX, hitCY);
               _aiFinish();
             });
@@ -2575,14 +2600,14 @@ function aiPlay() {
         const _aiAnimPieces = [{
           toIdx: move[1],
           fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0,
+          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[move[1]],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         for (const c of _pendingCaptureAnims) {
           if (c.type === 'item') continue;
           const [bx, by] = xy(c.boardIdx);
           const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
+          _aiAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
         }
         startAnim(_aiAnimPieces, 0, () => {
           for (const c of _pendingCaptureAnims) { if (c.type === 'item') { startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); } else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
@@ -2684,11 +2709,11 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   makeMove(landI, nextTo, true);
   if (chainElems & ELEM_FIRE) applyFireTrail(landI, nextTo, chainPiece0, chainSide0);
   const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
-  const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, arc: TILE * 1.5 }];
+  const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, atk: attacks[nextTo], arc: TILE * 1.5 }];
   for (const c of _pendingCaptureAnims) {
     if (c.type === 'item') continue;
     const [bx, by] = xy(c.boardIdx);
-    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth });
+    chainAnims.push({ toIdx: c.boardIdx, fromCX: MARGIN + bx * TILE, fromCY: BOARD_Y + MARGIN + by * TILE, toCX: MARGIN + bx * TILE, toCY: BOARD_Y + MARGIN + by * TILE, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
   }
   startAnim(chainAnims, 0, () => {
     for (const c of _pendingCaptureAnims) { if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot()); else startCaptureAnim(c.piece, c.side, c.sx, c.sy); }
@@ -2748,6 +2773,7 @@ function canItemAffectPiece(item, i) {
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
     case ITEM_BLOODTHIRSTIFIER: return true;
+    case ITEM_SWORD: return true;
     default: if (isElementalizerItem(item)) return true; return false;
   }
 }
@@ -2792,6 +2818,10 @@ function activateItemSpace(item, i) {
       return true;
     case ITEM_BLOODTHIRSTIFIER:
       statuses[i] |= STATUS_BLOODTHIRSTY;
+      activeItemSpaceIdx = -1;
+      return true;
+    case ITEM_SWORD:
+      attacks[i]++;
       activeItemSpaceIdx = -1;
       return true;
     default:
@@ -3114,15 +3144,7 @@ if (_fieldAnim && anim.exitRow) {
     const eimg = spriteImages[ekey];
     if (eimg && eimg.complete)
       ctx.drawImage(eimg, MARGIN + ep.x * TILE + erPad, MARGIN + BOARD_PX + erPad, TILE - erPad * 2, TILE - erPad * 2);
-    if (ep.side === W && ep.hlth > 1) {
-      const bx = MARGIN + ep.x * TILE + TILE - 32, by = MARGIN + BOARD_PX + 2, sz = 30;
-      const shieldImg = spriteImages["item_upgrader"];
-      if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-      ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-      ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.strokeText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
-      ctx.fillText(ep.hlth - 1, bx + sz / 2, by + sz / 2 + 1);
-    }
+    if (ep.side === W) _drawPieceBadges(ctx, MARGIN + ep.x * TILE, MARGIN + BOARD_PX, ep.hlth, ep.atk ?? 1, 30);
   }
 }
 
@@ -3341,21 +3363,7 @@ for (let i = 0; i < 64; i++) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('B', bx, by + 1);
   }
-  // Shield badge: shows number of shields (health - 1) using the shield sprite
-  if (health[i] > 1) {
-    const shields = health[i] - 1;
-    const sz = 45;
-    const bx = _drawX + TILE - sz - 2, by = _drawY + 2;
-    const shieldImg = spriteImages["item_upgrader"];
-    if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "rgba(0,0,0,0.7)";
-    ctx.lineWidth = 2.5;
-    ctx.font = "42px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
-    ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
-  }
+  if (sides[i] === W) _drawPieceBadges(ctx, _drawX, _drawY, health[i], attacks[i]);
 }
 
 // Draw ghost sprites for void-bound wave pieces (already removed from board)
@@ -3422,7 +3430,7 @@ if (clonerMode) {
 }
 
 // Upgrader highlight â€" all white pieces selectable
-if (shieldMode) {
+if (shieldMode || bloodthirstifierMode || swordMode) {
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [px, py] = xy(i);
@@ -3508,19 +3516,7 @@ if (anim && anim.pieces) {
         _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
       }
     }
-    if (ap.side === W && ap.hlth > 1) {
-      const shields = ap.hlth - 1;
-      const sz = 45; const bx = acx + TILE - sz - 2, by = acy + 2;
-      const shieldImg = spriteImages["item_upgrader"];
-      if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-      ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.lineWidth = 2.5;
-      ctx.font = "42px Canterbury";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.strokeText(shields, bx + sz / 2, by + sz / 2 + 1);
-      ctx.fillText(shields, bx + sz / 2, by + sz / 2 + 1);
-    }
+    if (ap.side === W) _drawPieceBadges(ctx, acx, acy, ap.hlth, ap.atk ?? 1);
     // Element badges at interpolated position
     const apElems = ap.toIdx >= 0 ? elements[ap.toIdx] : 0;
     if (apElems) {
@@ -3559,6 +3555,29 @@ ctx.fillStyle = "#fff";
 ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
 }
 
+
+function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, sz = 45) {
+  if (hlth > 1) {
+    const bx = drawX + TILE - sz - 2, by = drawY + (TILE - sz) / 2;
+    const shieldImg = spriteImages["item_upgrader"];
+    if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
+    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeText(hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+    ctx.fillText(hlth - 1, bx + sz / 2, by + sz / 2 + 1);
+  }
+  if (atk > 1) {
+    const bx = drawX + TILE - sz - 2, by = drawY + 2;
+    const swordImg = spriteImages["item_sword"];
+    if (swordImg && swordImg.complete) ctx.drawImage(swordImg, bx, by, sz, sz);
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
+    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.strokeText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
+    ctx.fillText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
+  }
+}
 
 function _drawPromoterStar(ctx, cx, cy, r) {
   ctx.beginPath();
@@ -4637,6 +4656,24 @@ function handleBloodthirstifierClick(cx, cy) {
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
+function handleSwordClick(cx, cy) {
+  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
+  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
+    const i = idx(gx, gy);
+    attacks[i]++;
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+    const fromSpace = activeItemSpaceIdx >= 0;
+    activeItemSpaceIdx = -1; swordMode = false;
+    if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
+    return;
+  }
+  const fromSpace = activeItemSpaceIdx >= 0;
+  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
+  activeItemSpaceIdx = -1; swordMode = false;
+  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
+}
+
 function handleResignConfirmClick(cx, cy) {
   const confirmY = GRAVE_Y + GRAVE_H + 12;
   const panelH = 72, btnW = 100, btnH = 52, gap = 16;
@@ -4676,6 +4713,7 @@ function handleInventoryClick(cx, cy) {
       if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterTo = promoterTo(item); };
       if (isElementalizerItem(item)) modeMap[item] = () => { elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false); };
       if (item === ITEM_BLOODTHIRSTIFIER) modeMap[item] = () => { bloodthirstifierMode = true; };
+      if (item === ITEM_SWORD) modeMap[item] = () => { swordMode = true; };
       // Rewinder: immediate action, no board-interaction mode
       if (item === ITEM_REWINDER) {
         if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
@@ -4758,7 +4796,7 @@ function handleBoardClick(cx, cy) {
         return;
       }
       // Attack shielded enemy: bounce attacker, damage enemy
-      if (sides[clicked] === B && health[clicked] > 1) {
+      if (sides[clicked] === B && health[clicked] > attacks[selected]) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
@@ -4801,17 +4839,17 @@ function handleBoardClick(cx, cy) {
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
-        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest],
+        piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest], atk: attacks[clickedDest],
         arc: _isCheckersJump ? TILE * 1.5 : 0
       }];
-      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)] });
-      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)] });
+      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)], atk: attacks[idx(5,7)] });
+      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)], atk: attacks[idx(3,7)] });
       // Hold captured pieces stationary at their squares during the attacker's travel
       for (const c of _pendingCaptureAnims) {
         if (c.type === 'item') continue; // chest items have no visible piece to hold
         const [bx, by] = xy(c.boardIdx);
         const cCX = MARGIN + bx * TILE, cCY = BOARD_Y + MARGIN + by * TILE;
-        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth });
+        wAnimPieces.push({ toIdx: c.boardIdx, fromCX: cCX, fromCY: cCY, toCX: cCX, toCY: cCY, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1 });
       }
       selected = -1; validMoves = [];
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
@@ -4897,6 +4935,7 @@ canvas.addEventListener("click", (e) => {
   if (teleporterMode) { handleTeleporterClick(cx, cy); return; }
   if (elementizerMode) { handleElementizerClick(cx, cy); return; }
   if (bloodthirstifierMode) { handleBloodthirstifierClick(cx, cy); return; }
+  if (swordMode) { handleSwordClick(cx, cy); return; }
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
@@ -5496,12 +5535,20 @@ function _aiCompleteActiveMode() {
     else { bloodthirstifierMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
     return;
   }
+
+  if (swordMode) {
+    let bestI = -1, bestVal = 0;
+    for (let i = 0; i < 64; i++) { if (sides[i]===W) { const v=_aiPieceVal(board[i]); if (v>bestVal){bestVal=v;bestI=i;} } }
+    if (bestI >= 0) { const [cx,cy] = cc(bestI); setTimeout(() => handleSwordClick(cx, cy), 100); }
+    else { swordMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
+    return;
+  }
 }
 
 // Poll every 600ms: trigger auto-play, and resolve any stuck interactive-item UI
 setInterval(() => {
   if (!autoPlay || gameOver || aiThinking || anim || _autoScheduled) return;
-  if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || bloodthirstifierMode) {
+  if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || bloodthirstifierMode || swordMode) {
     _aiCompleteActiveMode(); return;
   }
   if (turn !== W) return;
