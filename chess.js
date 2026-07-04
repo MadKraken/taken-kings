@@ -1,4 +1,4 @@
-﻿const VERSION = "448";
+﻿const VERSION = "449";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1346,6 +1346,21 @@ function rollSetup() {
   do { if (_invSlot < inventory.length) inventory[_invSlot++] = _randomItem(); } while (randInt(8) === 0);
 
 
+}
+
+function classicSetup() {
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
+  spawnCount = 1;
+  const firstWave = generateWave(spawnCount);
+  placeWave(0, firstWave);
+  nextWave = generateWave(spawnCount + 1);
+  nextBonuses = generateRowBonuses(nextWave);
+  const backRank = [ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK];
+  for (let x = 0; x < 8; x++) {
+    set(x, 7, backRank[x], W);
+    set(x, 6, PAWN, W);
+  }
+  inventory.fill(ITEM_NONE);
 }
 
 function startGame() {
@@ -3179,6 +3194,10 @@ const BTN_Y = INV_PANEL_BOTTOM + 20;
 const BTN_GAP = 8;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
 const PITCH_BTN = { x: MARGIN + BOARD_PX / 2 + BTN_GAP / 2, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
+const _SETUP_BTN_W = Math.floor((BOARD_PX - 2 * BTN_GAP) / 3);
+const CLASSIC_BTN  = { x: MARGIN, y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
+const SETUP_ROLL_BTN = { x: MARGIN + _SETUP_BTN_W + BTN_GAP, y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
+const SETUP_GO_BTN   = { x: MARGIN + 2 * (_SETUP_BTN_W + BTN_GAP), y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
 const COUNTDOWN_Y = BTN_Y + 60 + 46;
 const GRAVE_Y = COUNTDOWN_Y + 100;
 const GRAVE_H = 150;
@@ -3965,20 +3984,20 @@ if (!gameOver && isItemActive()) {
   ctx.fillStyle = "#aaa";
   ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
 } else if (!gameOver && gamePhase === 'setup') {
-  // Die button (left) and Go button (right)
-  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-  ctx.fillStyle = "#4a3a7a";
-  ctx.beginPath(); ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6); ctx.fill();
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
-
-  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-  ctx.fillStyle = "#2a6e3f";
-  ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
-  ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+  // Classic | Roll | Go
+  const _setupBtns = [
+    { btn: CLASSIC_BTN,    color: "#6e4a1a", label: "Classic" },
+    { btn: SETUP_ROLL_BTN, color: "#4a3a7a", label: "🎲 Roll" },
+    { btn: SETUP_GO_BTN,   color: "#2a6e3f", label: "▶ Go!" },
+  ];
+  for (const { btn, color, label } of _setupBtns) {
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+  }
 
   // Timed Mode toggle row
   {
@@ -5238,10 +5257,12 @@ canvas.addEventListener("click", (e) => {
   if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
       cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { showHint(); return; }
   if (gamePhase === 'setup') {
-    if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-        cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
-    if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playConquestGif(); return; }
+    if (cx >= CLASSIC_BTN.x && cx <= CLASSIC_BTN.x + CLASSIC_BTN.w &&
+        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { classicSetup(); draw(); return; }
+    if (cx >= SETUP_ROLL_BTN.x && cx <= SETUP_ROLL_BTN.x + SETUP_ROLL_BTN.w &&
+        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { rollSetup(); draw(); return; }
+    if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
+        cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playConquestGif(); return; }
     // Timed mode toggle
     {
       const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
