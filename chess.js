@@ -1,4 +1,4 @@
-﻿const VERSION = "457";
+﻿const VERSION = "459";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -422,9 +422,9 @@ const ITEM_PRICES = {
   [ITEM_REWINDER]: 50,
   [ITEM_ELEM_FIRE]: 25, [ITEM_ELEM_WATER]: 25, [ITEM_ELEM_EARTH]: 25, [ITEM_ELEM_AIR]: 25,
   [ITEM_ELEM_MYSTERY]: 20,
-  [ITEM_VAMPIRE_FANG]: 30,
+  [ITEM_VAMPIRE_FANG]: 60,
   [ITEM_SWORD]: 20,
-  [ITEM_BOOTS]: 20,
+  [ITEM_BOOTS]: 40,
 };
 
 let wkMoved = false;
@@ -5297,7 +5297,8 @@ function handleBoardClick(cx, cy) {
       return;
     } else if (clicked === selected) {
       if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); return; }
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { selected = -1; validMoves = []; }
+      if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); return; }
+      if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
       if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
     } else {
