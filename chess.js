@@ -1,4 +1,4 @@
-﻿const VERSION = "461";
+﻿const VERSION = "462";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -451,6 +451,7 @@ function enemy(s) { return s === W ? B : W; }
 function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; effectOrders[i] = []; }
 function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; effectOrders[dst] = [...effectOrders[src]]; }
 function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
+function _removeEffect(i, eff) { const k = effectOrders[i].indexOf(eff); if (k >= 0) effectOrders[i].splice(k, 1); }
 function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
 
 // Element flag → effect-badge key.
@@ -1919,6 +1920,7 @@ function calcEarthBonkDest(fromI, toI, p) {
 // Returns { mode:'earth-bonk', bonkDest } or { mode:'attacker-bounce', bounceI }.
 function applyShieldBounceState(atkI, defI, p) {
   health[defI]--;
+  if (health[defI] < 2) _removeEffect(defI, 'hlt'); // shield consumed — drop the badge
   if ((elements[atkI] & ELEM_EARTH) && !(elements[defI] & ELEM_EARTH)) {
     const bonkDest = calcEarthBonkDest(atkI, defI, p);
     if (bonkDest >= 0) {
