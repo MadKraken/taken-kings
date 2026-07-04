@@ -1,4 +1,4 @@
-﻿const VERSION = "430";
+﻿const VERSION = "431";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -112,9 +112,9 @@ function _makeTinted(img, color) {
 // Tinted canvases are lazily baked and cached in spriteImages on first use.
 // isActive: true to show the Active Idle animation frame (e.g. piece is selected).
 const PIECE_SCALE = { [PAWN]: 0.9, [KNIGHT]: 1.2 };
-function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, halfSpeed = false) {
+function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, halfSpeed = false, forceStatic = false) {
   // Animated sprite path
-  if (ANIM_PIECE_NAMES[piece]) {
+  if (!forceStatic && ANIM_PIECE_NAMES[piece]) {
     const state = isActive ? 'active' : 'idle';
     const nFrames = ANIM_FRAME_COUNTS[state][piece];
     const animTick = halfSpeed ? Math.floor(_idleAnimFrame / 2) : _idleAnimFrame;
@@ -4162,7 +4162,7 @@ if (!isItemActive() && gamePhase === 'playing' && (!replayMode || _miniReplayAct
     if (count === 0) {
       if (pt !== CHECKERS && pt !== CHECKERS_KING) {
         ctx.globalAlpha = 0.15;
-        _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz, false, false, true);
         ctx.globalAlpha = 1;
       }
     } else {
@@ -4170,7 +4170,7 @@ if (!isItemActive() && gamePhase === 'playing' && (!replayMode || _miniReplayAct
         ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
         ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
       }
-      _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+      _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz, false, false, true);
       ctx.font = "28px Canterbury";
       ctx.fillStyle = "#fff";
       ctx.textAlign = "center"; ctx.textBaseline = "top";
