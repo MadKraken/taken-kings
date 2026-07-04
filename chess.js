@@ -1,4 +1,4 @@
-﻿const VERSION = "433";
+﻿const VERSION = "436";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -154,7 +154,7 @@ function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, ha
   if (side === W) { ctx.drawImage(wImg, dx, dy, dw, dh); return; }
   const key = `${side}_${piece}`;
   if (!spriteImages[key]) spriteImages[key] = _makeTinted(wImg, SIDE_TINT[side]);
-  ctx.drawImage(spriteImages[key], 0, 0, 256, 256, dx, dy, dw, dh);
+  ctx.drawImage(spriteImages[key], dx, dy, dw, dh);
 }
 
 // _drawTinted for callers that pass an img directly (fly/void-death animations).
@@ -266,6 +266,7 @@ let selected = -1;
 let validMoves = [];
 let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
+let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
@@ -1245,7 +1246,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _speedIdx = -1; _speedMovesUsed = 0;
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
@@ -2651,10 +2652,12 @@ function playerBestMove() {
   let bestScore = -Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
+    // Credit captures at the root so free captures aren't overridden by positional noise
+    const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
     const st = saveState();
     makeMove(from, to);
     recordPosition();
-    const val = minimax(HINT_DEPTH - 1, -Infinity, Infinity, false);
+    const val = minimax(HINT_DEPTH - 1, -Infinity, Infinity, false) + captureBonus;
     restoreState(st);
     if (val > bestScore) {
       bestScore = val;
@@ -4274,7 +4277,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     const rSlot = inventory.indexOf(ITEM_REWINDER);
     if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
     turn = W; aiThinking = false; selected = -1; validMoves = [];
-    _speedIdx = -1; _speedMovesUsed = 0;
+    _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
     shopMode = false; gameOver = false; gameMsg = "";
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
@@ -4981,7 +4984,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        _speedIdx = -1; _speedMovesUsed = 0;
+        _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
@@ -5111,12 +5114,13 @@ function handleBoardClick(cx, cy) {
             }
           }
           _checkersChainIdx = -1; _bloodthirstyIdx = -1;
-          // Bloodthirsty: piece that just captured gets an extra move (chainable)
-          if (_wasCapture && (statuses[movedTo] & STATUS_BLOODTHIRSTY)) {
+          // Bloodthirsty: piece that just captured gets one extra move per turn (no chaining)
+          if (_wasCapture && !_bloodthirstyUsed && (statuses[movedTo] & STATUS_BLOODTHIRSTY)) {
             const [_btx, _bty] = xy(movedTo);
             const _btMoves = legalMoves(_btx, _bty);
             if (_btMoves.length > 0) {
               _speedMovesUsed = 0; // capture resets speed budget
+              _bloodthirstyUsed = true;
               _bloodthirstyIdx = movedTo; selected = movedTo; validMoves = _btMoves;
               draw(); return;
             }
@@ -5132,7 +5136,7 @@ function handleBoardClick(cx, cy) {
               draw(); return;
             }
           }
-          _speedIdx = -1; _speedMovesUsed = 0;
+          _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
           const item = itemSpaces[movedTo];
           if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
             const done = activateItemSpace(item, movedTo);
