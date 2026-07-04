@@ -1,4 +1,4 @@
-﻿const VERSION = "446";
+﻿const VERSION = "447";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -333,13 +333,13 @@ function elementizerItemName(item) {
   return ELEM_NAMES[item - 200] + ' Elementalizer';
 }
 
-const ITEM_BLOODTHIRSTIFIER = 300;
+const ITEM_VAMPIRE_FANG = 300;
 const ITEM_SWORD = 301;
 const ITEM_BOOTS = 302;
 
 const ITEM_NAMES = {
   [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Defense Up", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
-  [ITEM_BLOODTHIRSTIFIER]: "Bloodthirstifier", [ITEM_SWORD]: "Attack Up", [ITEM_BOOTS]: "Speed Up"
+  [ITEM_VAMPIRE_FANG]: "Vampire Fang", [ITEM_SWORD]: "Attack Up", [ITEM_BOOTS]: "Speed Up"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -391,7 +391,7 @@ let fireSquares = new Map(); // Map<boardIdx, side> — squares on fire; kills p
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
-let bloodthirstifierMode = false;
+let vampireFangMode = false;
 let swordMode = false;
 let speedMode = false;
 let _speedIdx = -1;       // board index of piece currently in a speed multi-move sequence
@@ -418,7 +418,7 @@ const ITEM_PRICES = {
   [ITEM_REWINDER]: 50,
   [ITEM_ELEM_FIRE]: 25, [ITEM_ELEM_WATER]: 25, [ITEM_ELEM_EARTH]: 25, [ITEM_ELEM_AIR]: 25,
   [ITEM_ELEM_MYSTERY]: 20,
-  [ITEM_BLOODTHIRSTIFIER]: 30,
+  [ITEM_VAMPIRE_FANG]: 30,
   [ITEM_SWORD]: 20,
   [ITEM_BOOTS]: 20,
 };
@@ -858,7 +858,7 @@ function _randomItem() {
   if (r === 1) return ITEM_CLONER;
   if (r === 2) return ITEM_SHIELD;
   if (r === 3) return ITEM_BOMB;
-  if (r === 4) return ITEM_BLOODTHIRSTIFIER;
+  if (r === 4) return ITEM_VAMPIRE_FANG;
   if (r === 5) return ITEM_SWORD;
   if (r === 6) return ITEM_BOOTS;
   return _randomElementalizerItem();
@@ -877,7 +877,7 @@ function _randomShopItem() {
   if (r === 3) return ITEM_SHIELD;
   if (r === 4) return ITEM_BOMB;
   if (r === 5) return ITEM_REWINDER;
-  if (r === 6) return ITEM_BLOODTHIRSTIFIER;
+  if (r === 6) return ITEM_VAMPIRE_FANG;
   if (r === 7) return ITEM_SWORD;
   if (r === 8) return ITEM_BOOTS;
   return _randomElementalizerItem();
@@ -1344,9 +1344,6 @@ function rollSetup() {
   let _invSlot = 0;
   do { if (_invSlot < inventory.length) inventory[_invSlot++] = _randomItem(); } while (randInt(8) === 0);
 
-  // CHEAT: Speed Up in inventory + Teleporter on board
-  addToInventory(ITEM_BOOTS);
-  itemSpaces[idx(3, 4)] = ITEM_BLOODTHIRSTIFIER;
 
 }
 
@@ -1991,14 +1988,14 @@ function endWhiteTurn() {
 // --- Team Leap & Pitch Shift ---
 
 function isItemActive() {
-  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || bloodthirstifierMode || swordMode || speedMode;
+  return piecePromoterMode || teleporterMode || clonerMode || shieldMode || bombMode || elementizerMode || vampireFangMode || swordMode || speedMode;
 }
 
 function cancelItemMode() {
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
-  bloodthirstifierMode = false; swordMode = false; speedMode = false;
+  vampireFangMode = false; swordMode = false; speedMode = false;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
@@ -2994,7 +2991,7 @@ function canItemAffectPiece(item, i) {
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
-    case ITEM_BLOODTHIRSTIFIER: return true;
+    case ITEM_VAMPIRE_FANG: return true;
     case ITEM_SWORD: return true;
     case ITEM_BOOTS: return true;
     default: if (isElementalizerItem(item)) return true; return false;
@@ -3039,7 +3036,7 @@ function activateItemSpace(item, i) {
       health[i] = 2;
       activeItemSpaceIdx = -1;
       return true;
-    case ITEM_BLOODTHIRSTIFIER:
+    case ITEM_VAMPIRE_FANG:
       statuses[i] |= STATUS_BLOODTHIRSTY;
       activeItemSpaceIdx = -1;
       return true;
@@ -3658,7 +3655,7 @@ if (clonerMode) {
 }
 
 // Upgrader highlight â€" all white pieces selectable
-if (shieldMode || bloodthirstifierMode || swordMode || speedMode) {
+if (shieldMode || vampireFangMode || swordMode || speedMode) {
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [px, py] = xy(i);
@@ -3871,16 +3868,23 @@ function _drawItemInSlot(ctx, item, sx, sy, size) {
     ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
     ctx.fillText('↺', cx2, cy2 + size * 0.04);
     ctx.shadowBlur = 0;
-  } else if (item === ITEM_BLOODTHIRSTIFIER) {
+  } else if (item === ITEM_VAMPIRE_FANG) {
     const cx2 = sx + size / 2, cy2 = sy + size / 2, r = (size - pad * 2) / 2;
     ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#cc0000'; ctx.fill();
+    ctx.fillStyle = '#8b0000'; ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.stroke();
+    // Two white fangs
+    const fw = r * 0.32, fh = r * 0.85, gap = r * 0.12, fy = cy2 - r * 0.25;
     ctx.fillStyle = '#fff';
-    ctx.font = `bold ${Math.floor(size * 0.45)}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
-    ctx.fillText('B', cx2, cy2 + size * 0.02);
+    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 3;
+    for (const fx of [cx2 - gap / 2 - fw, cx2 + gap / 2]) {
+      ctx.beginPath();
+      ctx.arc(fx + fw / 2, fy, fw / 2, Math.PI, 0); // rounded top
+      ctx.lineTo(fx + fw / 2, fy + fh);              // right side to tip
+      ctx.lineTo(fx, fy);                             // left side back up
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.shadowBlur = 0;
   } else {
     const img = spriteImages[ITEM_SPRITE_KEYS[item]];
@@ -4881,7 +4885,7 @@ function handleElementizerClick(cx, cy) {
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
-function handleBloodthirstifierClick(cx, cy) {
+function handleVampireFangClick(cx, cy) {
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
@@ -4889,13 +4893,13 @@ function handleBloodthirstifierClick(cx, cy) {
     statuses[i] |= STATUS_BLOODTHIRSTY;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1; bloodthirstifierMode = false;
+    activeItemSpaceIdx = -1; vampireFangMode = false;
     if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
     return;
   }
   const fromSpace = activeItemSpaceIdx >= 0;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  activeItemSpaceIdx = -1; bloodthirstifierMode = false;
+  activeItemSpaceIdx = -1; vampireFangMode = false;
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
@@ -4973,7 +4977,7 @@ function handleInventoryClick(cx, cy) {
       };
       if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterTo = promoterTo(item); };
       if (isElementalizerItem(item)) modeMap[item] = () => { elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false); };
-      if (item === ITEM_BLOODTHIRSTIFIER) modeMap[item] = () => { bloodthirstifierMode = true; };
+      if (item === ITEM_VAMPIRE_FANG) modeMap[item] = () => { vampireFangMode = true; };
       if (item === ITEM_SWORD) modeMap[item] = () => { swordMode = true; };
       if (item === ITEM_BOOTS) modeMap[item] = () => { speedMode = true; };
       // Rewinder: immediate action, no board-interaction mode
@@ -5206,7 +5210,7 @@ canvas.addEventListener("click", (e) => {
   if (clonerMode) { handleClonerClick(cx, cy); return; }
   if (teleporterMode) { handleTeleporterClick(cx, cy); return; }
   if (elementizerMode) { handleElementizerClick(cx, cy); return; }
-  if (bloodthirstifierMode) { handleBloodthirstifierClick(cx, cy); return; }
+  if (vampireFangMode) { handleVampireFangClick(cx, cy); return; }
   if (swordMode) { handleSwordClick(cx, cy); return; }
   if (speedMode) { handleSpeedClick(cx, cy); return; }
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
@@ -5801,11 +5805,11 @@ function _aiCompleteActiveMode() {
     return;
   }
 
-  if (bloodthirstifierMode) {
+  if (vampireFangMode) {
     let bestI = -1, bestVal = 0;
     for (let i = 0; i < 64; i++) { if (sides[i]===W && !(statuses[i] & STATUS_BLOODTHIRSTY)) { const v=_aiPieceVal(board[i]); if (v>bestVal){bestVal=v;bestI=i;} } }
-    if (bestI >= 0) { const [cx,cy] = cc(bestI); setTimeout(() => handleBloodthirstifierClick(cx, cy), 100); }
-    else { bloodthirstifierMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
+    if (bestI >= 0) { const [cx,cy] = cc(bestI); setTimeout(() => handleVampireFangClick(cx, cy), 100); }
+    else { vampireFangMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
     return;
   }
 
@@ -5821,7 +5825,7 @@ function _aiCompleteActiveMode() {
 // Poll every 600ms: trigger auto-play, and resolve any stuck interactive-item UI
 setInterval(() => {
   if (!autoPlay || gameOver || aiThinking || anim || _autoScheduled) return;
-  if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || bloodthirstifierMode || swordMode) {
+  if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || vampireFangMode || swordMode) {
     _aiCompleteActiveMode(); return;
   }
   if (turn !== W) return;
