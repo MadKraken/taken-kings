@@ -1,4 +1,4 @@
-﻿const VERSION = "441";
+﻿const VERSION = "443";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1333,6 +1333,10 @@ function rollSetup() {
   let _invSlot = 0;
   do { if (_invSlot < inventory.length) inventory[_invSlot++] = _randomItem(); } while (randInt(8) === 0);
 
+  // CHEAT: Speed Up in inventory + Teleporter on board
+  addToInventory(ITEM_BOOTS);
+  itemSpaces[idx(3, 4)] = ITEM_TELEPORTER;
+
 }
 
 function startGame() {
@@ -1957,6 +1961,16 @@ function makeMove(fromI, toI, visual = false) {
 }
 
 function endWhiteTurn() {
+  // If a Speed piece has remaining extra moves, show them before actually ending the turn
+  if (_speedIdx >= 0) {
+    const [_spx, _spy] = xy(_speedIdx);
+    const _spMoves = legalMoves(_spx, _spy);
+    if (_spMoves.length > 0) {
+      selected = _speedIdx; validMoves = _spMoves;
+      draw(); return;
+    }
+    _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+  }
   stopWhiteTurnTimer();
   lastActingSide = W;
   shiftCountdown--;
@@ -4805,8 +4819,11 @@ function handleTeleporterClick(cx, cy) {
       if (board[i] === NONE) {
         if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
+        const _tElem0 = elements[teleporterSelected], _tStat0 = statuses[teleporterSelected], _tAtk0 = attacks[teleporterSelected], _tSpd0 = speeds[teleporterSelected];
         board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
+        elements[i] = _tElem0; statuses[i] = _tStat0; attacks[i] = _tAtk0; speeds[i] = _tSpd0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
+        elements[teleporterSelected] = 0; statuses[teleporterSelected] = 0; attacks[teleporterSelected] = 1; speeds[teleporterSelected] = 1;
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
@@ -4815,6 +4832,7 @@ function handleTeleporterClick(cx, cy) {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
           if (fromSpace) {
+            if (_speedIdx >= 0) _speedIdx = i; // piece teleported; redirect speed second move to destination
             processNextQueuedItem();
           } else {
             recordPosition();
@@ -5064,6 +5082,11 @@ function handleBoardClick(cx, cy) {
             board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem; statuses[bounceI] = attackStat; attacks[bounceI] = attackAtk; speeds[bounceI] = attackSpd;
             clearSquare(fromI);
           }
+          // Pre-register speed so endWhiteTurn shows second move after shop closes
+          const _mSpI = bounceI !== fromI ? bounceI : fromI;
+          if (speeds[_mSpI] > 1 && _speedMovesUsed < speeds[_mSpI] - 1) {
+            _speedMovesUsed++; _speedIdx = _mSpI;
+          }
           openMerchantShop(endWhiteTurn);
         });
         return;
@@ -5115,21 +5138,17 @@ function handleBoardClick(cx, cy) {
             }
           }
           _bloodthirstyIdx = -1;
-          // Speed: piece gets (speeds[i] - 1) extra moves per turn, no capture required
+          // Pre-register speed extra move so endWhiteTurn shows it after any item/interaction
           if (speeds[movedTo] > 1 && _speedMovesUsed < speeds[movedTo] - 1) {
-            const [_spx, _spy] = xy(movedTo);
-            const _spMoves = legalMoves(_spx, _spy);
-            if (_spMoves.length > 0) {
-              _speedMovesUsed++; _speedIdx = movedTo;
-              selected = movedTo; validMoves = _spMoves;
-              draw(); return;
-            }
+            _speedMovesUsed++; _speedIdx = movedTo;
+          } else {
+            _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
           }
-          _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
           const item = itemSpaces[movedTo];
           if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
             const done = activateItemSpace(item, movedTo);
             if (done) endWhiteTurn();
+            // if !done: interactive item mode active; will call endWhiteTurn when complete
           } else { endWhiteTurn(); }
         } else { draw(); }
       };
