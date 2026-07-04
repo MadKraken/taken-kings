@@ -1,4 +1,4 @@
-﻿const VERSION = "437";
+﻿const VERSION = "438";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -267,6 +267,7 @@ let validMoves = [];
 let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
 let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
+let _piecesMovedSinceFire = false; // true once any piece actually moves after fire was set; Field Advance alone doesn't count
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
@@ -1331,6 +1332,11 @@ function rollSetup() {
   inventory.fill(ITEM_NONE);
   let _invSlot = 0;
   do { if (_invSlot < inventory.length) inventory[_invSlot++] = _randomItem(); } while (randInt(8) === 0);
+
+  // CHEAT: White Fire pieces for testing
+  [[1,5,ROOK],[3,5,BISHOP],[5,5,QUEEN]].forEach(([x,y,p]) => {
+    const i = idx(x,y); board[i] = p; sides[i] = W; health[i] = 1; elements[i] = ELEM_FIRE; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1;
+  });
 }
 
 function startGame() {
@@ -1661,6 +1667,7 @@ function pseudoMoves(x, y) {
 // --- Elemental effect functions ---
 
 function applyFireTrail(fromI, toI, p, s) {
+  _piecesMovedSinceFire = false; // reset; fire must see another piece move before it expires
   fireSquares.set(fromI, s);
   fireSquares.set(toI, s); // destination also burns — enemies that capture here are killed
   // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
@@ -1853,6 +1860,7 @@ function calcBouncePos(fromI, toI, p) {
 }
 
 function makeMove(fromI, toI, visual = false) {
+  _piecesMovedSinceFire = true;
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
@@ -2725,7 +2733,7 @@ function aiPlay() {
         neutralPlay(() => {
           merchantPlay(() => {
             applyRiverFlow(() => {
-              fireSquares.clear(); // fire from last White move expires as White's turn begins
+              if (_piecesMovedSinceFire) fireSquares.clear(); // fire expires only once a piece actually moved
               turn = W;
               aiThinking = false;
               takeReplaySnapshot();
@@ -2805,7 +2813,7 @@ function aiPlay() {
       neutralPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
-            fireSquares.clear();
+            if (_piecesMovedSinceFire) fireSquares.clear();
             turn = W;
             aiThinking = false;
             takeReplaySnapshot();
