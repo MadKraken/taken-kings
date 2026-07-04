@@ -1,4 +1,4 @@
-﻿const VERSION = "456";
+﻿const VERSION = "457";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1929,15 +1929,18 @@ function makeMove(fromI, toI, visual = false) {
     }
   }
 
-  // Bounce: white piece attacks neutral â€" attacker bounces back, neutral is hired
+  // White piece attacks neutral: King recruits, all others kill
   if (s === W && sides[toI] === N) {
-    sides[toI] = W;
-    const bounceI = calcBouncePos(fromI, toI, p);
-    if (bounceI !== fromI) {
-      copyPiece(fromI, bounceI); sides[bounceI] = W;
-      clearSquare(fromI);
+    if (p === KING) {
+      sides[toI] = W;
+      const bounceI = calcBouncePos(fromI, toI, p);
+      if (bounceI !== fromI) {
+        copyPiece(fromI, bounceI); sides[bounceI] = W;
+        clearSquare(fromI);
+      }
+      return;
     }
-    return;
+    // non-King: fall through to normal capture logic
   }
 
   // Bounce: attacker hits a piece with more health than attacker's attack power
