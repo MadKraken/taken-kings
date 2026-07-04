@@ -1,4 +1,4 @@
-﻿const VERSION = "431";
+﻿const VERSION = "433";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -118,7 +118,15 @@ function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, ha
     const state = isActive ? 'active' : 'idle';
     const nFrames = ANIM_FRAME_COUNTS[state][piece];
     const animTick = halfSpeed ? Math.floor(_idleAnimFrame / 2) : _idleAnimFrame;
-    const frame = (animTick % nFrames) + 1;
+    const queenActive = (piece === QUEEN && isActive);
+    let frame;
+    if (queenActive || nFrames <= 1) {
+      frame = (animTick % nFrames) + 1;
+    } else {
+      const cycleLen = (nFrames - 1) * 2;
+      const pos = animTick % cycleLen;
+      frame = (pos < nFrames ? pos : cycleLen - pos) + 1;
+    }
     const baseKey = `anim_${state}_${piece}_${frame}`;
     let animImg = spriteImages[baseKey];
     if (animImg) {
@@ -2480,6 +2488,8 @@ function allLegalMovesForSide(s) {
   return moves;
 }
 
+const PIECE_SURVIVAL_BONUS = 15; // flat bonus per white piece alive — prioritizes attrition over trades
+
 function evaluate() {
   let val = 0;
   let whiteKing = false;
@@ -2489,7 +2499,7 @@ function evaluate() {
     const shields = health[i] - 1;
     const effectiveV = shields > 0 ? v * (1 + 0.5 * shields) : v;
     if (sides[i] === W) {
-      val += effectiveV;
+      val += effectiveV + PIECE_SURVIVAL_BONUS;
       if (board[i] === KING) whiteKing = true;
     } else {
       val -= effectiveV;
