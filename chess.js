@@ -1,4 +1,4 @@
-﻿const VERSION = "420";
+﻿const VERSION = "427";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -33,24 +33,112 @@ let _splashRafId = null;
 
 const SIDE_TINT = { [B]: 'rgb(40,30,80)', [N]: 'rgb(180,140,60)' };
 
-// Bake a tinted offscreen canvas from a W sprite. Called once per side+piece, result cached.
-function _makeTinted(img, color) {
+// Animated idle sprite metadata
+const ANIM_PIECE_NAMES = { [PAWN]: 'Pawn', [ROOK]: 'Rook', [KNIGHT]: 'Knight', [BISHOP]: 'Bishop', [QUEEN]: 'Queen', [KING]: 'King' };
+const ANIM_FRAME_COUNTS = {
+  idle:   { [PAWN]: 3, [ROOK]: 3, [KNIGHT]: 3, [BISHOP]: 3, [QUEEN]: 3, [KING]: 3 },
+  active: { [PAWN]: 3, [ROOK]: 3, [KNIGHT]: 3, [BISHOP]: 3, [QUEEN]: 4, [KING]: 3 },
+};
+let _idleAnimFrame = 0;
+let _idleAnimRafId = null;
+let _idleAnimLastMs = 0;
+const IDLE_ANIM_MS = 180;
+function _idleAnimTick(now) {
+  if (now - _idleAnimLastMs >= IDLE_ANIM_MS) { _idleAnimFrame++; _idleAnimLastMs = now; draw(); }
+  _idleAnimRafId = requestAnimationFrame(_idleAnimTick);
+}
+function startIdleAnim() {
+  if (_idleAnimRafId) return;
+  _idleAnimLastMs = performance.now();
+  _idleAnimRafId = requestAnimationFrame(_idleAnimTick);
+}
+
+// Strip the white background from a PNG via edge-flood-fill, preserving white fills
+// inside black outline boundaries. Called once per frame at load time.
+function _makeTransparentBg(img) {
   const oc = document.createElement('canvas');
-  oc.width = 256; oc.height = 256;
+  const w = img.naturalWidth, h = img.naturalHeight;
+  oc.width = w; oc.height = h;
   const oc2 = oc.getContext('2d');
-  oc2.drawImage(img, 0, 0, 256, 256);
+  oc2.drawImage(img, 0, 0);
+  const d = oc2.getImageData(0, 0, w, h);
+  const px = d.data;
+  const isNearWhite = i => px[i] > 220 && px[i+1] > 220 && px[i+2] > 220;
+  // BFS from all near-white edge pixels outward — only background pixels are reachable.
+  const visited = new Uint8Array(w * h);
+  const queue = [];
+  const seed = pi => { if (!visited[pi] && isNearWhite(pi * 4)) { visited[pi] = 1; queue.push(pi); } };
+  for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
+  for (let y = 1; y < h - 1; y++) { seed(y * w); seed(y * w + w - 1); }
+  let head = 0;
+  while (head < queue.length) {
+    const pi = queue[head++];
+    px[pi * 4 + 3] = 0;
+    const x = pi % w, y = (pi / w) | 0;
+    if (x > 0)     seed(pi - 1);
+    if (x < w - 1) seed(pi + 1);
+    if (y > 0)     seed(pi - w);
+    if (y < h - 1) seed(pi + w);
+  }
+  oc2.putImageData(d, 0, 0);
+  // Find the lowest row that contains non-transparent pixels (content bottom).
+  let contentBottom = h - 1;
+  outer: for (let y = h - 1; y >= 0; y--) {
+    for (let x = 0; x < w; x++) {
+      if (px[(y * w + x) * 4 + 3] > 0) { contentBottom = y; break outer; }
+    }
+  }
+  oc._contentBottom = contentBottom;
+  return oc;
+}
+
+// Bake a tinted offscreen canvas from a sprite. Called once per side+piece, result cached.
+function _makeTinted(img, color) {
+  const w = img.width || img.naturalWidth || 256;
+  const h = img.height || img.naturalHeight || 256;
+  const oc = document.createElement('canvas');
+  oc.width = w; oc.height = h;
+  const oc2 = oc.getContext('2d');
+  oc2.drawImage(img, 0, 0, w, h);
   oc2.globalCompositeOperation = 'multiply';
   oc2.fillStyle = color;
-  oc2.fillRect(0, 0, 256, 256);
+  oc2.fillRect(0, 0, w, h);
   oc2.globalCompositeOperation = 'destination-in';
-  oc2.drawImage(img, 0, 0, 256, 256);
+  oc2.drawImage(img, 0, 0, w, h);
   return oc;
 }
 
 // Draws any piece sprite, tinting for B/N sides using the W sprite as base.
 // Tinted canvases are lazily baked and cached in spriteImages on first use.
+// isActive: true to show the Active Idle animation frame (e.g. piece is selected).
 const PIECE_SCALE = { [PAWN]: 0.9, [KNIGHT]: 1.2 };
-function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh) {
+function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, halfSpeed = false) {
+  // Animated sprite path
+  if (ANIM_PIECE_NAMES[piece]) {
+    const state = isActive ? 'active' : 'idle';
+    const nFrames = ANIM_FRAME_COUNTS[state][piece];
+    const animTick = halfSpeed ? Math.floor(_idleAnimFrame / 2) : _idleAnimFrame;
+    const frame = (animTick % nFrames) + 1;
+    const baseKey = `anim_${state}_${piece}_${frame}`;
+    let animImg = spriteImages[baseKey];
+    if (animImg) {
+      if (side !== W) {
+        const tintKey = `${baseKey}_t${side}`;
+        if (!spriteImages[tintKey]) spriteImages[tintKey] = _makeTinted(animImg, SIDE_TINT[side]);
+        animImg = spriteImages[tintKey];
+      }
+      const aw = animImg.width, ah = animImg.height;
+      // Apply per-piece scale (Pawn shrinks, Knight enlarges) then scale by width.
+      const psc = PIECE_SCALE[piece];
+      if (psc) { dx += dw * (1 - psc) / 2; dw *= psc; }
+      const scale = dw / aw;
+      const fw = dw, fh = ah * scale;
+      const feetY = (animImg._contentBottom ?? ah - 1) * scale;
+      ctx.drawImage(animImg, dx, dy + dh - feetY, fw, fh);
+      return;
+    }
+  }
+  // Static sprite fallback
   const wImg = spriteImages[`${W}_${piece}`];
   if (!wImg || !wImg.complete) return;
   const sc = PIECE_SCALE[piece];
@@ -128,22 +216,37 @@ function loadSprites() {
     ['ground',          'sprites/Ground.png'],
     ['merchant',        'sprites/merchant.svg'],
   ];
+  // Animated idle/active-idle frames
+  const ANIM_BASE = "sprites/1 Package (ActiveIdle sprites)/1 Package (Active_Idle sprites)";
+  for (const [piece, pieceName] of Object.entries(ANIM_PIECE_NAMES)) {
+    for (const [stateKey, stateName] of [['idle', 'Idle'], ['active', 'Active Idle']]) {
+      const nFrames = ANIM_FRAME_COUNTS[stateKey][piece];
+      for (let f = 1; f <= nFrames; f++) {
+        const key = `anim_${stateKey}_${piece}_${f}`;
+        const rawPath = `${ANIM_BASE}/${pieceName}/Animations/${stateName}/${pieceName} ${stateName} ${f}.png`;
+        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/');
+        spriteList.push([key, src, true]);
+      }
+    }
+  }
+
   _loadTotal = spriteList.length;
   _loadCount = 0;
-  const done = (key, img) => {
-    if (key === 'logo') spriteImages['logo'] = img; // make logo available for splash ASAP
+  const done = (key, img, processed) => {
+    if (key === 'logo') spriteImages['logo'] = img;
+    spriteImages[key] = processed ?? img;
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
       spritesLoaded = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
       draw();
+      startIdleAnim();
     }
   };
-  for (const [key, src] of spriteList) {
+  for (const [key, src, needsBg] of spriteList) {
     const img = new Image();
-    spriteImages[key] = img;
-    img.onload = () => done(key, img);
-    img.onerror = () => done(key, img);
+    img.onload = () => done(key, img, needsBg ? _makeTransparentBg(img) : null);
+    img.onerror = () => done(key, img, null);
     img.src = src;
   }
 }
@@ -3149,7 +3252,7 @@ for (let x = 0; x < 8; x++) {
 }
 const prevPad = 6;
 for (const w of nextWave) {
-  _drawPieceSprite(ctx, B, w.piece, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+  _drawPieceSprite(ctx, B, w.piece, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2, false, true);
 }
 for (const b of nextBonuses) {
   const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
@@ -3203,7 +3306,7 @@ for (const b of nextBonuses) {
     drawBlockTile(ctx, bpx, bpy, TILE);
   } else if (b.type === 'neutral') {
     {
-      _drawPieceSprite(ctx, N, b.piece, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2);
+      _drawPieceSprite(ctx, N, b.piece, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2, false, true);
     }
   }
 }
@@ -3405,14 +3508,15 @@ for (let i = 0; i < 64; i++) {
   const _waveOv = waveAnim?.drawAt?.get(i);
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
   const _drawY = _waveOv ? _waveOv.cy : MARGIN + y * TILE;
+  const _isActivePiece = (i === selected);
   if (board[i] === KING && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
     ctx.save();
     ctx.shadowColor = '#ff1111';
     ctx.shadowBlur = 28;
-    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
+    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
     ctx.restore();
   } else {
-    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2);
+    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
   }
   // Elemental badges: labeled dots at bottom of tile
   if (elements[i]) {
