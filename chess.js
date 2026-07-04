@@ -1,4 +1,4 @@
-﻿const VERSION = "450";
+﻿const VERSION = "454";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -372,6 +372,7 @@ let shieldMode = false;
 let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
 let _shadowSpaces = new Map(); // idx → item (shadow shown, item falls next end-of-round)
+let effectOrders = Array.from({length: 64}, () => []); // per-square ordered list of effect keys
 let _skyDropAnims = []; // {item, i, startMs, dur} — items falling from sky
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
@@ -447,8 +448,9 @@ function piece(x, y) { return inB(x, y) ? board[idx(x, y)] : NONE; }
 function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
-function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; }
-function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; }
+function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; effectOrders[i] = []; }
+function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; effectOrders[dst] = [...effectOrders[src]]; }
+function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
 function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
@@ -957,6 +959,7 @@ function takeReplaySnapshot() {
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
     elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], fireSquares: [...fireSquares],
+    effectOrders: effectOrders.map(a => [...a]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
 }
@@ -980,6 +983,7 @@ function applyReplaySnapshot(snap) {
   fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   _shadowSpaces = snap.shadowSpaces ? new Map(snap.shadowSpaces) : new Map();
+  if (snap.effectOrders) { for (let i = 0; i < 64; i++) effectOrders[i] = snap.effectOrders[i] ? [...snap.effectOrders[i]] : []; } else { for (let i = 0; i < 64; i++) effectOrders[i] = []; }
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
   if (snap.nextBonuses) nextBonuses = snap.nextBonuses.map(b => ({...b}));
 }
@@ -1131,7 +1135,7 @@ function generateRowBonuses(wave) {
   }
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
-    if (randInt(5) !== 0) continue;
+    if (randInt(12) !== 0) continue;
     const type = ['chest', 'void', 'block', 'neutral', 'neutral', 'neutral'][randInt(6)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
@@ -1159,16 +1163,19 @@ function _rollSpawnEffects(i) {
     'atk', 'hlth', 'spd',
     'bt', 'fire', 'water', 'earth', 'air'
   ];
-  while (randInt(16) === 0 && pool.length > 0) {
+  let count = 0;
+  while (count < 3 && randInt(16) === 0 && pool.length > 0) {
     const pick = pool[randInt(pool.length)];
-    if (pick === 'atk')   { attacks[i] = 2; pool = pool.filter(x => x !== 'atk'); }
-    else if (pick === 'hlth')  { health[i] = 2; pool = pool.filter(x => x !== 'hlth'); }
-    else if (pick === 'spd')   { speeds[i] = 2; pool = pool.filter(x => x !== 'spd'); }
-    else if (pick === 'bt')    { statuses[i] |= STATUS_BLOODTHIRSTY; pool = pool.filter(x => x !== 'bt'); }
-    else if (pick === 'fire')  { elements[i] |= ELEM_FIRE;  pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
-    else if (pick === 'water') { elements[i] |= ELEM_WATER; pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
-    else if (pick === 'earth') { elements[i] |= ELEM_EARTH; pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
-    else if (pick === 'air')   { elements[i] |= ELEM_AIR;   pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
+    pool = pool.filter(x => x !== pick);
+    if (pick === 'atk')   { attacks[i] = 2;                        _grantEffect(i, 'atk'); }
+    else if (pick === 'hlth')  { health[i] = 2;                   _grantEffect(i, 'hlt'); }
+    else if (pick === 'spd')   { speeds[i] = 2;                   _grantEffect(i, 'spd'); }
+    else if (pick === 'bt')    { statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt'); }
+    else if (pick === 'fire')  { elements[i] |= ELEM_FIRE;        _grantEffect(i, 'fire'); }
+    else if (pick === 'water') { elements[i] |= ELEM_WATER;       _grantEffect(i, 'water'); }
+    else if (pick === 'earth') { elements[i] |= ELEM_EARTH;       _grantEffect(i, 'earth'); }
+    else if (pick === 'air')   { elements[i] |= ELEM_AIR;         _grantEffect(i, 'air'); }
+    count++;
   }
 }
 // Legacy aliases kept for any remaining direct callers during transition
@@ -1287,6 +1294,7 @@ function initBoard() {
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   _shadowSpaces = new Map(); _skyDropAnims = [];
+  for (let i = 0; i < 64; i++) effectOrders[i] = [];
   pendingItemQueue = [];
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
@@ -1326,6 +1334,7 @@ function _randomEnemyPiece() {
 function rollSetup() {
   // Clear all pieces and regenerate enemy wave
   board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
+  for (let i = 0; i < 64; i++) effectOrders[i] = [];
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
@@ -1611,33 +1620,35 @@ function pseudoMoves(x, y) {
   // Air Knights get their own extended move set
   if (isAir && p === KNIGHT) return airKnightMoves(x, y, s);
   if (p === PAWN) {
-    if (s === W) {
-      // White pawns move and capture upward only (toward row 0)
-      const dir = -1;
-      const fwd = piece(x, y + dir);
-      const fwdI = idx(x, y + dir);
-      if (inB(x, y + dir) && fwd === NONE && fwdI !== merchantIdx && !isVoidSpace(fwdI) && !isBlockSpace(fwdI)) {
-        moves.push(fwdI);
-        if (y === 6 && fwd === NONE && piece(x, y - 2) === NONE && !isVoidSpace(idx(x, y - 2)) && !isBlockSpace(idx(x, y - 2))) moves.push(idx(x, y - 2));
-      }
-      for (const dx of [-1, 1]) {
-        const nx = x + dx, ny = y + dir;
-        if (inB(nx, ny) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
-          if (side(nx, ny) === e) moves.push(idx(nx, ny));
-          else if (idx(nx, ny) === epTarget) moves.push(idx(nx, ny));
-          else if (idx(nx, ny) === merchantIdx) moves.push(idx(nx, ny));
+    const dir = s === W ? -1 : 1;
+    const startY   = s === W ? 6 : 0;
+    const fwdRange = isAir ? 2 : 1;
+    const maxFwd   = isAir ? 4 : 2; // extra distance available from starting row
+    const capRange = isAir ? 2 : 1;
+    // Forward steps — path must be clear
+    const steps = y === startY ? maxFwd : fwdRange;
+    for (let step = 1; step <= steps; step++) {
+      const ny = y + dir * step;
+      if (!inB(x, ny)) break;
+      const ni = idx(x, ny);
+      if (ni === merchantIdx || isVoidSpace(ni) || isBlockSpace(ni)) break;
+      if (piece(x, ny) !== NONE) break;
+      moves.push(ni);
+    }
+    // Diagonal captures — can reach up to capRange squares; stop on any occupied square
+    for (const dx of [-1, 1]) {
+      for (let step = 1; step <= capRange; step++) {
+        const nx = x + dx * step, ny = y + dir * step;
+        if (!inB(nx, ny)) break;
+        const ni = idx(nx, ny);
+        if (isVoidSpace(ni) || isBlockSpace(ni)) break;
+        if (s === W) {
+          if (side(nx, ny) === e) { moves.push(ni); break; }
+          if (ni === epTarget || ni === merchantIdx) { moves.push(ni); break; }
+        } else {
+          if (side(nx, ny) === e) { moves.push(ni); break; }
         }
-      }
-    } else {
-      // Black pawns move down; can move two squares from row 0 (first turn after entering)
-      const dir = 1;
-      if (inB(x, y + dir) && piece(x, y + dir) === NONE && !isVoidSpace(idx(x, y + dir)) && !isBlockSpace(idx(x, y + dir))) {
-        moves.push(idx(x, y + dir));
-        if (y === 0 && piece(x, y + 2) === NONE && !isVoidSpace(idx(x, y + 2)) && !isBlockSpace(idx(x, y + 2))) moves.push(idx(x, y + 2));
-      }
-      for (const dx of [-1, 1]) {
-        const nx = x + dx, ny = y + dir;
-        if (inB(nx, ny) && side(nx, ny) === e && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+        if (piece(nx, ny) !== NONE) break; // own piece or neutral blocks further diagonal
       }
     }
   } else if (p === CHECKERS) {
@@ -1996,6 +2007,7 @@ function makeMove(fromI, toI, visual = false) {
   if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
   board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
   elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
+  effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
 
 }
@@ -2122,6 +2134,7 @@ function teamLeap() {
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
   const newSpeeds = new Array(64).fill(1);
+  const newEffectOrdersLeap = Array.from({length: 64}, () => []);
 
   // Enemies stay
   for (let i = 0; i < 64; i++) {
@@ -2133,6 +2146,7 @@ function teamLeap() {
       newStatuses[i] = statuses[i];
       newAttacks[i] = attacks[i];
       newSpeeds[i] = speeds[i];
+      newEffectOrdersLeap[i] = [...effectOrders[i]];
     }
   }
 
@@ -2149,10 +2163,10 @@ function teamLeap() {
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
-        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i];
+        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i]; newEffectOrdersLeap[ni] = [...effectOrders[i]];
       }
     } else {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i];
+      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i]; newEffectOrdersLeap[i] = [...effectOrders[i]];
     }
   }
 
@@ -2163,6 +2177,7 @@ function teamLeap() {
   statuses.splice(0, 64, ...newStatuses);
   attacks.splice(0, 64, ...newAttacks);
   speeds.splice(0, 64, ...newSpeeds);
+  for (let i = 0; i < 64; i++) effectOrders[i] = newEffectOrdersLeap[i];
 
   epTarget = -1;
   selected = -1;
@@ -2231,6 +2246,7 @@ function fieldAdvance(playerTriggered = false) {
   const newStatuses = new Array(64).fill(0);
   const newAttacks = new Array(64).fill(1);
   const newSpeeds = new Array(64).fill(1);
+  const newEffectOrders = Array.from({length: 64}, () => []);
 
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
@@ -2248,6 +2264,7 @@ function fieldAdvance(playerTriggered = false) {
     newStatuses[ni] = statuses[i];
     newAttacks[ni] = attacks[i];
     newSpeeds[ni] = speeds[i];
+    newEffectOrders[ni] = [...effectOrders[i]];
   }
 
   board.splice(0, 64, ...newBoard);
@@ -2257,6 +2274,7 @@ function fieldAdvance(playerTriggered = false) {
   statuses.splice(0, 64, ...newStatuses);
   attacks.splice(0, 64, ...newAttacks);
   speeds.splice(0, 64, ...newSpeeds);
+  for (let i = 0; i < 64; i++) effectOrders[i] = newEffectOrders[i];
 
   // Scroll special spaces down
   const newSpecialSpaces = new Array(64).fill(null);
@@ -2431,42 +2449,38 @@ function fieldAdvance(playerTriggered = false) {
 
 // --- AI ---
 
+// Per-square flat arrays — add new ones here and save/restore picks them up automatically.
+const _squareArrays = () => [board, sides, health, elements, statuses, attacks, speeds];
+
 function saveState() {
   return {
-    board: [...board], sides: [...sides], epTarget,
-    wkMoved, wraMoved, wrhMoved, score, gold, inventory: [...inventory],
+    squares: _squareArrays().map(a => [...a]),
+    effectOrders: effectOrders.map(a => [...a]),
+    epTarget, wkMoved, wraMoved, wrhMoved, score, gold,
+    inventory: [...inventory],
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
-    histLen: positionHistory.length,
-    health: [...health], shiftCountdown,
-    elements: [...elements],
-    statuses: [...statuses],
-    attacks: [...attacks],
-    speeds: [...speeds],
+    histLen: positionHistory.length, shiftCountdown,
     chestSpaces: new Set(chestSpaces),
-    merchantIdx, merchantQueued, merchantQueuedCol
+    merchantIdx, merchantQueued, merchantQueuedCol,
   };
 }
 
 function restoreState(st) {
-  board.splice(0, 64, ...st.board);
-  sides.splice(0, 64, ...st.sides);
+  _squareArrays().forEach((a, idx) => a.splice(0, 64, ...st.squares[idx]));
+  for (let i = 0; i < 64; i++) effectOrders[i] = st.effectOrders ? [...st.effectOrders[i]] : [];
   epTarget = st.epTarget;
-  wkMoved = st.wkMoved;
-  wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
+  wkMoved = st.wkMoved; wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
   score = st.score; gold = st.gold; inventory.splice(0, inventory.length, ...st.inventory);
   spawnCount = st.spawnCount; nextBonuses = st.nextBonuses.map(b => ({...b}));
   nextWave = st.nextWave;
   positionHistory.length = st.histLen;
-  health.splice(0, 64, ...st.health);
   shiftCountdown = st.shiftCountdown;
-  if (st.elements) elements.splice(0, 64, ...st.elements); else elements.fill(0);
-  if (st.statuses) statuses.splice(0, 64, ...st.statuses); else statuses.fill(0);
-  if (st.attacks) attacks.splice(0, 64, ...st.attacks); else attacks.fill(1);
-  if (st.speeds) speeds.splice(0, 64, ...st.speeds); else speeds.fill(1);
   if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
 }
+
+function withState(fn) { const st = saveState(); try { return fn(); } finally { restoreState(st); } }
 
 function canSimulateLeap() {
   return true; // minimax always considers field advance as a White option
@@ -2608,33 +2622,20 @@ function minimax(depth, alpha, beta, maximizing) {
   if (maximizing) {
     let best = -Infinity;
     for (const [from, to] of moves) {
-      const st = saveState();
-      makeMove(from, to);
-      recordPosition();
-      const val = minimax(depth - 1, alpha, beta, false);
-      restoreState(st);
+      const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(depth - 1, alpha, beta, false); });
       best = Math.max(best, val);
       alpha = Math.max(alpha, val);
       if (beta <= alpha) break;
     }
-    // Also consider team leap as a white move
     if (canSimulateLeap()) {
-      const st = saveState();
-      simulateLeap();
-      recordPosition();
-      const val = minimax(depth - 1, alpha, beta, false);
-      restoreState(st);
+      const val = withState(() => { simulateLeap(); recordPosition(); return minimax(depth - 1, alpha, beta, false); });
       best = Math.max(best, val);
     }
     return best;
   } else {
     let best = Infinity;
     for (const [from, to] of moves) {
-      const st = saveState();
-      makeMove(from, to);
-      recordPosition();
-      const val = minimax(depth - 1, alpha, beta, true);
-      restoreState(st);
+      const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(depth - 1, alpha, beta, true); });
       best = Math.min(best, val);
       beta = Math.min(beta, val);
       if (beta <= alpha) break;
@@ -2663,12 +2664,12 @@ function _isSingleKingCheckmated(ki) {
   if (!isAttacked(kx, ky, B)) return false; // King is not in check
   const blackMoves = allLegalMovesForSide(B);
   for (const [from, to] of blackMoves) {
-    const st = saveState();
-    board[to] = board[from]; sides[to] = sides[from]; board[from] = NONE; sides[from] = 0;
-    const newPos = (from === ki) ? to : ki;
-    const [nkx, nky] = xy(newPos);
-    const safe = board[newPos] === KING && sides[newPos] === B && !isAttacked(nkx, nky, B);
-    restoreState(st);
+    const safe = withState(() => {
+      board[to] = board[from]; sides[to] = sides[from]; board[from] = NONE; sides[from] = 0;
+      const newPos = (from === ki) ? to : ki;
+      const [nkx, nky] = xy(newPos);
+      return board[newPos] === KING && sides[newPos] === B && !isAttacked(nkx, nky, B);
+    });
     if (safe) return false;
   }
   return true;
@@ -2693,18 +2694,14 @@ function aiBestMove() {
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
     if ((board[from] !== CHECKERS && board[from] !== CHECKERS_KING) || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
-    const st = saveState(); makeMove(from, to); const ok = _checkersChainCanKillKing(to); restoreState(st); return ok;
+    return withState(() => { makeMove(from, to); return _checkersChainCanKillKing(to); });
   });
   if (chainKingAttacks.length > 0) return chainKingAttacks[randInt(chainKingAttacks.length)];
   if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
-    const st = saveState();
-    makeMove(from, to);
-    recordPosition();
-    const val = minimax(AI_DEPTH - 1, -Infinity, Infinity, true);
-    restoreState(st);
+    const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(AI_DEPTH - 1, -Infinity, Infinity, true); });
     if (val < bestScore) {
       bestScore = val;
       bestMoves = [[from, to]];
@@ -2722,13 +2719,8 @@ function playerBestMove() {
   let bestScore = -Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
-    // Credit captures at the root so free captures aren't overridden by positional noise
     const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
-    const st = saveState();
-    makeMove(from, to);
-    recordPosition();
-    const val = minimax(HINT_DEPTH - 1, -Infinity, Infinity, false) + captureBonus;
-    restoreState(st);
+    const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(HINT_DEPTH - 1, -Infinity, Infinity, false); }) + captureBonus;
     if (val > bestScore) {
       bestScore = val;
       bestMoves = [[from, to]];
@@ -2905,11 +2897,7 @@ function _checkersChainCanKillKing(i) {
     const [ix, iy] = xy(i), [jx, jy] = xy(jd);
     const midI = idx((ix + jx) >> 1, (iy + jy) >> 1);
     if (board[midI] === KING) return true;
-    const st = saveState();
-    makeMove(i, jd);
-    const result = _checkersChainCanKillKing(jd);
-    restoreState(st);
-    if (result) return true;
+    if (withState(() => { makeMove(i, jd); return _checkersChainCanKillKing(jd); })) return true;
   }
   return false;
 }
@@ -3043,13 +3031,13 @@ function canItemAffectPiece(item, i) {
   const p = board[i];
   if (isPromoterItem(item)) { return p === PAWN && sides[i] === W; }
   switch (item) {
-    case ITEM_SHIELD: return true;
+    case ITEM_SHIELD: return health[i] < 2;
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
-    case ITEM_VAMPIRE_FANG: return true;
-    case ITEM_SWORD: return true;
-    case ITEM_BOOTS: return true;
+    case ITEM_VAMPIRE_FANG: return !(statuses[i] & STATUS_BLOODTHIRSTY);
+    case ITEM_SWORD: return attacks[i] < 2;
+    case ITEM_BOOTS: return speeds[i] < 2;
     default: if (isElementalizerItem(item)) return true; return false;
   }
 }
@@ -3060,16 +3048,17 @@ function _applyItemAuto(item, i) {
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_BOMB: detonateBomb(i); break;
-    case ITEM_SHIELD: if (health[i] < 2) health[i] = 2; break;
-    case ITEM_SWORD: if (attacks[i] < 2) attacks[i] = 2; break;
-    case ITEM_BOOTS: if (speeds[i] < 2) speeds[i] = 2; break;
-    case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY; break;
+    case ITEM_SHIELD: if (health[i] < 2) { health[i] = 2; _grantEffect(i, 'hlt'); } break;
+    case ITEM_SWORD: if (attacks[i] < 2) { attacks[i] = 2; _grantEffect(i, 'atk'); } break;
+    case ITEM_BOOTS: if (speeds[i] < 2) { speeds[i] = 2; _grantEffect(i, 'spd'); } break;
+    case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt'); break;
     default:
       if (isElementalizerItem(item)) {
         const elem = item === ITEM_ELEM_MYSTERY
           ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
           : elemFromItem(item, false);
         elements[i] |= elem;
+        _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[elem]);
       }
       break;
   }
@@ -3144,19 +3133,19 @@ function activateItemSpace(item, i) {
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_SHIELD:
-      health[i] = 2;
+      health[i] = 2; _grantEffect(i, 'hlt');
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_VAMPIRE_FANG:
-      statuses[i] |= STATUS_BLOODTHIRSTY;
+      statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt');
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_SWORD:
-      attacks[i] = 2;
+      attacks[i] = 2; _grantEffect(i, 'atk');
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_BOOTS:
-      speeds[i] = 2;
+      speeds[i] = 2; _grantEffect(i, 'spd');
       activeItemSpaceIdx = -1;
       return true;
     default:
@@ -3170,6 +3159,7 @@ function activateItemSpace(item, i) {
           ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
           : elemFromItem(item, false);
         elements[i] |= elem;
+        _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[elem]);
         activeItemSpaceIdx = -1;
         return true;
       }
@@ -3700,44 +3690,7 @@ for (let i = 0; i < 64; i++) {
   } else {
     _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
   }
-  // Elemental badges: labeled dots at bottom of tile
-  if (elements[i]) {
-    const present = ELEM_ALL.filter(e => elements[i] & e);
-    const dotR = 12, spacing = 26;
-    const startX = _drawX + TILE / 2 - (present.length - 1) * spacing / 2;
-    const dotY = _drawY + TILE - dotR - 3;
-    for (let k = 0; k < present.length; k++) {
-      const cx2 = startX + k * spacing;
-      // White backing for contrast
-      ctx.beginPath(); ctx.arc(cx2, dotY, dotR + 2, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
-      // Colored fill
-      ctx.beginPath(); ctx.arc(cx2, dotY, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = ELEM_COLORS[present[k]]; ctx.fill();
-      // Dark border
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
-      // Letter initial
-      ctx.fillStyle = 'rgba(0,0,0,0.85)';
-      ctx.font = `bold ${dotR}px sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(ELEM_NAMES[present[k]][0], cx2, dotY + 1);
-    }
-  }
-  // Bloodthirsty badge: red sword dot in top-left corner
-  if (statuses[i] & STATUS_BLOODTHIRSTY) {
-    const dotR = 11;
-    const bx = _drawX + dotR + 4, by = _drawY + dotR + 4;
-    ctx.beginPath(); ctx.arc(bx, by, dotR + 2, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(bx, by, dotR, 0, Math.PI * 2);
-    ctx.fillStyle = '#cc0000'; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.font = `bold ${dotR}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('B', bx, by + 1);
-  }
-  _drawPieceBadges(ctx, _drawX, _drawY, health[i], attacks[i], speeds[i]);
+  _drawPieceEffectIcons(ctx, _drawX, _drawY, effectOrders[i]);
 }
 
 // Draw ghost sprites for void-bound wave pieces (already removed from board)
@@ -3890,42 +3843,7 @@ if (anim && anim.pieces) {
         _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
       }
     }
-    _drawPieceBadges(ctx, acx, acy, ap.hlth, ap.atk ?? 1, ap.spd ?? 1);
-    // Bloodthirsty badge at interpolated position
-    const apStatus = ap.toIdx >= 0 ? statuses[ap.toIdx] : 0;
-    if (apStatus & STATUS_BLOODTHIRSTY) {
-      const dotR = 11;
-      const bx = acx + dotR + 4, by = acy + dotR + 4;
-      ctx.beginPath(); ctx.arc(bx, by, dotR + 2, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
-      ctx.beginPath(); ctx.arc(bx, by, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = '#cc0000'; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.95)';
-      ctx.font = `bold ${dotR}px sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('B', bx, by + 1);
-    }
-    // Element badges at interpolated position
-    const apElems = ap.toIdx >= 0 ? elements[ap.toIdx] : 0;
-    if (apElems) {
-      const present = ELEM_ALL.filter(e => apElems & e);
-      const dotR = 12, spacing = 26;
-      const startX = acx + TILE / 2 - (present.length - 1) * spacing / 2;
-      const dotY = acy + TILE - dotR - 3;
-      for (let k = 0; k < present.length; k++) {
-        const cx2 = startX + k * spacing;
-        ctx.beginPath(); ctx.arc(cx2, dotY, dotR + 2, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
-        ctx.beginPath(); ctx.arc(cx2, dotY, dotR, 0, Math.PI * 2);
-        ctx.fillStyle = ELEM_COLORS[present[k]]; ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.fillStyle = 'rgba(0,0,0,0.85)';
-        ctx.font = `bold ${dotR}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(ELEM_NAMES[present[k]][0], cx2, dotY + 1);
-      }
-    }
+    _drawPieceEffectIcons(ctx, acx, acy, ap.toIdx >= 0 ? effectOrders[ap.toIdx] : []);
   }
 }
 }
@@ -3944,6 +3862,36 @@ ctx.fillStyle = "#fff";
 ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
 }
 
+
+function _drawEffectDot(ctx, cx, cy, r, color, letter, lightText) {
+  ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = lightText ? 'rgba(255,255,255,0.95)' : 'rgba(0,0,0,0.85)';
+  ctx.font = `bold ${r}px sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(letter, cx, cy + 1);
+}
+
+// Draw up to 3 effect icons (in acquisition order) at bottom-left, bottom-center, bottom-right.
+function _drawPieceEffectIcons(ctx, drawX, drawY, effectList) {
+  if (!effectList?.length) return;
+  const show = effectList.slice(0, 3);
+  const sz = 45, r = 12;
+  const slotXs = [drawX + TILE * 0.17, drawX + TILE * 0.5, drawX + TILE * 0.83];
+  const cy = drawY + TILE - sz / 2 - 2;
+  const dotProps = { bt: ['#cc0000','B',true], fire: ['#ff4400','F',true], water: ['#22aaff','W',false], earth: ['#886600','E',true], air: ['#aaeeff','A',false] };
+  for (let k = 0; k < show.length; k++) {
+    const cx = slotXs[k];
+    const eff = show[k];
+    if (eff === 'atk') { const img = spriteImages["item_sword"];    if (img?.complete) ctx.drawImage(img, cx-sz/2, cy-sz/2, sz, sz); }
+    else if (eff === 'hlt') { const img = spriteImages["item_upgrader"]; if (img?.complete) ctx.drawImage(img, cx-sz/2, cy-sz/2, sz, sz); }
+    else if (eff === 'spd') { const img = spriteImages["item_boots"];    if (img?.complete) ctx.drawImage(img, cx-sz/2, cy-sz/2, sz, sz); }
+    else if (dotProps[eff]) { const [color, letter, light] = dotProps[eff]; _drawEffectDot(ctx, cx, cy, r, color, letter, light); }
+  }
+}
 
 function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, spd, sz = 45) {
   if (hlth > 1) {
@@ -4782,7 +4730,7 @@ canvas.addEventListener("mouseup", (e) => {
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_SHIELD && sides[i] === W) {
-      health[i] = 2;
+      health[i] = 2; _grantEffect(i, 'hlt');
       removeFromInventory(slot); delete inventory._activeSlot;
       shieldMode = false;
       dragConsumed = true; draw(); return;
@@ -4903,7 +4851,7 @@ function handleShieldClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    health[i] = 2;
+    health[i] = 2; _grantEffect(i, 'hlt');
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     shieldMode = false; draw(); return;
   }
@@ -4978,10 +4926,11 @@ function handleTeleporterClick(cx, cy) {
         if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         const _tElem0 = elements[teleporterSelected], _tStat0 = statuses[teleporterSelected], _tAtk0 = attacks[teleporterSelected], _tSpd0 = speeds[teleporterSelected];
+        const _tOrd0 = [...effectOrders[teleporterSelected]];
         board[i] = _tPiece0; sides[i] = W; health[i] = _tHlth0;
-        elements[i] = _tElem0; statuses[i] = _tStat0; attacks[i] = _tAtk0; speeds[i] = _tSpd0;
+        elements[i] = _tElem0; statuses[i] = _tStat0; attacks[i] = _tAtk0; speeds[i] = _tSpd0; effectOrders[i] = _tOrd0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
-        elements[teleporterSelected] = 0; statuses[teleporterSelected] = 0; attacks[teleporterSelected] = 1; speeds[teleporterSelected] = 1;
+        elements[teleporterSelected] = 0; statuses[teleporterSelected] = 0; attacks[teleporterSelected] = 1; speeds[teleporterSelected] = 1; effectOrders[teleporterSelected] = [];
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
@@ -5020,8 +4969,10 @@ function handleElementizerClick(cx, cy) {
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
+    effectOrders[i] = effectOrders[i].filter(e => e !== 'fire' && e !== 'water' && e !== 'earth' && e !== 'air');
     elements[i] = resolvedElem;
-    if (resolvedElem === ELEM_EARTH) health[i] = 2;
+    _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[resolvedElem]);
+    if (resolvedElem === ELEM_EARTH) { health[i] = 2; _grantEffect(i, 'hlt'); }
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
@@ -5039,7 +4990,7 @@ function handleVampireFangClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    statuses[i] |= STATUS_BLOODTHIRSTY;
+    statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt');
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; vampireFangMode = false;
@@ -5057,7 +5008,7 @@ function handleSwordClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    attacks[i] = 2;
+    attacks[i] = 2; _grantEffect(i, 'atk');
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; swordMode = false;
@@ -5075,7 +5026,7 @@ function handleSpeedClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    speeds[i] = 2;
+    speeds[i] = 2; _grantEffect(i, 'spd');
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; speedMode = false;
@@ -5831,14 +5782,11 @@ function _aiWhiteStep() {
   const move = playerBestMove(); // [fromI, toI] or null
 
   // Eval after a simulated action (depth 2 — sees two plies for Team/Field comparison)
-  const quickEval = (simFn) => {
-    const st = saveState();
+  const quickEval = (simFn) => withState(() => {
     simFn();
     recordPosition();
-    const val = minimax(2, -Infinity, Infinity, false);
-    restoreState(st);
-    return val;
-  };
+    return minimax(2, -Infinity, Infinity, false);
+  });
 
   const moveVal  = move ? quickEval(() => makeMove(move[0], move[1])) : -Infinity;
   const teamVal  = quickEval(simulateTeamAdvance);
