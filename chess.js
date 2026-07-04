@@ -1,4 +1,4 @@
-﻿const VERSION = "462";
+﻿const VERSION = "464";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2651,6 +2651,37 @@ function evaluate() {
   return val;
 }
 
+// Extra follow-up moves the piece now at `toI` earns this turn: Speed (speeds-1) plus a
+// Bloodthirsty bonus move if the move that landed there was a capture.
+function _extraMoveBudget(toI, wasCapture) {
+  const spd = speeds[toI] > 1 ? speeds[toI] - 1 : 0;
+  const bt = (wasCapture && (statuses[toI] & STATUS_BLOODTHIRSTY)) ? 1 : 0;
+  return spd + bt;
+}
+
+// After the moving side's piece reaches `pieceI` with `extra` follow-up moves available, let that
+// side optionally chain more moves with the same piece before the turn passes to the opponent.
+// This models multi-move turns (Speed / Bloodthirsty) inside the search — for both sides.
+function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
+  let best = minimax(depth - 1, alpha, beta, !moverIsMax); // option: end the turn now
+  const s = moverIsMax ? W : B, opp = moverIsMax ? B : W;
+  if (extra <= 0 || board[pieceI] === NONE || sides[pieceI] !== s) return best;
+  if (moverIsMax) { if (best >= beta) return best; alpha = Math.max(alpha, best); }
+  else           { if (best <= alpha) return best; beta = Math.min(beta, best); }
+  const [px, py] = xy(pieceI);
+  for (const to of legalMoves(px, py)) {
+    if (s === B && to === merchantIdx) continue;
+    const val = withState(() => {
+      const wasCap = sides[to] === opp;
+      makeMove(pieceI, to); recordPosition();
+      return _turnContinuation(to, extra - 1, depth, alpha, beta, moverIsMax);
+    });
+    if (moverIsMax) { best = Math.max(best, val); if (best >= beta) break; alpha = Math.max(alpha, best); }
+    else           { best = Math.min(best, val); if (best <= alpha) break; beta = Math.min(beta, best); }
+  }
+  return best;
+}
+
 function minimax(depth, alpha, beta, maximizing) {
   if (depth === 0) return evaluate();
 
@@ -2668,7 +2699,11 @@ function minimax(depth, alpha, beta, maximizing) {
   if (maximizing) {
     let best = -Infinity;
     for (const [from, to] of moves) {
-      const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(depth - 1, alpha, beta, false); });
+      const val = withState(() => {
+        const wasCap = sides[to] === B;
+        makeMove(from, to); recordPosition();
+        return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, true);
+      });
       best = Math.max(best, val);
       alpha = Math.max(alpha, val);
       if (beta <= alpha) break;
@@ -2681,7 +2716,11 @@ function minimax(depth, alpha, beta, maximizing) {
   } else {
     let best = Infinity;
     for (const [from, to] of moves) {
-      const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(depth - 1, alpha, beta, true); });
+      const val = withState(() => {
+        const wasCap = sides[to] === W;
+        makeMove(from, to); recordPosition();
+        return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, false);
+      });
       best = Math.min(best, val);
       beta = Math.min(beta, val);
       if (beta <= alpha) break;
@@ -2747,7 +2786,11 @@ function aiBestMove() {
   let bestScore = Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
-    const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(AI_DEPTH - 1, -Infinity, Infinity, true); });
+    const val = withState(() => {
+      const wasCap = sides[to] === W;
+      makeMove(from, to); recordPosition();
+      return _turnContinuation(to, _extraMoveBudget(to, wasCap), AI_DEPTH, -Infinity, Infinity, false);
+    });
     if (val < bestScore) {
       bestScore = val;
       bestMoves = [[from, to]];
@@ -2766,7 +2809,11 @@ function playerBestMove() {
   let bestMoves = [];
   for (const [from, to] of moves) {
     const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
-    const val = withState(() => { makeMove(from, to); recordPosition(); return minimax(HINT_DEPTH - 1, -Infinity, Infinity, false); }) + captureBonus;
+    const val = withState(() => {
+      const wasCap = sides[to] === B;
+      makeMove(from, to); recordPosition();
+      return _turnContinuation(to, _extraMoveBudget(to, wasCap), HINT_DEPTH, -Infinity, Infinity, true);
+    }) + captureBonus;
     if (val > bestScore) {
       bestScore = val;
       bestMoves = [[from, to]];
@@ -2865,7 +2912,7 @@ function aiPlay() {
             const bonkCX = MARGIN + bdx * TILE, bonkCY = BOARD_Y + MARGIN + bdy * TILE;
             startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest], spd: speeds[result.bonkDest] }], 0, () => {
               if (wasLastShield) startShieldPop(hitCX, hitCY);
-              _aiFinish();
+              _aiSpeedContinue(move[1], 0, _aiFinish); // Earth attacker now occupies the defender's square
             });
           } else {
             // Normal bounce: animate attacker sliding back
@@ -2873,13 +2920,16 @@ function aiPlay() {
             const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
             startAnim([{ toIdx: result.bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
               if (wasLastShield) startShieldPop(hitCX, hitCY);
-              _aiFinish();
+              _aiSpeedContinue(result.bounceI, 0, _aiFinish); // attacker bounced back — may still have Speed moves
             });
           }
         });
       } else {
         const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
         const _aiWaveData = (_aiFromElems & ELEM_WATER) ? _waveLineSqFromMove(move[0], move[1], _aiFromPiece0) : null;
+        // Capture detection (before the move): a White target, or a checkers jump over a piece.
+        const _aiWasCapture = sides[move[1]] === W
+          || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2);
         makeMove(move[0], move[1], true);
         if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
         if (move[1] === merchantIdx) respawnMerchant();
@@ -2897,7 +2947,8 @@ function aiPlay() {
           checkFireDeath(move[1]);
           if (board[move[1]] !== NONE && itemSpaces[move[1]] !== ITEM_NONE) _applyItemAuto(itemSpaces[move[1]], move[1]);
           recordPosition();
-          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () => _aiSpeedContinue(move[1], 0, _aiFinish));
+          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () =>
+            _aiBloodthirstyContinue(move[1], _aiWasCapture, (btDest) => _aiSpeedContinue(btDest, 0, _aiFinish)));
           const _aiChainContinues = _aiIsCheckersJump && _checkersJumpsFrom(move[1]).length > 0;
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
@@ -2970,13 +3021,13 @@ function _checkersJumpsFrom(i) {
   return jumps;
 }
 
-function _aiSpeedContinue(dest, movesUsed, onDone) {
-  if (board[dest] === NONE || sides[dest] !== B || speeds[dest] <= 1 || movesUsed >= speeds[dest] - 1) { onDone(); return; }
+// Perform one greedy extra move for the Black piece at `dest` (capture > advance toward White),
+// animating it. Calls onDone(newIdx) once resolved, or onDone(dest) if the piece has no move.
+function _aiExtraMove(dest, onDone) {
   const [dx, dy] = xy(dest);
-  // Collect legal moves for just this piece
   const pMoves = legalMoves(dx, dy);
-  if (pMoves.length === 0) { onDone(); return; }
-  // Pick greedily: capture > advance (lower y = closer to White)
+  if (pMoves.length === 0) { onDone(dest); return; }
+  // Pick greedily: capture > advance (higher y = closer to White's back rank)
   let best = pMoves[0];
   for (const m of pMoves) {
     if (board[m] !== NONE && sides[m] === W) { best = m; break; }
@@ -2985,22 +3036,34 @@ function _aiSpeedContinue(dest, movesUsed, onDone) {
   const [fx, fy] = xy(dest), [tx, ty] = xy(best);
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
   const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
-  const spElems = elements[dest], spPiece0 = board[dest], spSide0 = sides[dest];
-  const spWaveData = (spElems & ELEM_WATER) ? _waveLineSqFromMove(dest, best, spPiece0) : null;
+  const elems = elements[dest], piece0 = board[dest], side0 = sides[dest];
+  const waveData = (elems & ELEM_WATER) ? _waveLineSqFromMove(dest, best, piece0) : null;
   makeMove(dest, best, true);
-  if (spElems & ELEM_FIRE) applyFireTrail(dest, best, spPiece0, spSide0);
-  const sp0 = board[best], ss0 = sides[best], sh0 = health[best];
-  const spAnims = [{ toIdx: best, fromCX, fromCY, toCX, toCY, piece: sp0, side: ss0, hlth: sh0, atk: attacks[best], spd: speeds[best] }];
-  _appendCaptureGhosts(spAnims);
-  startAnim(spAnims, 0, () => {
+  if (elems & ELEM_FIRE) applyFireTrail(dest, best, piece0, side0);
+  const p0 = board[best], s0 = sides[best], h0 = health[best];
+  const anims = [{ toIdx: best, fromCX, fromCY, toCX, toCY, piece: p0, side: s0, hlth: h0, atk: attacks[best], spd: speeds[best] }];
+  _appendCaptureGhosts(anims);
+  startAnim(anims, 0, () => {
     _drainCaptureAnims();
     checkFireDeath(best);
     if (board[best] !== NONE && itemSpaces[best] !== ITEM_NONE) _applyItemAuto(itemSpaces[best], best);
     recordPosition();
-    const afterSp = () => _aiSpeedContinue(best, movesUsed + 1, onDone);
-    if (spWaveData) { spWaveData.shoveParams.toI = best; startWaveAnim(spWaveData.squares, spWaveData.shoveParams, afterSp); }
-    else afterSp();
+    if (waveData) { waveData.shoveParams.toI = best; startWaveAnim(waveData.squares, waveData.shoveParams, () => onDone(best)); }
+    else onDone(best);
   });
+}
+
+// Speed Up: a Black piece with speeds>1 takes up to speeds-1 extra moves.
+function _aiSpeedContinue(dest, movesUsed, onDone) {
+  if (board[dest] === NONE || sides[dest] !== B || speeds[dest] <= 1 || movesUsed >= speeds[dest] - 1) { onDone(); return; }
+  _aiExtraMove(dest, (newDest) => _aiSpeedContinue(newDest, movesUsed + 1, onDone));
+}
+
+// Bloodthirsty: a Black piece that just captured takes one extra move (mirrors the player rule).
+// Passes the piece's resulting index to onDone so any Speed moves continue from the right square.
+function _aiBloodthirstyContinue(dest, wasCapture, onDone) {
+  if (!wasCapture || board[dest] === NONE || sides[dest] !== B || !(statuses[dest] & STATUS_BLOODTHIRSTY)) { onDone(dest); return; }
+  _aiExtraMove(dest, (newDest) => onDone(newDest));
 }
 
 function _aiTryChainJump(landI, wasJump, onDone) {
