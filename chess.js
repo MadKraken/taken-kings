@@ -1,4 +1,4 @@
-﻿const VERSION = "436";
+﻿const VERSION = "437";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1128,9 +1128,9 @@ function _rollSpawnEffects(i) {
   ];
   while (randInt(16) === 0 && pool.length > 0) {
     const pick = pool[randInt(pool.length)];
-    if (pick === 'atk')   { attacks[i]++; }
-    else if (pick === 'hlth')  { health[i]++; }
-    else if (pick === 'spd')   { speeds[i]++; }
+    if (pick === 'atk')   { attacks[i] = 2; pool = pool.filter(x => x !== 'atk'); }
+    else if (pick === 'hlth')  { health[i] = 2; pool = pool.filter(x => x !== 'hlth'); }
+    else if (pick === 'spd')   { speeds[i] = 2; pool = pool.filter(x => x !== 'spd'); }
     else if (pick === 'bt')    { statuses[i] |= STATUS_BLOODTHIRSTY; pool = pool.filter(x => x !== 'bt'); }
     else if (pick === 'fire')  { elements[i] |= ELEM_FIRE;  pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
     else if (pick === 'water') { elements[i] |= ELEM_WATER; pool = pool.filter(x => x !== 'fire' && x !== 'water' && x !== 'earth' && x !== 'air'); }
@@ -3013,7 +3013,7 @@ function activateItemSpace(item, i) {
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_SHIELD:
-      health[i]++;
+      health[i] = 2;
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_BLOODTHIRSTIFIER:
@@ -3021,11 +3021,11 @@ function activateItemSpace(item, i) {
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_SWORD:
-      attacks[i]++;
+      attacks[i] = 2;
       activeItemSpaceIdx = -1;
       return true;
     case ITEM_BOOTS:
-      speeds[i]++;
+      speeds[i] = 2;
       activeItemSpaceIdx = -1;
       return true;
     default:
@@ -3781,31 +3781,16 @@ function _drawPieceBadges(ctx, drawX, drawY, hlth, atk, spd, sz = 45) {
     const bx = drawX + TILE - sz - 2, by = drawY + (TILE - sz) / 2;
     const shieldImg = spriteImages["item_upgrader"];
     if (shieldImg && shieldImg.complete) ctx.drawImage(shieldImg, bx, by, sz, sz);
-    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.strokeText(hlth - 1, bx + sz / 2, by + sz / 2 + 1);
-    ctx.fillText(hlth - 1, bx + sz / 2, by + sz / 2 + 1);
   }
   if (atk > 1) {
     const bx = drawX + TILE - sz - 2, by = drawY + 2;
     const swordImg = spriteImages["item_sword"];
     if (swordImg && swordImg.complete) ctx.drawImage(swordImg, bx, by, sz, sz);
-    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.strokeText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
-    ctx.fillText(atk - 1, bx + sz / 2, by + sz / 2 + 1);
   }
   if (spd > 1) {
     const bx = drawX + TILE - sz - 2, by = drawY + TILE - sz - 2;
     const bootsImg = spriteImages["item_boots"];
     if (bootsImg && bootsImg.complete) ctx.drawImage(bootsImg, bx, by, sz, sz);
-    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 2.5;
-    ctx.font = `${Math.round(sz * 0.93)}px Canterbury`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.strokeText(spd - 1, bx + sz / 2, by + sz / 2 + 1);
-    ctx.fillText(spd - 1, bx + sz / 2, by + sz / 2 + 1);
   }
 }
 
@@ -4621,7 +4606,7 @@ canvas.addEventListener("mouseup", (e) => {
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_SHIELD && sides[i] === W) {
-      health[i] = Math.max(health[i], 1) + 1;
+      health[i] = 2;
       removeFromInventory(slot); delete inventory._activeSlot;
       shieldMode = false;
       dragConsumed = true; draw(); return;
@@ -4742,7 +4727,7 @@ function handleShieldClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    health[i] = Math.max(health[i], 1) + 1;
+    health[i] = 2;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     shieldMode = false; draw(); return;
   }
@@ -4856,7 +4841,7 @@ function handleElementizerClick(cx, cy) {
     const i = idx(gx, gy);
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
     elements[i] = resolvedElem;
-    if (resolvedElem === ELEM_EARTH) health[i] = Math.max(health[i], 1) + 1;
+    if (resolvedElem === ELEM_EARTH) health[i] = 2;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
@@ -4892,7 +4877,7 @@ function handleSwordClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    attacks[i]++;
+    attacks[i] = 2;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; swordMode = false;
@@ -4910,7 +4895,7 @@ function handleSpeedClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
     const i = idx(gx, gy);
-    speeds[i]++;
+    speeds[i] = 2;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; speedMode = false;
