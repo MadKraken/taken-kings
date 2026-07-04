@@ -1,4 +1,4 @@
-﻿const VERSION = "449";
+﻿const VERSION = "450";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -371,6 +371,8 @@ let clonerSelected = -1;
 let shieldMode = false;
 let shiftCountdown = 10;
 let itemSpaces = new Array(64).fill(ITEM_NONE);
+let _shadowSpaces = new Map(); // idx → item (shadow shown, item falls next end-of-round)
+let _skyDropAnims = []; // {item, i, startMs, dur} — items falling from sky
 
 let activeItemSpaceIdx = -1; // item space currently pending interactive resolution
 let pendingItemQueue = []; // {item, i} pairs queued after a Team Advance
@@ -493,7 +495,7 @@ function _voidPulseTick() {
 
 function _chestBobTick() {
   draw();
-  if (itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item')) {
+  if (itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item') || _shadowSpaces.size > 0) {
     requestAnimationFrame(_chestBobTick);
   } else {
     chestBobRunning = false;
@@ -552,8 +554,24 @@ function _flyTick() {
   for (let i = shieldPops.length - 1; i >= 0; i--) {
     if (now - shieldPops[i].startMs >= shieldPops[i].dur) shieldPops.splice(i, 1);
   }
+  for (let i = _skyDropAnims.length - 1; i >= 0; i--) {
+    if (now - _skyDropAnims[i].startMs >= _skyDropAnims[i].dur) {
+      const f = _skyDropAnims[i];
+      if (board[f.i] !== NONE) {
+        if (sides[f.i] === W) {
+          activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
+          // Don't call endWhiteTurn; stat boosts are a bonus, interactive modes persist to White's turn
+        } else {
+          _applyItemAuto(f.item, f.i); // Black/Neutral — auto-apply only
+        }
+      } else if (itemSpaces[f.i] === ITEM_NONE) {
+        itemSpaces[f.i] = f.item;
+      }
+      _skyDropAnims.splice(i, 1);
+    }
+  }
   draw();
-  if (flyAnims.length > 0 || itemFlyAnims.length > 0 || shieldPops.length > 0) requestAnimationFrame(_flyTick);
+  if (flyAnims.length > 0 || itemFlyAnims.length > 0 || shieldPops.length > 0 || _skyDropAnims.length > 0) requestAnimationFrame(_flyTick);
 }
 
 // shoveParams: { isKnight, toI } for Knight; { isKnight: false, dx, dy, toI } for sliders
@@ -933,6 +951,7 @@ function takeReplaySnapshot() {
     board: [...board], sides: [...sides], health: [...health],
     specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
     itemSpaces: [...itemSpaces], chestSpaces: [...chestSpaces],
+    shadowSpaces: [..._shadowSpaces],
     inventory: [...inventory],
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
@@ -960,6 +979,7 @@ function applyReplaySnapshot(snap) {
   if (snap.speeds) speeds.splice(0, 64, ...snap.speeds); else speeds.fill(1);
   fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
+  _shadowSpaces = snap.shadowSpaces ? new Map(snap.shadowSpaces) : new Map();
   if (snap.nextWave) nextWave = snap.nextWave.map(w => ({...w}));
   if (snap.nextBonuses) nextBonuses = snap.nextBonuses.map(b => ({...b}));
 }
@@ -1112,7 +1132,7 @@ function generateRowBonuses(wave) {
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (randInt(5) !== 0) continue;
-    const type = ['chest', 'item', 'void', 'block', 'neutral', 'neutral'][randInt(6)];
+    const type = ['chest', 'void', 'block', 'neutral', 'neutral', 'neutral'][randInt(6)];
     if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else if (type === 'item') {
@@ -1266,6 +1286,7 @@ function initBoard() {
   _blackKingsInCheckmate.clear();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
+  _shadowSpaces = new Map(); _skyDropAnims = [];
   pendingItemQueue = [];
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
@@ -1501,6 +1522,7 @@ function neutralPlay(onDone) {
     const p = board[i], h = health[i];
     board[dest] = p; sides[dest] = N; health[dest] = h;
     clearSquare(i);
+    if (itemSpaces[dest] !== ITEM_NONE) _applyItemAuto(itemSpaces[dest], dest);
     checkFireDeath(dest);
     startAnim([{
       toIdx: dest,
@@ -2271,6 +2293,18 @@ function fieldAdvance(playerTriggered = false) {
   }
   itemSpaces.splice(0, 64, ...newItemSpaces);
 
+  // Shift shadow spaces and in-flight sky drops down one row
+  const newShadowSpaces = new Map();
+  for (const [i, item] of _shadowSpaces) {
+    const [x, y] = xy(i);
+    if (y < 7) newShadowSpaces.set(idx(x, y + 1), item);
+  }
+  _shadowSpaces = newShadowSpaces;
+  for (const f of _skyDropAnims) {
+    const [x, y] = xy(f.i);
+    if (y < 7) f.i = idx(x, y + 1);
+  }
+
   // Shift fire squares down one row, drop any that fall off row 7
   const newFireSquares = new Map();
   for (const [fi, fs] of fireSquares) {
@@ -2762,12 +2796,14 @@ function aiPlay() {
           merchantPlay(() => {
             applyRiverFlow(() => {
               if (_piecesMovedSinceFire) fireSquares.clear(); // fire expires only once a piece actually moved
-              turn = W;
-              aiThinking = false;
-              takeReplaySnapshot();
-              _turnStartSnapIndices.push(replaySnapshots.length - 1);
-              draw();
-              startWhiteTurnTimer();
+              _doSkyDropPhase(() => {
+                turn = W;
+                aiThinking = false;
+                takeReplaySnapshot();
+                _turnStartSnapIndices.push(replaySnapshots.length - 1);
+                draw();
+                startWhiteTurnTimer();
+              });
             });
           });
         });
@@ -2821,6 +2857,7 @@ function aiPlay() {
         startAnim(_aiAnimPieces, 0, () => {
           _drainCaptureAnims();
           checkFireDeath(move[1]);
+          if (board[move[1]] !== NONE && itemSpaces[move[1]] !== ITEM_NONE) _applyItemAuto(itemSpaces[move[1]], move[1]);
           recordPosition();
           const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () => _aiSpeedContinue(move[1], 0, _aiFinish));
           const _aiChainContinues = _aiIsCheckersJump && _checkersJumpsFrom(move[1]).length > 0;
@@ -2842,12 +2879,14 @@ function aiPlay() {
         merchantPlay(() => {
           applyRiverFlow(() => {
             if (_piecesMovedSinceFire) fireSquares.clear();
-            turn = W;
-            aiThinking = false;
-            takeReplaySnapshot();
-            _turnStartSnapIndices.push(replaySnapshots.length - 1);
-            draw();
-            startWhiteTurnTimer();
+            _doSkyDropPhase(() => {
+              turn = W;
+              aiThinking = false;
+              takeReplaySnapshot();
+              _turnStartSnapIndices.push(replaySnapshots.length - 1);
+              draw();
+              startWhiteTurnTimer();
+            });
           });
         });
       });
@@ -2922,6 +2961,7 @@ function _aiSpeedContinue(dest, movesUsed, onDone) {
   startAnim(spAnims, 0, () => {
     _drainCaptureAnims();
     checkFireDeath(best);
+    if (board[best] !== NONE && itemSpaces[best] !== ITEM_NONE) _applyItemAuto(itemSpaces[best], best);
     recordPosition();
     const afterSp = () => _aiSpeedContinue(best, movesUsed + 1, onDone);
     if (spWaveData) { spWaveData.shoveParams.toI = best; startWaveAnim(spWaveData.squares, spWaveData.shoveParams, afterSp); }
@@ -3011,6 +3051,61 @@ function canItemAffectPiece(item, i) {
     case ITEM_SWORD: return true;
     case ITEM_BOOTS: return true;
     default: if (isElementalizerItem(item)) return true; return false;
+  }
+}
+
+// Auto-apply an item to any piece (used for Black/Neutral landings).
+// Interactive items (Teleporter, Cloner, Promoter, Rewinder) are consumed silently.
+function _applyItemAuto(item, i) {
+  itemSpaces[i] = ITEM_NONE;
+  switch (item) {
+    case ITEM_BOMB: detonateBomb(i); break;
+    case ITEM_SHIELD: if (health[i] < 2) health[i] = 2; break;
+    case ITEM_SWORD: if (attacks[i] < 2) attacks[i] = 2; break;
+    case ITEM_BOOTS: if (speeds[i] < 2) speeds[i] = 2; break;
+    case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY; break;
+    default:
+      if (isElementalizerItem(item)) {
+        const elem = item === ITEM_ELEM_MYSTERY
+          ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
+          : elemFromItem(item, false);
+        elements[i] |= elem;
+      }
+      break;
+  }
+}
+
+// At end-of-round: convert pending shadows to real item spaces (with fall animation),
+// then roll new shadows on vacant squares.
+function _doSkyDropPhase(onDone) {
+  let hasDrops = false;
+  for (const [i, item] of _shadowSpaces) {
+    if (itemSpaces[i] === ITEM_NONE && !isVoidSpace(i) && !isBlockSpace(i)) {
+      // Don't place in itemSpaces yet — _flyTick will land it when animation finishes
+      _skyDropAnims.push({ item, i, startMs: performance.now(), dur: 380 });
+      hasDrops = true;
+    }
+  }
+  _shadowSpaces.clear();
+  // 1/5 chance to place a shadow; reroll on success to stack additional drops.
+  const _sdCandidates = [];
+  for (let i = 0; i < 64; i++) {
+    if (board[i] !== NONE) continue;
+    if (itemSpaces[i] !== ITEM_NONE) continue;
+    if (_shadowSpaces.has(i)) continue;
+    if (isVoidSpace(i) || isBlockSpace(i)) continue;
+    _sdCandidates.push(i);
+  }
+  for (let k = _sdCandidates.length - 1; k > 0; k--) { const j = randInt(k + 1); [_sdCandidates[k], _sdCandidates[j]] = [_sdCandidates[j], _sdCandidates[k]]; }
+  let _sdci = 0;
+  while (_sdci < _sdCandidates.length && randInt(10) === 0) {
+    _shadowSpaces.set(_sdCandidates[_sdci++], _randomItem());
+  }
+  if (hasDrops) {
+    if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
+    setTimeout(onDone, 420);
+  } else {
+    onDone();
   }
 }
 
@@ -3417,6 +3512,21 @@ for (const m of validMoves) {
   }
 }
 
+// Sky-drop shadows (pulsing oval preview before item falls)
+for (const [i] of _shadowSpaces) {
+  const [x, y] = xy(i);
+  const scx = MARGIN + x * TILE + TILE / 2;
+  const scy = MARGIN + y * TILE + TILE / 2;
+  const pulse = 0.45 + 0.2 * Math.sin(performance.now() * 0.003 + i);
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(scx, scy, TILE * 0.32, TILE * 0.18, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 // Item spaces (rendered before pieces so pieces show on top)
 for (let i = 0; i < 64; i++) {
   if (itemSpaces[i] === ITEM_NONE) continue;
@@ -3470,6 +3580,25 @@ for (let i = 0; i < 64; i++) {
 
 
 
+// Sky-drop falling animations
+if (_skyDropAnims.length > 0) {
+  const _sdNow = performance.now();
+  const _sdSz = TILE * 0.7;
+  for (const f of _skyDropAnims) {
+    const t = Math.min(1, (_sdNow - f.startMs) / f.dur);
+    const ease = t * t; // ease-in (accelerating fall)
+    const [x, y] = xy(f.i);
+    const destY = MARGIN + y * TILE + (TILE - _sdSz) / 2;
+    const drawY = -TILE * 2 + (destY - (-TILE * 2)) * ease;
+    const drawX = MARGIN + x * TILE + (TILE - _sdSz) / 2;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, t * 4);
+    _drawItemInSlot(ctx, f.item, drawX, drawY, _sdSz);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+}
+
 // Void spaces
 let hasVoid = false;
 for (let i = 0; i < 64; i++) {
@@ -3489,7 +3618,7 @@ for (let i = 0; i < 64; i++) {
   ctx.restore();
 }
 if (hasVoid && !voidPulseRunning && !anim) { voidPulseRunning = true; requestAnimationFrame(_voidPulseTick); }
-const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item');
+const hasItemSpace = itemSpaces.some(v => v !== ITEM_NONE) || nextBonuses.some(b => b.type === 'item') || _shadowSpaces.size > 0;
 if (hasItemSpace && !chestBobRunning && !anim) { chestBobRunning = true; requestAnimationFrame(_chestBobTick); }
 
 // River rows
