@@ -1,4 +1,4 @@
-﻿const VERSION = "427";
+﻿const VERSION = "429";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -246,7 +246,7 @@ function loadSprites() {
   for (const [key, src, needsBg] of spriteList) {
     const img = new Image();
     img.onload = () => done(key, img, needsBg ? _makeTransparentBg(img) : null);
-    img.onerror = () => done(key, img, null);
+    img.onerror = () => done(key, null, null);
     img.src = src;
   }
 }
@@ -5806,7 +5806,11 @@ initBoard();
 // Start splash immediately so the canvas is never blank while assets load
 _loadTotal = 16; // matches spriteList length in loadSprites
 _drawSplash();
-document.fonts.load("42px Canterbury").then(() => loadSprites());
+(function _loadFont(retriesLeft) {
+  document.fonts.load("42px Canterbury")
+    .then(() => loadSprites())
+    .catch(() => { if (retriesLeft > 0) setTimeout(() => _loadFont(retriesLeft - 1), 400); else loadSprites(); });
+})(8);
 
 window.setupTest = function(preset) {
   if (preset === 'teleporter_void') {
