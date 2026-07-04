@@ -1,4 +1,4 @@
-﻿const VERSION = "438";
+﻿const VERSION = "441";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1333,10 +1333,6 @@ function rollSetup() {
   let _invSlot = 0;
   do { if (_invSlot < inventory.length) inventory[_invSlot++] = _randomItem(); } while (randInt(8) === 0);
 
-  // CHEAT: White Fire pieces for testing
-  [[1,5,ROOK],[3,5,BISHOP],[5,5,QUEEN]].forEach(([x,y,p]) => {
-    const i = idx(x,y); board[i] = p; sides[i] = W; health[i] = 1; elements[i] = ELEM_FIRE; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1;
-  });
 }
 
 function startGame() {
@@ -5160,7 +5156,8 @@ function handleBoardClick(cx, cy) {
       });
       return;
     } else if (clicked === selected) {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = -1; validMoves = []; }
+      if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); return; }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
       if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
     } else {
