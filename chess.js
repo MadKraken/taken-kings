@@ -1,4 +1,4 @@
-﻿const VERSION = "443";
+﻿const VERSION = "445";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -224,6 +224,11 @@ function loadSprites() {
     ['ground',          'sprites/Ground.png'],
     ['merchant',        'sprites/merchant.svg'],
   ];
+  // Conquest animation frames — loaded here so the splash covers them
+  for (let ci = 0; ci < CONQUEST_FRAME_COUNT; ci++) {
+    spriteList.push([`conquest_${ci}`, `animations/begin conquest frames/Begin Conquest -${ci}.png`]);
+  }
+
   // Animated idle/active-idle frames
   const ANIM_BASE = "sprites/1 Package (ActiveIdle sprites)/1 Package (Active_Idle sprites)";
   for (const [piece, pieceName] of Object.entries(ANIM_PIECE_NAMES)) {
@@ -241,11 +246,17 @@ function loadSprites() {
   _loadTotal = spriteList.length;
   _loadCount = 0;
   const done = (key, img, processed) => {
-    if (key === 'logo') spriteImages['logo'] = img;
-    spriteImages[key] = processed ?? img;
+    if (key.startsWith('conquest_')) {
+      const ci = parseInt(key.slice(9));
+      if (!isNaN(ci)) _conquestFrames[ci] = img;
+    } else {
+      if (key === 'logo') spriteImages['logo'] = img;
+      spriteImages[key] = processed ?? img;
+    }
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
       spritesLoaded = true;
+      _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
       draw();
       startIdleAnim();
@@ -1385,13 +1396,7 @@ const CONQUEST_FRAME_COUNT = 94;
 const _conquestFrames = new Array(CONQUEST_FRAME_COUNT).fill(null).map(() => new Image());
 let _conquestFramesReady = false;
 
-// Preload all frames sequentially at startup so they're ready before the player hits Go
-(function _preloadConquest(i) {
-  if (i >= CONQUEST_FRAME_COUNT) { _conquestFramesReady = true; draw(); return; }
-  _conquestFrames[i].onload = () => _preloadConquest(i + 1);
-  _conquestFrames[i].onerror = () => _preloadConquest(i + 1);
-  _conquestFrames[i].src = `animations/begin conquest frames/Begin Conquest -${i}.png`;
-})(0);
+// Conquest frames are now loaded as part of loadSprites so the splash covers them.
 
 let _conquestGifActive = false;
 let _conquestStartMs = 0;
@@ -3964,11 +3969,11 @@ if (!gameOver && isItemActive()) {
   ctx.fillText("🎲 Roll", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
 
   ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-  ctx.fillStyle = _conquestFramesReady ? "#2a6e3f" : "#3a3a3a";
+  ctx.fillStyle = "#2a6e3f";
   ctx.beginPath(); ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6); ctx.fill();
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.fillStyle = _conquestFramesReady ? "#fff" : "#888"; ctx.font = "42px Canterbury";
-  ctx.fillText(_conquestFramesReady ? "▶ Go!" : "Loading...", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
+  ctx.fillText("▶ Go!", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
 
   // Timed Mode toggle row
   {
@@ -5231,7 +5236,7 @@ canvas.addEventListener("click", (e) => {
     if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
         cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { rollSetup(); draw(); return; }
     if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { if (_conquestFramesReady) playConquestGif(); return; }
+        cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playConquestGif(); return; }
     // Timed mode toggle
     {
       const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
