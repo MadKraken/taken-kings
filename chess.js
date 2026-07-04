@@ -1,4 +1,4 @@
-﻿const VERSION = "459";
+﻿const VERSION = "460";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -452,6 +452,37 @@ function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements
 function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; effectOrders[dst] = [...effectOrders[src]]; }
 function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
 function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
+
+// Element flag → effect-badge key.
+const _ELEM_BADGE = { [ELEM_FIRE]: 'fire', [ELEM_WATER]: 'water', [ELEM_EARTH]: 'earth', [ELEM_AIR]: 'air' };
+
+// Board cell index under canvas coords, or -1 if off-board.
+function cellIdxFromCoords(cx, cy) {
+  const gx = Math.floor((cx - MARGIN) / TILE), gy = Math.floor((cy - BOARD_Y - MARGIN) / TILE);
+  return inB(gx, gy) ? idx(gx, gy) : -1;
+}
+
+// Promote the pawn at i to a promoter item's target (rolling for wild).
+function _promotePawnTo(item, i) {
+  board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
+}
+
+// Apply an elementalizer item to i: resolve element (mystery→random), OR-in flag + badge.
+function _applyElementItem(item, i) {
+  const elem = item === ITEM_ELEM_MYSTERY ? ELEM_ALL[randInt(4)] : elemFromItem(item, false);
+  elements[i] |= elem;
+  _grantEffect(i, _ELEM_BADGE[elem]);
+}
+
+// Apply a stat-buff item (Shield/Sword/Boots/Fang) effect to i. Idempotent.
+function _applyStatEffect(item, i) {
+  switch (item) {
+    case ITEM_SHIELD:       if (health[i] < 2)  { health[i] = 2;  _grantEffect(i, 'hlt'); } break;
+    case ITEM_SWORD:        if (attacks[i] < 2) { attacks[i] = 2; _grantEffect(i, 'atk'); } break;
+    case ITEM_BOOTS:        if (speeds[i] < 2)  { speeds[i] = 2;  _grantEffect(i, 'spd'); } break;
+    case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY;   _grantEffect(i, 'bt');  break;
+  }
+}
 
 function randInt(n) { return Math.floor(Math.random() * n); }
 
@@ -3051,20 +3082,11 @@ function _applyItemAuto(item, i) {
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_BOMB: detonateBomb(i); break;
-    case ITEM_SHIELD: if (health[i] < 2) { health[i] = 2; _grantEffect(i, 'hlt'); } break;
-    case ITEM_SWORD: if (attacks[i] < 2) { attacks[i] = 2; _grantEffect(i, 'atk'); } break;
-    case ITEM_BOOTS: if (speeds[i] < 2) { speeds[i] = 2; _grantEffect(i, 'spd'); } break;
-    case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt'); break;
+    case ITEM_SHIELD: case ITEM_SWORD: case ITEM_BOOTS: case ITEM_VAMPIRE_FANG:
+      _applyStatEffect(item, i); break;
     default:
-      if (isElementalizerItem(item)) {
-        const elem = item === ITEM_ELEM_MYSTERY
-          ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
-          : elemFromItem(item, false);
-        elements[i] |= elem;
-        _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[elem]);
-      } else if (isPromoterItem(item) && board[i] === PAWN) {
-        board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
-      }
+      if (isElementalizerItem(item)) _applyElementItem(item, i);
+      else if (isPromoterItem(item) && board[i] === PAWN) _promotePawnTo(item, i);
       break;
   }
 }
@@ -3137,20 +3159,8 @@ function activateItemSpace(item, i) {
   activeItemSpaceIdx = i;
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
-    case ITEM_SHIELD:
-      health[i] = 2; _grantEffect(i, 'hlt');
-      activeItemSpaceIdx = -1;
-      return true;
-    case ITEM_VAMPIRE_FANG:
-      statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt');
-      activeItemSpaceIdx = -1;
-      return true;
-    case ITEM_SWORD:
-      attacks[i] = 2; _grantEffect(i, 'atk');
-      activeItemSpaceIdx = -1;
-      return true;
-    case ITEM_BOOTS:
-      speeds[i] = 2; _grantEffect(i, 'spd');
+    case ITEM_SHIELD: case ITEM_VAMPIRE_FANG: case ITEM_SWORD: case ITEM_BOOTS:
+      _applyStatEffect(item, i);
       activeItemSpaceIdx = -1;
       return true;
     default:
@@ -3160,11 +3170,7 @@ function activateItemSpace(item, i) {
       }
       if (isElementalizerItem(item)) {
         // Auto-apply to the piece that landed on the space — no interactive selection needed
-        const elem = item === ITEM_ELEM_MYSTERY
-          ? [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR][randInt(4)]
-          : elemFromItem(item, false);
-        elements[i] |= elem;
-        _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[elem]);
+        _applyElementItem(item, i);
         activeItemSpaceIdx = -1;
         return true;
       }
@@ -3268,7 +3274,7 @@ function _applySpacesAfterAdvancePass2() {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
     if (item === ITEM_SHIELD) { health[i]++; itemSpaces[i] = ITEM_NONE; }
-    else if (isPromoterItem(item)) { board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item); itemSpaces[i] = ITEM_NONE; }
+    else if (isPromoterItem(item)) { _promotePawnTo(item, i); itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
 
@@ -4729,13 +4735,13 @@ canvas.addEventListener("mouseup", (e) => {
     inventory._activeSlot = slot;
 
     if (isPromoterItem(item) && sides[i] === W && board[i] === PAWN) {
-      board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
+      _promotePawnTo(item, i);
       removeFromInventory(slot); delete inventory._activeSlot;
       piecePromoterMode = false; piecePromoterTo = NONE;
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_SHIELD && sides[i] === W) {
-      health[i] = 2; _grantEffect(i, 'hlt');
+      _applyStatEffect(ITEM_SHIELD, i);
       removeFromInventory(slot); delete inventory._activeSlot;
       shieldMode = false;
       dragConsumed = true; draw(); return;
@@ -4833,9 +4839,7 @@ function handleShopClick(cx, cy) {
 }
 
 function handlePiecePromoterClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  const i2 = inB(gx, gy) ? idx(gx, gy) : -1;
+  const i2 = cellIdxFromCoords(cx, cy);
   const eligible = i2 >= 0 && sides[i2] === W && board[i2] === PAWN;
   if (eligible) {
     board[i2] = piecePromoterTo === PROMOTER_WILD ? _rollWildTo() : piecePromoterTo;
@@ -4852,11 +4856,9 @@ function handlePiecePromoterClick(cx, cy) {
 }
 
 function handleShieldClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-    const i = idx(gx, gy);
-    health[i] = 2; _grantEffect(i, 'hlt');
+  const i = cellIdxFromCoords(cx, cy);
+  if (i >= 0 && sides[i] === W) {
+    _applyStatEffect(ITEM_SHIELD, i);
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     shieldMode = false; draw(); return;
   }
@@ -4866,22 +4868,19 @@ function handleShieldClick(cx, cy) {
 }
 
 function handleBombClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
+  const i = cellIdxFromCoords(cx, cy);
   bombMode = false; bombHoverIdx = -1;
   if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-  if (inB(gx, gy)) {
-    detonateBomb(idx(gx, gy));
+  if (i >= 0) {
+    detonateBomb(i);
     recordPosition();
     if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); } else { draw(); }
   } else { draw(); }
 }
 
 function handleClonerClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy)) {
-    const i = idx(gx, gy);
+  const i = cellIdxFromCoords(cx, cy);
+  if (i >= 0) {
     if (clonerSelected < 0) {
       if (sides[i] === W && adjacentClonerDests(i).length > 0) {
         clonerSelected = i; draw(); return;
@@ -4920,10 +4919,8 @@ function handleClonerClick(cx, cy) {
 
 
 function handleTeleporterClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy)) {
-    const i = idx(gx, gy);
+  const i = cellIdxFromCoords(cx, cy);
+  if (i >= 0) {
     if (teleporterSelected < 0) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
@@ -4969,14 +4966,12 @@ function handleTeleporterClick(cx, cy) {
 }
 
 function handleElementizerClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-    const i = idx(gx, gy);
+  const i = cellIdxFromCoords(cx, cy);
+  if (i >= 0 && sides[i] === W) {
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
     effectOrders[i] = effectOrders[i].filter(e => e !== 'fire' && e !== 'water' && e !== 'earth' && e !== 'air');
     elements[i] = resolvedElem;
-    _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[resolvedElem]);
+    _grantEffect(i, _ELEM_BADGE[resolvedElem]);
     if (resolvedElem === ELEM_EARTH) { health[i] = 2; _grantEffect(i, 'hlt'); }
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
@@ -4990,59 +4985,27 @@ function handleElementizerClick(cx, cy) {
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
-function handleVampireFangClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-    const i = idx(gx, gy);
-    statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt');
-    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    const fromSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1; vampireFangMode = false;
-    if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
-    return;
-  }
+// Shared handler for single-target stat-buff item modes (Sword, Speed, Vampire Fang).
+// Applies `item` to a clicked White piece, else cancels; `clearMode` resets the mode flag.
+function _handleStatItemClick(cx, cy, item, clearMode) {
+  const i = cellIdxFromCoords(cx, cy);
   const fromSpace = activeItemSpaceIdx >= 0;
-  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  activeItemSpaceIdx = -1; vampireFangMode = false;
-  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
+  const hit = i >= 0 && sides[i] === W;
+  if (hit) {
+    _applyStatEffect(item, i);
+    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+  } else if (inventory._activeSlot !== undefined) {
+    delete inventory._activeSlot;
+  }
+  activeItemSpaceIdx = -1; clearMode();
+  if (fromSpace) { processNextQueuedItem(); }
+  else if (hit) { firstMoveMade = true; recordPosition(); draw(); }
+  else { draw(); }
 }
 
-function handleSwordClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-    const i = idx(gx, gy);
-    attacks[i] = 2; _grantEffect(i, 'atk');
-    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    const fromSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1; swordMode = false;
-    if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
-    return;
-  }
-  const fromSpace = activeItemSpaceIdx >= 0;
-  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  activeItemSpaceIdx = -1; swordMode = false;
-  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
-}
-
-function handleSpeedClick(cx, cy) {
-  const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
-  const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (inB(gx, gy) && sides[idx(gx, gy)] === W) {
-    const i = idx(gx, gy);
-    speeds[i] = 2; _grantEffect(i, 'spd');
-    if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
-    const fromSpace = activeItemSpaceIdx >= 0;
-    activeItemSpaceIdx = -1; speedMode = false;
-    if (fromSpace) { processNextQueuedItem(); } else { firstMoveMade = true; recordPosition(); draw(); }
-    return;
-  }
-  const fromSpace = activeItemSpaceIdx >= 0;
-  if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  activeItemSpaceIdx = -1; speedMode = false;
-  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
-}
+function handleVampireFangClick(cx, cy) { _handleStatItemClick(cx, cy, ITEM_VAMPIRE_FANG, () => { vampireFangMode = false; }); }
+function handleSwordClick(cx, cy)       { _handleStatItemClick(cx, cy, ITEM_SWORD, () => { swordMode = false; }); }
+function handleSpeedClick(cx, cy)       { _handleStatItemClick(cx, cy, ITEM_BOOTS, () => { speedMode = false; }); }
 
 function handleResignConfirmClick(cx, cy) {
   const confirmY = GRAVE_Y + GRAVE_H + 12;
