@@ -1,4 +1,4 @@
-﻿const VERSION = "460";
+﻿const VERSION = "461";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -589,22 +589,32 @@ function _flyTick() {
   }
   for (let i = _skyDropAnims.length - 1; i >= 0; i--) {
     if (now - _skyDropAnims[i].startMs >= _skyDropAnims[i].dur) {
-      const f = _skyDropAnims[i];
-      if (board[f.i] !== NONE) {
-        if (sides[f.i] === W) {
-          activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
-          // Don't call endWhiteTurn; stat boosts are a bonus, interactive modes persist to White's turn
-        } else {
-          _applyItemAuto(f.item, f.i); // Black/Neutral — auto-apply only
-        }
-      } else if (itemSpaces[f.i] === ITEM_NONE) {
-        itemSpaces[f.i] = f.item;
-      }
+      _landSkyDrop(_skyDropAnims[i]);
       _skyDropAnims.splice(i, 1);
     }
   }
   draw();
   if (flyAnims.length > 0 || itemFlyAnims.length > 0 || shieldPops.length > 0 || _skyDropAnims.length > 0) requestAnimationFrame(_flyTick);
+}
+
+// Land a single sky-dropped item at its target square: apply to a piece there, else drop as an item space.
+function _landSkyDrop(f) {
+  if (board[f.i] !== NONE) {
+    if (sides[f.i] === W) {
+      activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
+      // Don't call endWhiteTurn; stat boosts are a bonus, interactive modes persist to White's turn
+    } else {
+      _applyItemAuto(f.item, f.i); // Black/Neutral — auto-apply only
+    }
+  } else if (itemSpaces[f.i] === ITEM_NONE) {
+    itemSpaces[f.i] = f.item;
+  }
+}
+
+// Force any still-airborne sky-drops to land immediately (deterministic — used before snapshotting
+// so a Rewinder can't restore a turn-start state that's missing an item still mid-animation).
+function _resolveAllSkyDrops() {
+  while (_skyDropAnims.length) _landSkyDrop(_skyDropAnims.pop());
 }
 
 // shoveParams: { isKnight, toI } for Knight; { isKnight: false, dx, dy, toI } for sliders
@@ -3119,7 +3129,9 @@ function _doSkyDropPhase(onDone) {
   }
   if (hasDrops) {
     if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
-    setTimeout(onDone, 420);
+    // Land all drops deterministically before onDone (which snapshots the turn start), so the
+    // snapshot never misses an item that's still mid-animation — otherwise a later Rewinder loses it.
+    setTimeout(() => { _resolveAllSkyDrops(); onDone(); }, 420);
   } else {
     onDone();
   }
