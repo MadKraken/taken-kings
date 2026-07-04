@@ -1,4 +1,4 @@
-﻿const VERSION = "454";
+﻿const VERSION = "456";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3059,6 +3059,8 @@ function _applyItemAuto(item, i) {
           : elemFromItem(item, false);
         elements[i] |= elem;
         _grantEffect(i, {[ELEM_FIRE]:'fire',[ELEM_WATER]:'water',[ELEM_EARTH]:'earth',[ELEM_AIR]:'air'}[elem]);
+      } else if (isPromoterItem(item) && board[i] === PAWN) {
+        board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
       }
       break;
   }
@@ -5252,6 +5254,13 @@ function handleBoardClick(cx, cy) {
             _speedMovesUsed++; _speedIdx = movedTo;
           } else {
             _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+          }
+          // A sky-drop targeting movedTo may not have landed yet (anim takes 380ms, move takes 180ms).
+          // Intercept it early so the piece picks it up immediately.
+          const pendingDropIdx = _skyDropAnims.findIndex(a => a.i === movedTo);
+          if (pendingDropIdx >= 0) {
+            const pd = _skyDropAnims.splice(pendingDropIdx, 1)[0];
+            if (sides[movedTo] === W) activateItemSpace(pd.item, movedTo);
           }
           const item = itemSpaces[movedTo];
           if (item !== ITEM_NONE && sides[movedTo] === W && canItemAffectPiece(item, movedTo)) {
