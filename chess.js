@@ -1,4 +1,4 @@
-﻿const VERSION = "447";
+﻿const VERSION = "448";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -279,6 +279,7 @@ let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump;
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
 let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
 let _piecesMovedSinceFire = false; // true once any piece actually moves after fire was set; Field Advance alone doesn't count
+function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; }
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
@@ -1258,7 +1259,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _resetTurnState();
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
@@ -1971,7 +1972,7 @@ function endWhiteTurn() {
       selected = _speedIdx; validMoves = _spMoves;
       draw(); return;
     }
-    _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+    _resetTurnState();
   }
   stopWhiteTurnTimer();
   lastActingSide = W;
@@ -4289,7 +4290,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     const rSlot = inventory.indexOf(ITEM_REWINDER);
     if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
     turn = W; aiThinking = false; selected = -1; validMoves = [];
-    _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+    _resetTurnState();
     shopMode = false; gameOver = false; gameMsg = "";
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
@@ -5000,7 +5001,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
+        _resetTurnState();
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
