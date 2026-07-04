@@ -1,4 +1,4 @@
-﻿const VERSION = "445";
+﻿const VERSION = "446";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -431,7 +431,7 @@ let aiThinking = false;
 const AI_DEPTH = 3;
 const HINT_DEPTH = 5;
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
-const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 4 };
+const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 30};
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 const ANIM_MS = 180;
@@ -1346,7 +1346,7 @@ function rollSetup() {
 
   // CHEAT: Speed Up in inventory + Teleporter on board
   addToInventory(ITEM_BOOTS);
-  itemSpaces[idx(3, 4)] = ITEM_TELEPORTER;
+  itemSpaces[idx(3, 4)] = ITEM_BLOODTHIRSTIFIER;
 
 }
 
@@ -3412,15 +3412,17 @@ for (let i = 0; i < 64; i++) {
   const offX = (TILE - sz) / 2;
   const baseOffY = (TILE - sz) / 2;
   const bob = Math.sin(performance.now() * 0.002 + i * 0.7) * 6;
-  if (img && img.complete) {
+  const _drawBoardItemShadow = () => {
     const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
     ctx.save();
     ctx.globalAlpha = shadowAlpha;
     ctx.beginPath();
     ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "#000";
-    ctx.fill();
+    ctx.fillStyle = "#000"; ctx.fill();
     ctx.restore();
+  };
+  if (img && img.complete) {
+    _drawBoardItemShadow();
     ctx.globalAlpha = 0.9;
     ctx.drawImage(img, px + offX, py + baseOffY + bob, sz, sz);
     ctx.globalAlpha = 1.0;
@@ -3430,14 +3432,7 @@ for (let i = 0; i < 64; i++) {
     const letter = itemHere === ITEM_ELEM_MYSTERY ? '?' : ELEM_NAMES[elem][0];
     const r = sz / 2;
     const cx2 = px + TILE / 2, cy2 = py + baseOffY + bob + r;
-    // Drop shadow ellipse (same as sprite items)
-    const shadowAlpha = 0.3 - 0.1 * ((bob + 6) / 12);
-    ctx.save();
-    ctx.globalAlpha = shadowAlpha;
-    ctx.beginPath();
-    ctx.ellipse(px + TILE / 2, py + TILE - 10, sz * 0.35, 5, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "#000"; ctx.fill();
-    ctx.restore();
+    _drawBoardItemShadow();
     ctx.globalAlpha = 0.9;
     ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
@@ -3448,6 +3443,11 @@ for (let i = 0; i < 64; i++) {
     ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
     ctx.fillText(letter, cx2, cy2);
     ctx.shadowBlur = 0; ctx.globalAlpha = 1.0;
+  } else {
+    _drawBoardItemShadow();
+    ctx.globalAlpha = 0.9;
+    _drawItemInSlot(ctx, itemHere, px + offX, py + baseOffY + bob, sz);
+    ctx.globalAlpha = 1.0;
   }
 }
 
