@@ -1,6 +1,67 @@
-﻿const VERSION = "477";
+﻿const VERSION = "495";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
+
+// ─── Sound effects ──────────────────────────────────────────────────────────
+// Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
+// random variant so repeated actions don't get grating.
+const SFX_DEFS = { move: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1 };
+const SFX_VOLUME = { move: 0.30, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65 };
+const SFX_PATH = "sounds/Used%20Sounds/";
+// Web Audio: decode each clip to an AudioBuffer once, then play via a BufferSource for
+// near-zero-latency, overlapping playback (HTMLAudio.play() re-buffers and lags ~50-150ms).
+let _sfxCtx = null;
+const _sfxBuffers = {}; // name -> [AudioBuffer, ...]
+let _sfxMuted = false;
+let _sfxUnlocked = false;
+
+function _loadSfx() {
+  try { _sfxMuted = localStorage.getItem('tk_sfx_muted') === '1'; } catch (e) {}
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  _sfxCtx = new AC();
+  for (const [name, count] of Object.entries(SFX_DEFS)) {
+    _sfxBuffers[name] = [];
+    for (let i = 1; i <= count; i++) {
+      fetch(`${SFX_PATH}${name}_${i}.mp3?v=${VERSION}`)
+        .then(r => r.arrayBuffer())
+        .then(ab => _sfxCtx.decodeAudioData(ab))
+        .then(buf => { _sfxBuffers[name].push(buf); })
+        .catch(() => {});
+    }
+  }
+  // Unlock/resume the audio context on the first user gesture (mobile autoplay policy).
+  const unlock = () => {
+    _sfxUnlocked = true;
+    if (_sfxCtx && _sfxCtx.state === 'suspended') _sfxCtx.resume();
+    window.removeEventListener('pointerdown', unlock);
+    window.removeEventListener('touchstart', unlock);
+    window.removeEventListener('keydown', unlock);
+  };
+  window.addEventListener('pointerdown', unlock);
+  window.addEventListener('touchstart', unlock);
+  window.addEventListener('keydown', unlock);
+}
+
+function playSfx(name) {
+  if (_sfxMuted || !_sfxUnlocked || !_sfxCtx) return;
+  const bufs = _sfxBuffers[name];
+  if (!bufs || !bufs.length) return;
+  if (_sfxCtx.state === 'suspended') _sfxCtx.resume();
+  const src = _sfxCtx.createBufferSource();
+  src.buffer = bufs[Math.floor(Math.random() * bufs.length)];
+  const g = _sfxCtx.createGain();
+  g.gain.value = SFX_VOLUME[name] ?? 0.5;
+  src.connect(g); g.connect(_sfxCtx.destination);
+  src.start(0);
+}
+
+function toggleSfxMute() {
+  _sfxMuted = !_sfxMuted;
+  try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
+  return _sfxMuted;
+}
+_loadSfx();
 
 const TILE = 120;
 const MARGIN = 60;
@@ -31,7 +92,7 @@ let spritesLoaded = false;
 let _loadCount = 0, _loadTotal = 0;
 let _splashRafId = null;
 
-const SIDE_TINT = { [B]: 'rgb(40,30,80)', [N]: 'rgb(180,140,60)' };
+const SIDE_TINT = { [B]: 'rgb(40,30,80)', [N]: 'rgb(140,140,140)' };
 
 // Animated idle sprite metadata
 const ANIM_PIECE_NAMES = { [PAWN]: 'Pawn', [ROOK]: 'Rook', [KNIGHT]: 'Knight', [BISHOP]: 'Bishop', [QUEEN]: 'Queen', [KING]: 'King' };
@@ -51,6 +112,40 @@ function startIdleAnim() {
   if (_idleAnimRafId) return;
   _idleAnimLastMs = performance.now();
   _idleAnimRafId = requestAnimationFrame(_idleAnimTick);
+}
+
+// ─── Capture screen-shake ────────────────────────────────────────────────────
+// On a taking: the board briefly jiggles left/right and resting pieces do a little hop.
+let _captureShakeStart = 0;
+let _captureShakeRaf = null;
+const CAPTURE_SHAKE_DUR = 300;
+function triggerCaptureShake() {
+  _captureShakeStart = performance.now();
+  if (_captureShakeRaf) return;
+  const tick = () => {
+    if (!_captureShakeStart || (performance.now() - _captureShakeStart) >= CAPTURE_SHAKE_DUR) {
+      _captureShakeStart = 0; _captureShakeRaf = null; draw(); return; // final frame settles to rest
+    }
+    draw();
+    _captureShakeRaf = requestAnimationFrame(tick);
+  };
+  _captureShakeRaf = requestAnimationFrame(tick);
+}
+function _captureShakeX() {
+  if (!_captureShakeStart) return 0;
+  const t = (performance.now() - _captureShakeStart) / CAPTURE_SHAKE_DUR;
+  if (t >= 1) return 0;
+  return Math.sin(t * Math.PI * 6) * 6 * (1 - t); // ~3 decaying left-right oscillations, ~6px
+}
+// Per-piece hop: each piece pops up once with a slight per-square stagger, so it reads as
+// pieces hopping (not a uniform board bob). Returns a negative (upward) y offset.
+function _pieceHopAt(i) {
+  if (!_captureShakeStart) return 0;
+  const HOP_DUR = 200;
+  const stagger = ((i * 97) % 100) / 100 * 90; // 0..90ms stagger per square
+  const le = (performance.now() - _captureShakeStart) - stagger;
+  if (le <= 0 || le >= HOP_DUR) return 0;
+  return -Math.sin(le / HOP_DUR * Math.PI) * 6; // ~6px hop up and back down
 }
 
 // Mobile browsers throttle/stop requestAnimationFrame while backgrounded and can drop the last
@@ -1314,11 +1409,13 @@ function _appendCaptureGhosts(animArr) {
 }
 // Fire off capture/item animations for all pending entries and clear the queue.
 function _drainCaptureAnims() {
+  let _tookPiece = false;
   for (const c of _pendingCaptureAnims) {
     if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot());
-    else startCaptureAnim(c.piece, c.side, c.sx, c.sy);
+    else { startCaptureAnim(c.piece, c.side, c.sx, c.sy); _tookPiece = true; }
   }
   _pendingCaptureAnims = [];
+  if (_tookPiece) triggerCaptureShake(); // shake on contact, when the attacker lands on the taken piece
 }
 let _pendingShopFlies = []; // queued by handleShopClick, attached to next startAnim replayAnimBuffer event
 let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
@@ -1989,7 +2086,7 @@ function makeMove(fromI, toI, visual = false) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
     if (capPiece !== NONE && capSide !== s && capSide !== N) {
-      if (visual) _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], spd: speeds[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 });
+      if (visual) { playSfx('capture'); playSfx('punch'); _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], spd: speeds[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 }); }
       if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
       if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) score += 1;
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
@@ -2017,6 +2114,7 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && capSide !== s) {
+    playSfx('capture'); playSfx('punch'); // fire on the actual capture (move start); shake waits for contact
     _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], spd: speeds[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
@@ -2030,6 +2128,7 @@ function makeMove(fromI, toI, visual = false) {
     chestSpaces.delete(toI);
     const _chestItem = _randomItem();
     if (visual) {
+      playSfx('chest');
       _pendingCaptureAnims.push({ type: 'item', item: _chestItem, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
     } else {
       addToInventory(_chestItem);
@@ -2233,7 +2332,7 @@ function teamLeap() {
         if (board[i] === KING || board[i] === CHECKERS_KING) _triggerGameOver(`Game Over! Score: ${score}`);
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
+        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i]; newEffectOrdersLeap[ni] = [...effectOrders[i]];
       }
     } else {
@@ -2930,6 +3029,7 @@ function aiPlay() {
 
       // Shield bounce: attacker slides in, then bounces back (or Earth bonks defender forward)
       if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
+        playSfx('shield'); // shield block sound at attack start (pop stays on impact)
         const attackPiece = board[move[0]], attackHlth = health[move[0]];
         const defPiece = board[move[1]], defSide = sides[move[1]], defHlth = health[move[1]];
         const wasLastShield = health[move[1]] === 2;
@@ -2940,12 +3040,12 @@ function aiPlay() {
           const result = applyShieldBounceState(move[0], move[1], attackPiece);
           if (move[1] === merchantIdx) respawnMerchant();
           recordPosition();
+          if (wasLastShield) startShieldPop(hitCX, hitCY); // shield blocks on impact (sound + pop)
           if (result.mode === 'earth-bonk') {
             // Attacker already at move[1]; animate defender being bonked to bonkDest
             const [bdx, bdy] = xy(result.bonkDest);
             const bonkCX = MARGIN + bdx * TILE, bonkCY = BOARD_Y + MARGIN + bdy * TILE;
             startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest], spd: speeds[result.bonkDest] }], 0, () => {
-              if (wasLastShield) startShieldPop(hitCX, hitCY);
               _aiSpeedContinue(move[1], 0, _aiFinish); // Earth attacker now occupies the defender's square
             });
           } else {
@@ -2953,7 +3053,6 @@ function aiPlay() {
             const [bx, by] = xy(result.bounceI);
             const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
             startAnim([{ toIdx: result.bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
-              if (wasLastShield) startShieldPop(hitCX, hitCY);
               _aiSpeedContinue(result.bounceI, 0, _aiFinish); // attacker bounced back — may still have Speed moves
             });
           }
@@ -2976,6 +3075,7 @@ function aiPlay() {
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         _appendCaptureGhosts(_aiAnimPieces);
+        playSfx('move');
         startAnim(_aiAnimPieces, 0, () => {
           _drainCaptureAnims();
           checkFireDeath(move[1]);
@@ -3828,7 +3928,7 @@ for (let i = 0; i < 64; i++) {
   // If a wave visual override exists, draw at the old position until the wave reaches it
   const _waveOv = waveAnim?.drawAt?.get(i);
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
-  const _drawY = _waveOv ? _waveOv.cy : MARGIN + y * TILE;
+  const _drawY = (_waveOv ? _waveOv.cy : MARGIN + y * TILE) + _pieceHopAt(i); // + per-piece hop during capture shake
   const _isActivePiece = (i === selected);
   if (board[i] === KING && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
     ctx.save();
@@ -4795,7 +4895,12 @@ function draw() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   drawBackground(_fieldAnim, _animT);
+  // Capture shake: jiggle the board horizontally; pieces hop per-square via _pieceHopAt(i).
+  const _shakeX = _captureShakeX();
+  ctx.save();
+  ctx.translate(_shakeX, 0);
   drawBoardArea(_animT, _animToSet, _fieldAnim);
+  ctx.restore();
   drawFogWindow();
   if (_conquestGifActive) {
     ctx.fillStyle = "rgba(0,0,0,0.20)";
@@ -5004,6 +5109,7 @@ function handleShopClick(cx, cy) {
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
     if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !merchantSold[i]) {
       gold -= price;
+      playSfx('buy');
       const _mSlot = findInventorySlot();
       if (_mSlot < 0) { draw(); return; }
       const [_mx, _my] = xy(merchantIdx);
@@ -5039,7 +5145,7 @@ function handleSellConfirmClick(cx, cy) {
   const hit = (bx) => cx >= bx && cx <= bx + g.btnW && cy >= g.btnY && cy <= g.btnY + g.btnH;
   if (hit(g.yesX)) {
     const item = inventory[sellConfirmSlot];
-    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); }
+    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); playSfx('sell'); }
     sellConfirmSlot = -1; draw(); // stay in sell mode with the shop still open
     return;
   }
@@ -5100,7 +5206,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
-        if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         copyPiece(clonerSelected, i); sides[i] = W;
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
@@ -5137,7 +5243,7 @@ function handleTeleporterClick(cx, cy) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
       if (board[i] === NONE) {
-        if (chestSpaces.has(i)) { chestSpaces.delete(i); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         const _tElem0 = elements[teleporterSelected], _tStat0 = statuses[teleporterSelected], _tAtk0 = attacks[teleporterSelected], _tSpd0 = speeds[teleporterSelected];
         const _tOrd0 = [...effectOrders[teleporterSelected]];
@@ -5325,8 +5431,8 @@ function handleBoardClick(cx, cy) {
         const retreat  = { toIdx: bounceI, fromCX: targetCX, fromCY: targetCY, toCX: bounceCX, toCY: bounceCY, piece, side, hlth };
         if (suppressFromIdx != null) { approach.fromIdx = suppressFromIdx; retreat.fromIdx = suppressFromIdx; }
         startAnim([approach], 0, () => {
+          startShieldPop(targetCX + TILE / 2, targetCY + TILE / 2); // shield blocks on impact (sound + pop)
           startAnim([retreat], 0, () => {
-            startShieldPop(targetCX + TILE / 2, targetCY + TILE / 2);
             onDone();
           });
         });
@@ -5344,6 +5450,7 @@ function handleBoardClick(cx, cy) {
       }
       // Attack shielded enemy: bounce attacker, damage enemy
       if (sides[clicked] === B && health[clicked] > attacks[selected]) {
+        playSfx('shield'); // shield block sound at attack start (pop stays on impact)
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
@@ -5448,6 +5555,7 @@ function handleBoardClick(cx, cy) {
           } else { endWhiteTurn(); }
         } else { draw(); }
       };
+      playSfx('move');
       startAnim(wAnimPieces, 0, () => {
         _drainCaptureAnims();
         checkWhiteKingAlive();
