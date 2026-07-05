@@ -1,4 +1,4 @@
-﻿const VERSION = "508";
+﻿const VERSION = "509";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -21,7 +21,8 @@ function _loadSfx() {
   try { _sfxMuted = localStorage.getItem('tk_sfx_muted') === '1'; } catch (e) {}
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
-  _sfxCtx = new AC();
+  // 'interactive' requests the lowest output latency the platform allows (mobile defaults are laggy).
+  try { _sfxCtx = new AC({ latencyHint: 'interactive' }); } catch (e) { _sfxCtx = new AC(); }
   for (const [name, count] of Object.entries(SFX_DEFS)) {
     _sfxBuffers[name] = [];
     for (let i = 1; i <= count; i++) {
