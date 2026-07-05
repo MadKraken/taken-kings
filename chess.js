@@ -1,4 +1,4 @@
-﻿const VERSION = "465";
+﻿const VERSION = "466";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -929,6 +929,8 @@ function _randomPromoterItem() {
   return pick === PROMOTER_WILD ? ITEM_PROMOTER_WILD : makePromoterItem(pick);
 }
 
+// Field-item pool (wave bonuses, chests, sky drops, starting inventory).
+// Rewinder is intentionally excluded — it is merchant-only, never a field drop.
 function _randomItem() {
   const r = randInt(8);
   if (r === 0) return ITEM_TELEPORTER;
@@ -3364,7 +3366,7 @@ function _applySpacesAfterAdvancePass2() {
   for (let i = 0; i < 64; i++) {
     const item = itemSpaces[i];
     if (item === ITEM_NONE || sides[i] !== W || !canItemAffectPiece(item, i)) continue;
-    if (item === ITEM_SHIELD) { health[i]++; itemSpaces[i] = ITEM_NONE; }
+    if (item === ITEM_SHIELD) { _applyStatEffect(ITEM_SHIELD, i); itemSpaces[i] = ITEM_NONE; }
     else if (isPromoterItem(item)) { _promotePawnTo(item, i); itemSpaces[i] = ITEM_NONE; }
     else { pendingItemQueue.push({ item, i }); itemSpaces[i] = ITEM_NONE; }
   }
