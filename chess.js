@@ -1,12 +1,12 @@
-﻿const VERSION = "513";
+﻿const VERSION = "516";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, body: 1, man: 1, loot: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
+const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
 // Selecting a piece: sword draw for all except Checkers pieces; Knights also whinny.
 function playSelectSfx(piece) {
   if (piece !== CHECKERS && piece !== CHECKERS_KING) playSfx('draw');
@@ -2215,7 +2215,7 @@ function makeMove(fromI, toI, visual = false) {
     chestSpaces.delete(toI);
     const _chestItem = _randomItem();
     if (visual) {
-      playSfx('chest');
+      playSfx('chest'); playSfx('pickup');
       _pendingCaptureAnims.push({ type: 'item', item: _chestItem, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
     } else {
       addToInventory(_chestItem);
@@ -2420,7 +2420,7 @@ function teamLeap() {
         if (board[i] === KING || board[i] === CHECKERS_KING) _triggerGameOver(`Game Over! Score: ${score}`);
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
+        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); playSfx('pickup'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
         newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i]; newEffectOrdersLeap[ni] = [...effectOrders[i]];
       }
     } else {
@@ -3344,6 +3344,7 @@ function _autoTeleport(i) {
     dests.push(j);
   }
   if (dests.length === 0) return;
+  playSfx('teleport');
   movePiece(i, dests[randInt(dests.length)]); // preserves side/stats/effects
 }
 
@@ -3542,6 +3543,7 @@ function openMerchantShop(onDone) {
   sellMode = true; // selling is always available while the shop is open (inventory stays active)
   sellConfirmSlot = -1;
   shopOnDone = onDone || null;
+  playSfx('shopopen'); // Merchant dialogue appears
   draw();
 }
 
@@ -5201,7 +5203,7 @@ function handleShopClick(cx, cy) {
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
     if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !merchantSold[i]) {
       gold -= price;
-      playSfx('buy');
+      playSfx('buy'); playSfx('pickup');
       const _mSlot = findInventorySlot();
       if (_mSlot < 0) { draw(); return; }
       const [_mx, _my] = xy(merchantIdx);
@@ -5300,7 +5302,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
-        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         copyPiece(clonerSelected, i); sides[i] = W;
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
@@ -5337,7 +5339,8 @@ function handleTeleporterClick(cx, cy) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
       if (board[i] === NONE) {
-        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
+        playSfx('teleport');
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         const _tElem0 = elements[teleporterSelected], _tStat0 = statuses[teleporterSelected], _tAtk0 = attacks[teleporterSelected], _tSpd0 = speeds[teleporterSelected];
         const _tOrd0 = [...effectOrders[teleporterSelected]];
