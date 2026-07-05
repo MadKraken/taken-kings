@@ -1,12 +1,12 @@
-﻿const VERSION = "503";
+﻿const VERSION = "508";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6 };
+const SFX_DEFS = { move: 1, horse: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
 // Move sound: Knights (horse pieces) clop; everyone else uses the footstep.
 function playMoveSfx(piece) { playSfx(piece === KNIGHT ? 'horse' : 'move'); }
 const SFX_PATH = "sounds/Used%20Sounds/";
@@ -688,7 +688,7 @@ function startCaptureAnim(piece, side, sx, sy) {
   const isPlayer = side === W;
   const pool = isPlayer ? playerDead : enemyDead;
   const [tgx, tgy] = graveSlotPos(isPlayer, piece);
-  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; });
+  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
 }
 
 function _warnFlashTick() {
@@ -720,6 +720,7 @@ function _chestBobTick() {
 
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
+  if (piece && piece !== QUEEN) playSfx('man'); // male piece screams falling into the void (Queen doesn't)
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
 }
@@ -2186,7 +2187,9 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && capSide !== s) {
-    playSfx('capture'); playSfx('punch'); // fire on the actual capture (move start); shake waits for contact
+    // Queen takes get their own sword_slide sound; everyone else the slide+punch. Fires at move start.
+    if (p === QUEEN) playSfx('queencap');
+    else { playSfx('capture'); playSfx('punch'); }
     _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], spd: speeds[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
 
