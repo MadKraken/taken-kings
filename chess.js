@@ -1,11 +1,11 @@
-﻿const VERSION = "500";
+﻿const VERSION = "501";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1 };
+const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, wind: 1 };
 const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65 };
 // Move sound: Knights (horse pieces) clop; everyone else uses the footstep.
 function playMoveSfx(piece) { playSfx(piece === KNIGHT ? 'horse' : 'move'); }
@@ -62,6 +62,42 @@ function toggleSfxMute() {
   _sfxMuted = !_sfxMuted;
   try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
   return _sfxMuted;
+}
+
+// ─── Looping ambiance (wind) ─────────────────────────────────────────────────
+let _windLoop = null; // { src, gain } while playing
+const WIND_VOLUME = 0.5; // half volume
+function startWindLoop(fadeSec = 3) {
+  if (_windLoop || !_sfxCtx || _sfxMuted || !_sfxUnlocked) return;
+  const bufs = _sfxBuffers.wind;
+  if (!bufs || !bufs.length) return;
+  if (_sfxCtx.state === 'suspended') _sfxCtx.resume();
+  const src = _sfxCtx.createBufferSource();
+  src.buffer = bufs[0];
+  src.loop = true;
+  const g = _sfxCtx.createGain();
+  const now = _sfxCtx.currentTime;
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.linearRampToValueAtTime(WIND_VOLUME, now + fadeSec);
+  src.connect(g); g.connect(_sfxCtx.destination);
+  src.start(0);
+  _windLoop = { src, gain: g };
+}
+function stopWindLoop(fadeSec = 2) {
+  if (!_windLoop || !_sfxCtx) return;
+  const { src, gain } = _windLoop;
+  const now = _sfxCtx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(gain.gain.value, now);
+  gain.gain.linearRampToValueAtTime(0.0001, now + fadeSec);
+  try { src.stop(now + fadeSec + 0.1); } catch (e) {}
+  _windLoop = null;
+}
+// Fade the wind in when the board has no active Black pieces (preview row doesn't count).
+function updateWindAmbiance() {
+  if (typeof gamePhase !== 'undefined' && gamePhase !== 'playing') return;
+  for (let i = 0; i < 64; i++) if (sides[i] === B) return; // a Black piece is present → no wind
+  startWindLoop();
 }
 _loadSfx();
 
@@ -1471,6 +1507,7 @@ function initBoard() {
   board.fill(NONE); sides.fill(0);
   spawnCount = 1;
   leapCount = 0;
+  stopWindLoop(0);
   stopWhiteTurnTimer();
   _turnStartSnapIndices = [];
   selected = -1; validMoves = []; turn = W;
@@ -2230,6 +2267,7 @@ function endWhiteTurn() {
   if (shiftCountdown <= 0) {
     fieldAdvance();
   } else {
+    updateWindAmbiance(); // fade wind in if the player just cleared the board of Black pieces
     turn = B;
     draw();
     if (!gameOver) aiPlay();
@@ -2425,6 +2463,7 @@ function _placeChestBonus(col) {
 function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
   _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
+  stopWindLoop();     // a new wave is incoming — fade the calm wind back out
 
   // Capture the bottom row before it's destroyed so animation can slide it out.
   const exitRow = [];
