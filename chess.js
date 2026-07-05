@@ -1,4 +1,4 @@
-﻿const VERSION = "464";
+﻿const VERSION = "465";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -52,6 +52,20 @@ function startIdleAnim() {
   _idleAnimLastMs = performance.now();
   _idleAnimRafId = requestAnimationFrame(_idleAnimTick);
 }
+
+// Mobile browsers throttle/stop requestAnimationFrame while backgrounded and can drop the last
+// rendered frame or evict decoded image data on resume — leaving pieces up but effect badges/
+// sprites blank until the next paint. On return to foreground, revive the idle loop and force an
+// immediate full repaint so all state (which is still in memory) re-renders. (State lives only in
+// JS memory — no reload/persistence — so this is purely a rendering refresh.)
+function _onBecomeVisible() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  _idleAnimLastMs = performance.now();
+  if (!_idleAnimRafId) _idleAnimRafId = requestAnimationFrame(_idleAnimTick);
+  if (typeof draw === 'function' && spritesLoaded) draw();
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', _onBecomeVisible);
+if (typeof window !== 'undefined') { window.addEventListener('pageshow', _onBecomeVisible); window.addEventListener('focus', _onBecomeVisible); }
 
 // Strip the white background from a PNG via edge-flood-fill, preserving white fills
 // inside black outline boundaries. Called once per frame at load time.
