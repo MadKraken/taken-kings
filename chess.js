@@ -1,4 +1,4 @@
-﻿const VERSION = "467";
+﻿const VERSION = "468";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3138,6 +3138,26 @@ function adjacentClonerDests(i) {
   return dests;
 }
 
+// Auto-teleport: move the piece at i to a random safe empty square (used when a Teleporter
+// item lands on / is triggered by a Neutral or Black piece — mirrors the player's teleport).
+function _autoTeleport(i) {
+  const dests = [];
+  for (let j = 0; j < 64; j++) {
+    if (board[j] !== NONE || j === i) continue;
+    if (j === merchantIdx || isVoidSpace(j) || isBlockSpace(j)) continue;
+    dests.push(j);
+  }
+  if (dests.length === 0) return;
+  movePiece(i, dests[randInt(dests.length)]); // preserves side/stats/effects
+}
+
+// Auto-clone: drop a same-side copy of the piece at i onto a random adjacent empty square.
+function _autoClone(i) {
+  const dests = adjacentClonerDests(i).filter(j => j !== merchantIdx && !isVoidSpace(j) && !isBlockSpace(j));
+  if (dests.length === 0) return;
+  copyPiece(i, dests[randInt(dests.length)]); // clone keeps the same side/stats/effects
+}
+
 function countKings(s) {
   let n = 0;
   for (let i = 0; i < 64; i++) if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === s) n++;
@@ -3178,14 +3198,16 @@ function canItemAffectPiece(item, i) {
   }
 }
 
-// Auto-apply an item to any piece (used for Black/Neutral landings).
-// Interactive items (Teleporter, Cloner, Promoter, Rewinder) are consumed silently.
+// Auto-apply an item to any piece (used for Black/Neutral landings). Teleporter/Cloner auto-trigger
+// (random teleport / adjacent clone); a Promoter only affects a Pawn; unhandled items consume silently.
 function _applyItemAuto(item, i) {
   itemSpaces[i] = ITEM_NONE;
   switch (item) {
     case ITEM_BOMB: detonateBomb(i); break;
     case ITEM_SHIELD: case ITEM_SWORD: case ITEM_BOOTS: case ITEM_VAMPIRE_FANG:
       _applyStatEffect(item, i); break;
+    case ITEM_TELEPORTER: _autoTeleport(i); break;
+    case ITEM_CLONER: _autoClone(i); break;
     default:
       if (isElementalizerItem(item)) _applyElementItem(item, i);
       else if (isPromoterItem(item) && board[i] === PAWN) _promotePawnTo(item, i);
