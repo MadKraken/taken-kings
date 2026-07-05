@@ -1,14 +1,22 @@
-﻿const VERSION = "510";
+﻿const VERSION = "513";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, body: 1, man: 1, loot: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
-// Move sound: Knights (horse pieces) clop; everyone else uses the footstep.
-function playMoveSfx(piece) { playSfx(piece === KNIGHT ? 'horse' : 'move'); }
+const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
+// Selecting a piece: sword draw for all except Checkers pieces; Knights also whinny.
+function playSelectSfx(piece) {
+  if (piece !== CHECKERS && piece !== CHECKERS_KING) playSfx('draw');
+  if (piece === KNIGHT) playSfx('whinny');
+}
+// Move sound: landing on a River square splashes; Knights clop; everyone else footsteps.
+function playMoveSfx(piece, destIdx) {
+  if (destIdx != null && specialSpaces[idx(0, Math.floor(destIdx / 8))]?.type === 'river') { playSfx('water'); return; }
+  playSfx(piece === KNIGHT ? 'horse' : 'move');
+}
 const SFX_PATH = "sounds/Used%20Sounds/";
 // Web Audio: decode each clip to an AudioBuffer once, then play via a BufferSource for
 // near-zero-latency, overlapping playback (HTMLAudio.play() re-buffers and lags ~50-150ms).
@@ -3156,7 +3164,7 @@ function aiPlay() {
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         _appendCaptureGhosts(_aiAnimPieces);
-        playMoveSfx(_aiPiece0);
+        playMoveSfx(_aiPiece0, move[1]);
         startAnim(_aiAnimPieces, 0, () => {
           _drainCaptureAnims();
           checkFireDeath(move[1]);
@@ -5499,7 +5507,7 @@ function handleBoardClick(cx, cy) {
   if (!inB(gx, gy)) { selected = -1; validMoves = []; draw(); return; }
   const clicked = idx(gx, gy);
   if (selected < 0) {
-    if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); }
+    if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
   } else {
     if (validMoves.includes(clicked)) {
       const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
@@ -5642,7 +5650,7 @@ function handleBoardClick(cx, cy) {
           } else { endWhiteTurn(); }
         } else { draw(); }
       };
-      playMoveSfx(board[clickedDest]);
+      playMoveSfx(board[clickedDest], clickedDest);
       startAnim(wAnimPieces, 0, () => {
         _drainCaptureAnims();
         checkWhiteKingAlive();
@@ -5670,7 +5678,7 @@ function handleBoardClick(cx, cy) {
       if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); return; }
       if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
     } else {
       if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = -1; validMoves = []; }
     }
