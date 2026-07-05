@@ -1,4 +1,4 @@
-﻿const VERSION = "509";
+﻿const VERSION = "510";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2086,8 +2086,11 @@ function legalMoves(x, y) {
   if (s === W) return pseudoMoves(x, y);
   const movingPiece = board[idx(x, y)];
   if (movingPiece !== KING) return pseudoMoves(x, y);
-  // Black King: filter out moves that land on a square attacked by White
+  // Black King: filter out moves that land on a square attacked by White,
+  // EXCEPT capturing a White King — that wins instantly (or bounces off its shield),
+  // so it must never be filtered even when the King's square is defended.
   return pseudoMoves(x, y).filter(m => {
+    if ((board[m] === KING || board[m] === CHECKERS_KING) && sides[m] === W) return true;
     const [nx, ny] = xy(m);
     return !isAttacked(nx, ny, B);
   });
