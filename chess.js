@@ -1,4 +1,4 @@
-﻿const VERSION = "495";
+﻿const VERSION = "499";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -89,6 +89,7 @@ const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHO
 const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
+let _continued = false; // player pressed Continue on the loading screen (also unlocks audio)
 let _loadCount = 0, _loadTotal = 0;
 let _splashRafId = null;
 
@@ -302,13 +303,43 @@ function _drawSplash() {
     ctx.fillStyle = '#c8a060';
     ctx.beginPath(); ctx.roundRect(barX, barY, barW * pct, barH, barH / 2); ctx.fill();
   }
+  // Status label beneath the bar
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = '28px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('Loading…', cx, barY + barH + 16);
+  ctx.fillText(spritesLoaded ? 'Loading Complete' : 'Loading…', cx, barY + barH + 16);
   ctx.textBaseline = 'alphabetic';
-  if (!spritesLoaded) _splashRafId = requestAnimationFrame(_drawSplash);
+  if (spritesLoaded) {
+    // Continue button below the label (its tap unlocks audio per browser autoplay policy).
+    const r = _continueBtnRect();
+    ctx.fillStyle = '#2a6e3f';
+    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = '48px Canterbury';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Continue', r.x + r.w / 2, r.y + r.h / 2 + 2);
+    return; // static frame, no rAF
+  }
+  _splashRafId = requestAnimationFrame(_drawSplash);
+}
+
+function _continueBtnRect() {
+  const W2 = canvas.width, H2 = canvas.height;
+  const w = Math.min(W2 * 0.5, 320), h = 84;
+  return { x: (W2 - w) / 2, y: H2 * 0.38 + 172, w, h }; // below the "Loading Complete" label
+}
+
+// Pressing Continue on the loading screen: unlock audio + proceed into the game.
+function _doContinue() {
+  if (_continued || !spritesLoaded) return;
+  _continued = true;
+  _sfxUnlocked = true;
+  if (_sfxCtx && _sfxCtx.state === 'suspended') _sfxCtx.resume();
+  startIdleAnim();
+  draw();
 }
 
 function loadSprites() {
@@ -367,8 +398,7 @@ function loadSprites() {
       spritesLoaded = true;
       _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
-      draw();
-      startIdleAnim();
+      draw(); // shows the Continue button; idle anim + game start on Continue
     }
   };
   for (const [key, src, needsBg] of spriteList) {
@@ -4877,7 +4907,7 @@ function drawSellConfirm() {
 }
 
 function draw() {
-  if (!spritesLoaded) { _drawSplash(); return; }
+  if (!spritesLoaded || !_continued) { _drawSplash(); return; }
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
     const s = new Set();
@@ -5594,6 +5624,7 @@ function handleBoardClick(cx, cy) {
 canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
+  if (spritesLoaded && !_continued) { _doContinue(); return; } // Continue button on the loading screen
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
