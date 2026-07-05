@@ -1,4 +1,4 @@
-﻿const VERSION = "468";
+﻿const VERSION = "469";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2147,6 +2147,7 @@ function canTeamLeap() {
 
 function teamLeap() {
   if (gameOver || turn !== W || aiThinking || anim) return;
+  _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
 
   // Per-column blocking: a white piece can't move if the row above is occupied
   // by an enemy, or by a white piece that itself can't move.
@@ -2287,6 +2288,7 @@ function _placeChestBonus(col) {
 
 function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
+  _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
 
   // Capture the bottom row before it's destroyed so animation can slide it out.
   const exitRow = [];
