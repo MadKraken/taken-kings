@@ -1,4 +1,4 @@
-﻿const VERSION = "473";
+﻿const VERSION = "477";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1293,6 +1293,10 @@ function placeWave(row, wave) {
 
 let firstMoveMade = false;
 let resignConfirm = false;
+let sellMode = false;       // Merchant sell flow: player is choosing an inventory item to sell
+let sellConfirmSlot = -1;   // inventory slot pending sell confirmation; -1 = none
+// Sell value: half the item's buy price (min 1 for priced items).
+function sellValue(item) { const p = itemPrice(item); return p > 0 ? Math.max(1, Math.floor(p / 2)) : 0; }
 let _rewinderSaveOffer = false; // true when King dies but player has a Rewinder
 let _blackKingsInCheckmate = new Set(); // indices of Black Kings currently in checkmate; persists through White's full turn
 let testMode = false;
@@ -1360,6 +1364,7 @@ function initBoard() {
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
   merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
+  sellMode = false; sellConfirmSlot = -1;
   elements.fill(0); speeds.fill(1); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
@@ -3336,6 +3341,7 @@ function processNextQueuedItem() {
 
 function closeShop() {
   shopMode = false;
+  sellMode = false; sellConfirmSlot = -1;
   const done = shopOnDone;
   shopOnDone = null;
   if (done) done();
@@ -3344,6 +3350,8 @@ function closeShop() {
 function openMerchantShop(onDone) {
   shopOffers = merchantOffers;
   shopMode = true;
+  sellMode = true; // selling is always available while the shop is open (inventory stays active)
+  sellConfirmSlot = -1;
   shopOnDone = onDone || null;
   draw();
 }
@@ -4142,7 +4150,7 @@ ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.
 ctx.strokeStyle = "#5a5a8e";
 ctx.lineWidth = 3;
 ctx.stroke();
-const invStatus = piecePromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[piecePromoterTo] || "?"}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : shieldMode ? "Select a piece to shield" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
+const invStatus = sellMode ? "Select an item to sell" : piecePromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[piecePromoterTo] || "?"}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : shieldMode ? "Select a piece to shield" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
 ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
 ctx.font = "42px Canterbury";
 ctx.textAlign = "center";
@@ -4714,13 +4722,12 @@ if (shopMode) {
     ctx.fillText(sold ? "Sold" : "Buy", cardX + cardW / 2, cardsY + cardH - 54 + 22);
   }
 
-  // Close button
+  // Close button (bottom-right)
   const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58;
   ctx.fillStyle = "#4a2a2a";
   ctx.beginPath(); ctx.roundRect(closeBtnX, closeBtnY, 110, 44, 6); ctx.fill();
   ctx.fillStyle = "#ddd";
   ctx.font = "42px Canterbury";
-  ctx.textBaseline = "middle";
   ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
 
   // Reroll notice: always shown, white, centered under the offers
@@ -4729,6 +4736,44 @@ if (shopMode) {
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText("New wares each Field Advance", dlgX + dlgW / 2, closeBtnY + 22);
 }
+}
+
+// Shared geometry for the sell-confirm modal (used by draw + click handler).
+function _sellConfirmGeom() {
+  const pw = 640, ph = 260;
+  const px = (canvas.width - pw) / 2, py = (canvas.height - ph) / 2;
+  const btnW = 190, btnH = 74, gap = 44;
+  const btnY = py + ph - btnH - 30;
+  const yesX = px + pw / 2 - gap / 2 - btnW;
+  const noX = px + pw / 2 + gap / 2;
+  return { px, py, pw, ph, btnW, btnH, yesX, noX, btnY };
+}
+
+function drawSellConfirm() {
+  if (sellConfirmSlot < 0) return;
+  const item = inventory[sellConfirmSlot];
+  if (item === ITEM_NONE) return;
+  const g = _sellConfirmGeom();
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#1e1e3c";
+  ctx.beginPath(); ctx.roundRect(g.px, g.py, g.pw, g.ph, 12); ctx.fill();
+  ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(g.px, g.py, g.pw, g.ph, 12); ctx.stroke();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#fff";
+  ctx.font = "42px Canterbury";
+  ctx.fillText(`Sell ${itemName(item)} for ${sellValue(item)}G?`, g.px + g.pw / 2, g.py + 70);
+  ctx.font = "37px Canterbury";
+  ctx.fillStyle = "#aaa";
+  ctx.fillText("Are you sure?", g.px + g.pw / 2, g.py + 120);
+  ctx.fillStyle = "#2a6e3f";
+  ctx.beginPath(); ctx.roundRect(g.yesX, g.btnY, g.btnW, g.btnH, 8); ctx.fill();
+  ctx.fillStyle = "#7a1a1a";
+  ctx.beginPath(); ctx.roundRect(g.noX, g.btnY, g.btnW, g.btnH, 8); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury";
+  ctx.fillText("Yes", g.yesX + g.btnW / 2, g.btnY + g.btnH / 2);
+  ctx.fillText("No", g.noX + g.btnW / 2, g.btnY + g.btnH / 2);
 }
 
 function draw() {
@@ -4770,6 +4815,8 @@ function draw() {
   drawVoidDeath();
   drawPromoDialog();
   drawShopDialog();
+  if (shopMode && sellMode) drawInventoryPanel(); // lift inventory above the shop backdrop while selling
+  drawSellConfirm();
   drawFlyAnims();
   // Logo — topmost layer
   const logoEl = spriteImages["logo"];
@@ -4800,7 +4847,7 @@ function trashBounds() {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (replayMode || gameOver || anim || turn !== W || aiThinking || shopMode || gamePhase !== 'playing') return;
+  if (replayMode || gameOver || anim || turn !== W || aiThinking || shopMode || sellMode || sellConfirmSlot >= 0 || gamePhase !== 'playing') return;
   const [cx, cy] = canvasCoords(e);
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
@@ -4972,6 +5019,35 @@ function handleShopClick(cx, cy) {
       cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
     closeShop();
   }
+}
+
+// Inventory slot index under a canvas point, or -1.
+function _inventorySlotAt(cx, cy) {
+  const invY = INV_PANEL_TOP + 50;
+  for (let r = 0; r < INV_ROWS; r++) {
+    for (let c = 0; c < INV_COLS; c++) {
+      const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+      const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+      if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT) return r * INV_COLS + c;
+    }
+  }
+  return -1;
+}
+
+function handleSellConfirmClick(cx, cy) {
+  const g = _sellConfirmGeom();
+  const hit = (bx) => cx >= bx && cx <= bx + g.btnW && cy >= g.btnY && cy <= g.btnY + g.btnH;
+  if (hit(g.yesX)) {
+    const item = inventory[sellConfirmSlot];
+    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); }
+    sellConfirmSlot = -1; draw(); // stay in sell mode with the shop still open
+    return;
+  }
+  if (hit(g.noX)) {
+    sellConfirmSlot = -1; draw(); // back to item selection
+    return;
+  }
+  // clicks elsewhere are ignored (modal)
 }
 
 function handlePiecePromoterClick(cx, cy) {
@@ -5415,7 +5491,15 @@ canvas.addEventListener("click", (e) => {
   if (gameOver) { handleGameOverClick(cx, cy); return; }
   if (anim || _conquestGifActive) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
-  if (shopMode) { handleShopClick(cx, cy); return; }
+  if (sellConfirmSlot >= 0) { handleSellConfirmClick(cx, cy); return; }
+  if (shopMode) {
+    if (sellMode) {
+      const _sSlot = _inventorySlotAt(cx, cy);
+      if (_sSlot >= 0) { if (inventory[_sSlot] !== ITEM_NONE) { sellConfirmSlot = _sSlot; draw(); } return; }
+    }
+    handleShopClick(cx, cy);
+    return;
+  }
   if (piecePromoterMode) { handlePiecePromoterClick(cx, cy); return; }
   if (shieldMode) { handleShieldClick(cx, cy); return; }
   if (bombMode) { handleBombClick(cx, cy); return; }
