@@ -1,12 +1,12 @@
-﻿const VERSION = "519";
+﻿const VERSION = "528";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, clone: 1, body: 1, man: 1, loot: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, clone: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
+const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, rookcap: 1, anvil: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, clone: 1, whoosh: 1, torch: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, rookcap: 0.6, anvil: 0.5, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, clone: 0.6, whoosh: 0.5, torch: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
 // Selecting a piece: sword draw for all except Checkers pieces; Knights also whinny.
 function playSelectSfx(piece) {
   if (piece !== CHECKERS && piece !== CHECKERS_KING) playSfx('draw');
@@ -2199,8 +2199,9 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (visual && captured !== NONE && capSide !== s) {
-    // Queen takes get their own sword_slide sound; everyone else the slide+punch. Fires at move start.
+    // Queen and Rook takes get their own sound; everyone else the slide+punch. Fires at move start.
     if (p === QUEEN) playSfx('queencap');
+    else if (p === ROOK) { playSfx('rookcap'); playSfx('anvil'); }
     else { playSfx('capture'); playSfx('punch'); }
     _pendingCaptureAnims.push({ piece: captured, side: capSide, hlth: health[toI], atk: attacks[toI], spd: speeds[toI], boardIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
   }
@@ -2337,9 +2338,10 @@ function canTeamLeap() {
   return false;
 }
 
-function teamLeap() {
+function teamAdvance() {
   if (gameOver || turn !== W || aiThinking || anim) return;
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
+  playSfx('torch');  // Team Advance
 
   // Per-column blocking: a white piece can't move if the row above is occupied
   // by an enemy, or by a white piece that itself can't move.
@@ -2482,6 +2484,7 @@ function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
   _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   stopWindLoop();     // a new wave is incoming — fade the calm wind back out
+  playSfx('whoosh');  // Field Advance
 
   // Capture the bottom row before it's destroyed so animation can slide it out.
   const exitRow = [];
@@ -5769,7 +5772,7 @@ canvas.addEventListener("click", (e) => {
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { playSfx('button'); hintMove = null; teamLeap(); return; }
+      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { playSfx('button'); hintMove = null; teamAdvance(); return; }
   if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
       cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playSfx('button'); hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
   handleBoardClick(cx, cy);
@@ -6201,7 +6204,7 @@ function _aiWhiteStep() {
 
   // 3. Execute the highest-valued action
   const best = Math.max(moveVal, teamVal, fieldVal);
-  if (teamVal >= best && teamVal > moveVal) { teamLeap(); return; }
+  if (teamVal >= best && teamVal > moveVal) { teamAdvance(); return; }
   if (fieldVal >= best && fieldVal > moveVal) { fieldAdvance(true); return; }
   if (move) {
     const [fromI, toI] = move;
