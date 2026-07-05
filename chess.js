@@ -1,12 +1,14 @@
-﻿const VERSION = "499";
+﻿const VERSION = "500";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1 };
-const SFX_VOLUME = { move: 0.30, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65 };
+const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65 };
+// Move sound: Knights (horse pieces) clop; everyone else uses the footstep.
+function playMoveSfx(piece) { playSfx(piece === KNIGHT ? 'horse' : 'move'); }
 const SFX_PATH = "sounds/Used%20Sounds/";
 // Web Audio: decode each clip to an AudioBuffer once, then play via a BufferSource for
 // near-zero-latency, overlapping playback (HTMLAudio.play() re-buffers and lags ~50-150ms).
@@ -3105,7 +3107,7 @@ function aiPlay() {
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         _appendCaptureGhosts(_aiAnimPieces);
-        playSfx('move');
+        playMoveSfx(_aiPiece0);
         startAnim(_aiAnimPieces, 0, () => {
           _drainCaptureAnims();
           checkFireDeath(move[1]);
@@ -5585,7 +5587,7 @@ function handleBoardClick(cx, cy) {
           } else { endWhiteTurn(); }
         } else { draw(); }
       };
-      playSfx('move');
+      playMoveSfx(board[clickedDest]);
       startAnim(wAnimPieces, 0, () => {
         _drainCaptureAnims();
         checkWhiteKingAlive();
