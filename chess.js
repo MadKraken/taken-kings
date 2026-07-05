@@ -1,4 +1,4 @@
-﻿const VERSION = "469";
+﻿const VERSION = "473";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -396,9 +396,9 @@ let shopMode = false;
 let shopOffers = []; // items shown in merchant shop dialog
 let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
 let merchantIdx = -1; // board position of Merchant NPC (-1 = not on board)
-let merchantOffers = []; // 3 items; held for MERCHANT_REROLL_CYCLE field advances, then all rerolled
-let merchantSold = [false, false, false]; // sold state per slot; persists until the next reroll
-const MERCHANT_REROLL_CYCLE = 5; // field advances the wares hold before a full reroll
+let merchantOffers = []; // 3 items; all rerolled every field advance
+let merchantSold = [false, false, false]; // sold state per slot; persists until the next field advance
+const MERCHANT_REROLL_CYCLE = 1; // field advances the wares hold before a full reroll (1 = every advance)
 let merchantRerollCountdown = MERCHANT_REROLL_CYCLE; // advances remaining until wares reroll
 let merchantQueued = false; // merchant is waiting in the fog preview row
 let merchantQueuedCol = -1; // which column he'll enter from
@@ -4665,12 +4665,6 @@ if (shopMode) {
   ctx.fillText("Merchant", dlgX + dlgW / 2, dlgY + 45);
   ctx.fillStyle = "#aaa";
   ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
-  // Warn when the wares will all reroll on the next Field Advance
-  if (merchantRerollCountdown <= 1) {
-    ctx.fillStyle = "#f08040";
-    ctx.font = "26px Canterbury";
-    ctx.fillText("New wares next Field Advance!", dlgX + dlgW / 2, dlgY + 108);
-  }
 
   const cardW = 220, cardH = 300, cardGap = 20;
   const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
@@ -4728,6 +4722,12 @@ if (shopMode) {
   ctx.font = "42px Canterbury";
   ctx.textBaseline = "middle";
   ctx.fillText("Close", closeBtnX + 55, closeBtnY + 22);
+
+  // Reroll notice: always shown, white, centered under the offers
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("New wares each Field Advance", dlgX + dlgW / 2, closeBtnY + 22);
 }
 }
 
