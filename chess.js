@@ -1,4 +1,4 @@
-﻿const VERSION = "466";
+﻿const VERSION = "467";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -396,8 +396,10 @@ let shopMode = false;
 let shopOffers = []; // items shown in merchant shop dialog
 let shopOnDone = null; // callback after shop closes (null for merchant — doesn't consume turn)
 let merchantIdx = -1; // board position of Merchant NPC (-1 = not on board)
-let merchantOffers = []; // 3 items generated at game start, rotate on field advance
-let merchantSold = [false, false, false]; // sold state per slot, resets when item rotates out
+let merchantOffers = []; // 3 items; held for MERCHANT_REROLL_CYCLE field advances, then all rerolled
+let merchantSold = [false, false, false]; // sold state per slot; persists until the next reroll
+const MERCHANT_REROLL_CYCLE = 5; // field advances the wares hold before a full reroll
+let merchantRerollCountdown = MERCHANT_REROLL_CYCLE; // advances remaining until wares reroll
 let merchantQueued = false; // merchant is waiting in the fog preview row
 let merchantQueuedCol = -1; // which column he'll enter from
 let merchantPendingRespawn = false; // pushed into void mid-play; re-queue on next field advance
@@ -1356,6 +1358,7 @@ function initBoard() {
   pendingItemQueue = [];
   specialSpaces.fill(null);
   merchantIdx = -1; merchantOffers = []; merchantSold = [false, false, false];
+  merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
   elements.fill(0); speeds.fill(1); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
@@ -2430,6 +2433,7 @@ function fieldAdvance(playerTriggered = false) {
     merchantIdx = idx(merchantEnterCol, 0);
     merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
     merchantSold = [false, false, false];
+    merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
@@ -2487,9 +2491,16 @@ function fieldAdvance(playerTriggered = false) {
     }
     nextBonuses = nextBonuses.filter(b => b.col !== merchantQueuedCol);
   }
-  // Rotate merchant wares: oldest item leaves, new random one arrives
-  merchantOffers.shift(); merchantSold.shift();
-  merchantOffers.push(_randomShopItem()); merchantSold.push(false);
+  // Merchant wares hold unchanged for MERCHANT_REROLL_CYCLE field advances (sold items stay sold),
+  // then all three reroll at once and sold state resets.
+  if (merchantIdx >= 0 && merchantOffers.length) {
+    merchantRerollCountdown--;
+    if (merchantRerollCountdown <= 0) {
+      merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
+      merchantSold = [false, false, false];
+      merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
+    }
+  }
   startAnim([], -TILE, () => {
     if (!playerTriggered) {
       // Auto-advance: White just spent their move triggering the countdown, so Black goes next.
@@ -3326,6 +3337,8 @@ function _placeMerchant() {
   for (let i = 0; i < 64; i++) if (board[i] === NONE && Math.floor(i / 8) !== 0) empty.push(i);
   merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
   merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
+  merchantSold = [false, false, false];
+  merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
 }
 
 function merchantPlay(onDone) {
@@ -4628,6 +4641,12 @@ if (shopMode) {
   ctx.fillText("Merchant", dlgX + dlgW / 2, dlgY + 45);
   ctx.fillStyle = "#aaa";
   ctx.fillText(`Gold: ${gold}`, dlgX + dlgW / 2, dlgY + 88);
+  // Warn when the wares will all reroll on the next Field Advance
+  if (merchantRerollCountdown <= 1) {
+    ctx.fillStyle = "#f08040";
+    ctx.font = "26px Canterbury";
+    ctx.fillText("New wares next Field Advance!", dlgX + dlgW / 2, dlgY + 108);
+  }
 
   const cardW = 220, cardH = 300, cardGap = 20;
   const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2;
@@ -6025,6 +6044,8 @@ window.setupTest = function(preset) {
     // Merchant at F4
     merchantIdx = idx(5, 3);
     merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
+    merchantSold = [false, false, false];
+    merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
     draw();
   }
 };
