@@ -1,12 +1,12 @@
-﻿const VERSION = "501";
+﻿const VERSION = "503";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65 };
+const SFX_DEFS = { move: 1, horse: 1, capture: 1, punch: 1, shield: 1, chest: 1, buy: 1, sell: 1, button: 1, spell: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, capture: 0.55, punch: 0.5, shield: 0.55, chest: 0.6, buy: 0.65, sell: 0.65, button: 0.5, spell: 0.6 };
 // Move sound: Knights (horse pieces) clop; everyone else uses the footstep.
 function playMoveSfx(piece) { playSfx(piece === KNIGHT ? 'horse' : 'move'); }
 const SFX_PATH = "sounds/Used%20Sounds/";
@@ -376,6 +376,7 @@ function _doContinue() {
   _continued = true;
   _sfxUnlocked = true;
   if (_sfxCtx && _sfxCtx.state === 'suspended') _sfxCtx.resume();
+  playSfx('button');
   startIdleAnim();
   draw();
 }
@@ -652,6 +653,7 @@ function _applyElementItem(item, i) {
   const elem = item === ITEM_ELEM_MYSTERY ? ELEM_ALL[randInt(4)] : elemFromItem(item, false);
   elements[i] |= elem;
   _grantEffect(i, _ELEM_BADGE[elem]);
+  playSfx('spell'); // item grants a piece an effect
 }
 
 // Apply a stat-buff item (Shield/Sword/Boots/Fang) effect to i. Idempotent.
@@ -662,6 +664,7 @@ function _applyStatEffect(item, i) {
     case ITEM_BOOTS:        if (speeds[i] < 2)  { speeds[i] = 2;  _grantEffect(i, 'spd'); } break;
     case ITEM_VAMPIRE_FANG: statuses[i] |= STATUS_BLOODTHIRSTY;   _grantEffect(i, 'bt');  break;
   }
+  playSfx('spell'); // item grants a piece an effect
 }
 
 function randInt(n) { return Math.floor(Math.random() * n); }
@@ -4694,6 +4697,7 @@ const noX  = boardCX + gap / 2;
 if (cy >= btnY && cy <= btnY + btnH) {
   if (cx >= yesX && cx <= yesX + btnW) {
     // Use Rewinder
+    playSfx('button');
     _rewinderSaveOffer = false;
     console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
     if (_turnStartSnapIndices.length < 1) { gameOver = true; draw(); return; }
@@ -4711,6 +4715,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
     // Accept game over
+    playSfx('button');
     _rewinderSaveOffer = false;
     gameOver = true;
     draw();
@@ -5134,6 +5139,7 @@ function handleReplayClick(cx, cy) {
   const ids = ['prev', 'next', 'auto', 'exit'];
   for (const id of ids) {
     if (cx >= bx && cx <= bx + bW && cy >= by && cy <= by + bH) {
+      playSfx('button');
       if (id === 'prev') stepReplay(-1);
       else if (id === 'next') stepReplay(1);
       else if (id === 'auto') toggleReplayAutoPlay();
@@ -5151,9 +5157,9 @@ function handleGameOverClick(cx, cy) {
   const soX = boardCX - (btnW * 2 + btnGap) / 2;
   const repX = soX + btnW + btnGap;
   if (cx >= soX && cx <= soX + btnW && cy >= soY && cy <= soY + btnH) {
-    initBoard(); draw();
+    playSfx('button'); initBoard(); draw();
   } else if (cx >= repX && cx <= repX + btnW && cy >= soY && cy <= soY + btnH) {
-    enterReplay();
+    playSfx('button'); enterReplay();
   }
 }
 
@@ -5161,10 +5167,10 @@ function handleItemCancelOrTrash(cx, cy) {
   const halfW = BOARD_PX / 2 - BTN_GAP / 2;
   const btnH = 80;
   if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-    cancelItemMode(); return true;
+    playSfx('button'); cancelItemMode(); return true;
   }
   if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-    trashActiveItem(); return true;
+    playSfx('button'); trashActiveItem(); return true;
   }
   return false;
 }
@@ -5192,9 +5198,11 @@ function handleShopClick(cx, cy) {
     }
   }
   const closeBtnX = dlgX + dlgW - 130, closeBtnY = dlgY + dlgH - 58, closeBtnW = 110, closeBtnH = 44;
-  if ((cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) ||
-      cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
-    closeShop();
+  if (cx >= closeBtnX && cx <= closeBtnX + closeBtnW && cy >= closeBtnY && cy <= closeBtnY + closeBtnH) {
+    playSfx('button'); closeShop(); return;
+  }
+  if (cx < dlgX || cx > dlgX + dlgW || cy < dlgY || cy > dlgY + dlgH) {
+    closeShop(); // tap outside dismisses (no button sound)
   }
 }
 
@@ -5221,7 +5229,7 @@ function handleSellConfirmClick(cx, cy) {
     return;
   }
   if (hit(g.noX)) {
-    sellConfirmSlot = -1; draw(); // back to item selection
+    playSfx('button'); sellConfirmSlot = -1; draw(); // back to item selection
     return;
   }
   // clicks elsewhere are ignored (modal)
@@ -5362,6 +5370,7 @@ function handleElementizerClick(cx, cy) {
     elements[i] = resolvedElem;
     _grantEffect(i, _ELEM_BADGE[resolvedElem]);
     if (resolvedElem === ELEM_EARTH) { health[i] = 2; _grantEffect(i, 'hlt'); }
+    playSfx('spell'); // item grants a piece an effect
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1; elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
@@ -5407,11 +5416,11 @@ function handleResignConfirmClick(cx, cy) {
   const yesX = MARGIN + (BOARD_PX - totalW) / 2 + labelW;
   const noX  = yesX + btnW + gap;
   if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
-    resignConfirm = false; gameOver = true;
+    playSfx('button'); resignConfirm = false; gameOver = true;
     gameMsg = `Resigned. Kings Taken: ${score}`;
     selected = -1; validMoves = []; draw();
   } else if (cx >= noX && cx <= noX + btnW && cy >= btnY && cy <= btnY + btnH) {
-    resignConfirm = false; draw();
+    playSfx('button'); resignConfirm = false; draw();
   }
 }
 
@@ -5692,10 +5701,11 @@ canvas.addEventListener("click", (e) => {
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
-      cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { resignConfirm = true; draw(); return; }
+      cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { playSfx('button'); resignConfirm = true; draw(); return; }
   if (!gameOver && replaySnapshots.length > 1 &&
       cx >= LAST_MOVE_BTN.x && cx <= LAST_MOVE_BTN.x + LAST_MOVE_BTN.w &&
       cy >= LAST_MOVE_BTN.y && cy <= LAST_MOVE_BTN.y + LAST_MOVE_BTN.h) {
+    playSfx('button');
     replayMode = true; _miniReplayActive = true;
     _playReplayTransition(replaySnapshots.length - 1, () => {
       replayMode = false; _miniReplayActive = false;
@@ -5705,32 +5715,33 @@ canvas.addEventListener("click", (e) => {
   }
   if (!gameOver && cx >= AUTO_BTN.x && cx <= AUTO_BTN.x + AUTO_BTN.w &&
       cy >= AUTO_BTN.y && cy <= AUTO_BTN.y + AUTO_BTN.h) {
+    playSfx('button');
     autoPlay = !autoPlay; draw();
     if (autoPlay && turn === W && !aiThinking && !anim) autoWhitePlay();
     return;
   }
   if (handleInventoryClick(cx, cy)) return;
   if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
-      cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { showHint(); return; }
+      cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { playSfx('button'); showHint(); return; }
   if (gamePhase === 'setup') {
     if (cx >= CLASSIC_BTN.x && cx <= CLASSIC_BTN.x + CLASSIC_BTN.w &&
-        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { classicSetup(); draw(); return; }
+        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { playSfx('button'); classicSetup(); draw(); return; }
     if (cx >= SETUP_ROLL_BTN.x && cx <= SETUP_ROLL_BTN.x + SETUP_ROLL_BTN.w &&
-        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { rollSetup(); draw(); return; }
+        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); rollSetup(); draw(); return; }
     if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
-        cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playConquestGif(); return; }
+        cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
     // Timed mode toggle
     {
       const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
       const tmCX = MARGIN + BOARD_PX / 2;
       const offX = tmCX + 12, onX = tmCX + 12 + chipW + chipGap;
-      if (cx >= offX && cx <= offX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { timedMode = false; draw(); return; }
-      if (cx >= onX && cx <= onX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { timedMode = true; draw(); return; }
+      if (cx >= offX && cx <= offX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { playSfx('button'); timedMode = false; draw(); return; }
+      if (cx >= onX && cx <= onX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { playSfx('button'); timedMode = true; draw(); return; }
       if (timedMode) {
         const psY = tmY + 62, pW = chipW, pGap = chipGap;
         let px = tmCX + 12;
         for (let i = 0; i < TIMED_PRESETS.length; i++) {
-          if (cx >= px && cx <= px + pW && cy >= psY - 22 && cy <= psY + 22) { timedModeSecs = TIMED_PRESETS[i]; draw(); return; }
+          if (cx >= px && cx <= px + pW && cy >= psY - 22 && cy <= psY + 22) { playSfx('button'); timedModeSecs = TIMED_PRESETS[i]; draw(); return; }
           px += pW + pGap;
         }
       }
@@ -5738,9 +5749,9 @@ canvas.addEventListener("click", (e) => {
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { hintMove = null; teamLeap(); return; }
+      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { playSfx('button'); hintMove = null; teamLeap(); return; }
   if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
+      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playSfx('button'); hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
   handleBoardClick(cx, cy);
 });
 
