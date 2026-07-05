@@ -1,12 +1,12 @@
-﻿const VERSION = "516";
+﻿const VERSION = "519";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, body: 1, man: 1, loot: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
+const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, clone: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, clone: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
 // Selecting a piece: sword draw for all except Checkers pieces; Knights also whinny.
 function playSelectSfx(piece) {
   if (piece !== CHECKERS && piece !== CHECKERS_KING) playSfx('draw');
@@ -3352,6 +3352,7 @@ function _autoTeleport(i) {
 function _autoClone(i) {
   const dests = adjacentClonerDests(i).filter(j => j !== merchantIdx && !isVoidSpace(j) && !isBlockSpace(j));
   if (dests.length === 0) return;
+  playSfx('clone');
   copyPiece(i, dests[randInt(dests.length)]); // clone keeps the same side/stats/effects
 }
 
@@ -5303,7 +5304,7 @@ function handleClonerClick(cx, cy) {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
         if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
-        copyPiece(clonerSelected, i); sides[i] = W;
+        copyPiece(clonerSelected, i); sides[i] = W; playSfx('clone');
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
@@ -5453,6 +5454,7 @@ function handleInventoryClick(cx, cy) {
       if (!(cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT)) continue;
       const item = inventory[slotIdx];
       if (item === ITEM_NONE) continue;
+      playSfx('pickup'); // player selected an inventory item
       const modeMap = {
         [ITEM_TELEPORTER]:   () => { teleporterMode = true; teleporterSelected = -1; },
         [ITEM_CLONER]:       () => { clonerMode = true; clonerSelected = -1; },
