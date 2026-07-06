@@ -1,12 +1,12 @@
-﻿const VERSION = "528";
+﻿const VERSION = "533";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
 // ─── Sound effects ──────────────────────────────────────────────────────────
 // Curated MP3s live in "sounds/Used Sounds/" as <name>_1..3.mp3. Each play picks a
 // random variant so repeated actions don't get grating.
-const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, rookcap: 1, anvil: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, clone: 1, whoosh: 1, torch: 1, body: 1, man: 1, loot: 1, wind: 1 };
-const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, rookcap: 0.6, anvil: 0.5, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, clone: 0.6, whoosh: 0.5, torch: 0.6, body: 0.5, man: 0.5, loot: 0.6 };
+const SFX_DEFS = { move: 1, horse: 1, whinny: 1, draw: 1, water: 1, capture: 1, queencap: 1, rookcap: 1, anvil: 1, punch: 1, shield: 1, chest: 1, pickup: 1, buy: 1, sell: 1, shopopen: 1, button: 1, spell: 1, teleport: 1, clone: 1, whoosh: 1, torch: 1, thud: 1, recruit: 1, boom1: 1, boom2: 1, crunch: 1, over1: 1, over2: 1, body: 1, man: 1, loot: 1, wind: 1 };
+const SFX_VOLUME = { move: 0.30, horse: 0.4, whinny: 0.45, draw: 0.5, water: 0.5, capture: 0.55, queencap: 0.6, rookcap: 0.6, anvil: 0.5, punch: 0.5, shield: 0.55, chest: 0.6, pickup: 0.6, buy: 0.65, sell: 0.65, shopopen: 0.6, button: 0.5, spell: 0.6, teleport: 0.6, clone: 0.6, whoosh: 0.5, torch: 0.6, thud: 0.6, recruit: 0.6, boom1: 0.6, boom2: 0.6, crunch: 0.6, over1: 0.65, over2: 0.65, body: 0.5, man: 0.5, loot: 0.6 };
 // Selecting a piece: sword draw for all except Checkers pieces; Knights also whinny.
 function playSelectSfx(piece) {
   if (piece !== CHECKERS && piece !== CHECKERS_KING) playSfx('draw');
@@ -748,6 +748,7 @@ function _voidDeathTick() {
 
 const EXPLOSION_MS = 450;
 function startExplosion(cx, cy) {
+  playSfx('boom1'); playSfx('boom2'); // explosion: two spell layers at once
   explosionAnim = { cx, cy, startMs: performance.now() };
   requestAnimationFrame(_explosionTick);
 }
@@ -792,6 +793,7 @@ function _flyTick() {
 
 // Land a single sky-dropped item at its target square: apply to a piece there, else drop as an item space.
 function _landSkyDrop(f) {
+  playSfx('thud'); // sky-dropped item hits the ground
   if (board[f.i] !== NONE) {
     if (sides[f.i] === W) {
       activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
@@ -2511,10 +2513,12 @@ function fieldAdvance(playerTriggered = false) {
   const newSpeeds = new Array(64).fill(1);
   const newEffectOrders = Array.from({length: 64}, () => []);
 
+  let _fieldTook = false;
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
     if (y === 7) { // destroyed
+      if (!_fieldTook) { playSfx('crunch'); _fieldTook = true; } // Field Advance takes units
       if (playerTriggered && sides[i] === B && (board[i] === KING || board[i] === CHECKERS_KING)) score++;
       startCaptureAnim(board[i], sides[i], MARGIN + x * TILE + TILE / 2, BOARD_Y + MARGIN + y * TILE + TILE / 2);
       continue;
@@ -3376,6 +3380,7 @@ function _triggerGameOver(msg) {
   } else {
     gameOver = true;
     gameMsg = msg;
+    playSfx('over1'); playSfx('over2'); // Game Over
   }
 }
 
@@ -4721,7 +4726,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     playSfx('button');
     _rewinderSaveOffer = false;
     console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
-    if (_turnStartSnapIndices.length < 1) { gameOver = true; draw(); return; }
+    if (_turnStartSnapIndices.length < 1) { gameOver = true; playSfx('over1'); playSfx('over2'); draw(); return; }
     const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
     console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
     const targetSnap = replaySnapshots[targetIdx];
@@ -4739,6 +4744,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     playSfx('button');
     _rewinderSaveOffer = false;
     gameOver = true;
+    playSfx('over1'); playSfx('over2'); // Game Over
     draw();
   }
 }
@@ -5544,6 +5550,7 @@ function handleBoardClick(cx, cy) {
       if (sides[clicked] === N) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
+        if (attackPiece === KING) playSfx('recruit'); // King recruits the Neutral
         const bounceI = calcBouncePos(fromI, clicked, attackPiece);
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
