@@ -1,4 +1,4 @@
-﻿const VERSION = "552";
+﻿const VERSION = "554";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3448,6 +3448,7 @@ function _triggerGameOver(msg) {
   } else {
     gameOver = true;
     gameMsg = msg;
+    stopWindLoop(0); // silence the ambient wind loop on Game Over
     playSfx('over1'); playSfx('over2'); // Game Over
   }
 }
@@ -4794,7 +4795,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     playSfx('button');
     _rewinderSaveOffer = false;
     console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
-    if (_turnStartSnapIndices.length < 1) { gameOver = true; playSfx('over1'); playSfx('over2'); draw(); return; }
+    if (_turnStartSnapIndices.length < 1) { gameOver = true; stopWindLoop(0); playSfx('over1'); playSfx('over2'); draw(); return; }
     const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
     console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
     const targetSnap = replaySnapshots[targetIdx];
@@ -4812,6 +4813,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     playSfx('button');
     _rewinderSaveOffer = false;
     gameOver = true;
+    stopWindLoop(0); // silence ambient wind on Game Over
     playSfx('over1'); playSfx('over2'); // Game Over
     draw();
   }
@@ -5215,6 +5217,25 @@ canvas.addEventListener("mouseup", (e) => {
       selected = -1; validMoves = [];
       dragConsumed = true; draw(); return;
     }
+    // Bomb: detonate at the drop square (handleBombClick removes the item + boom).
+    if (item === ITEM_BOMB) {
+      bombMode = true; bombHoverIdx = -1;
+      dragConsumed = true;
+      handleBombClick(cx, cy);
+      return;
+    }
+    // Stat buffs / Elementalizer: apply to the piece under the drop, via the same
+    // handlers the click path uses (they remove the item on a valid target, or
+    // cancel the mode harmlessly on an invalid one).
+    if (item === ITEM_SWORD)        { swordMode = true;        dragConsumed = true; handleSwordClick(cx, cy); return; }
+    if (item === ITEM_VAMPIRE_FANG) { vampireFangMode = true;  dragConsumed = true; handleVampireFangClick(cx, cy); return; }
+    if (item === ITEM_BOOTS)        { speedMode = true;        dragConsumed = true; handleSpeedClick(cx, cy); return; }
+    if (isElementalizerItem(item)) {
+      elementizerMode = true;
+      elementizerMystery = (item === ITEM_ELEM_MYSTERY);
+      elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false);
+      dragConsumed = true; handleElementizerClick(cx, cy); return;
+    }
     delete inventory._activeSlot;
   }
 
@@ -5513,6 +5534,7 @@ function handleResignConfirmClick(cx, cy) {
   const noX  = yesX + btnW + gap;
   if (cx >= yesX && cx <= yesX + btnW && cy >= btnY && cy <= btnY + btnH) {
     playSfx('button'); resignConfirm = false; gameOver = true;
+    stopWindLoop(0); // silence ambient wind on resign
     gameMsg = `Resigned. Kings Taken: ${score}`;
     selected = -1; validMoves = []; draw();
   } else if (cx >= noX && cx <= noX + btnW && cy >= btnY && cy <= btnY + btnH) {
@@ -5911,7 +5933,10 @@ function _aiUseBomb() {
   inventory._activeSlot = slot;
   bombMode = true; bombHoverIdx = -1;
   const [bx, by] = xy(bestI);
-  setTimeout(() => handleBombClick(MARGIN + bx * TILE + TILE / 2, BOARD_Y + MARGIN + by * TILE + TILE / 2), 150);
+  // Detonate synchronously — a deferred click races the 600ms auto-play poll,
+  // which could cancel bombMode and drop _activeSlot mid-flight, causing the
+  // bomb to detonate WITHOUT being removed from inventory.
+  handleBombClick(MARGIN + bx * TILE + TILE / 2, BOARD_Y + MARGIN + by * TILE + TILE / 2);
   return true;
 }
 
@@ -6232,17 +6257,20 @@ function _aiCompleteActiveMode() {
   }
 
   if (bombMode) {
+    // Targeting must match _aiUseBomb (≥2 enemies OR a Black King) so this never
+    // spuriously strands an armed bomb — dropping _activeSlot here would let a
+    // later detonation skip removing the bomb from inventory.
     let bestI = -1, bestScore = -Infinity;
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      let s = 0, enemies = 0;
+      let s = 0, enemies = 0, hitsKing = false;
       for (let dy=-1;dy<=1;dy++) for (let dx=-1;dx<=1;dx++) {
         if (!inB(x+dx,y+dy)) continue; const ni=idx(x+dx,y+dy);
-        if (sides[ni]===B) { s+=_aiPieceVal(board[ni])*10; enemies++; }
+        if (sides[ni]===B) { s+=_aiPieceVal(board[ni])*10; enemies++; if (board[ni]===KING||board[ni]===CHECKERS_KING) hitsKing=true; }
         if (sides[ni]===W) s-=_aiPieceVal(board[ni])*8;
       }
-      if (enemies >= 2 && s > bestScore) { bestScore = s; bestI = idx(x,y); }
+      if ((enemies >= 2 || hitsKing) && s > bestScore) { bestScore = s; bestI = idx(x,y); }
     }
-    if (bestI >= 0) { const [cx,cy] = cc(bestI); setTimeout(() => handleBombClick(cx, cy), 100); }
+    if (bestI >= 0) { const [cx,cy] = cc(bestI); handleBombClick(cx, cy); } // synchronous: no race window
     else { bombMode = false; bombHoverIdx = -1; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
     return;
   }
