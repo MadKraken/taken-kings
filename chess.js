@@ -1,4 +1,4 @@
-﻿const VERSION = "536";
+﻿const VERSION = "538";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -665,6 +665,38 @@ function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
 function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; effectOrders[i] = []; }
 function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; effectOrders[dst] = [...effectOrders[src]]; }
+
+// ─── Board-rebuild helpers ────────────────────────────────────────────────────
+// The advance/shift operations (Team Advance, Field Advance, and their AI
+// simulations) rebuild the per-square attribute arrays from scratch. These
+// centralize that pattern. If a new per-square array is added, update these
+// alongside _squareArrays.
+// withOrders=false skips effectOrders (AI sims don't need the badge lists;
+// withState save/restore covers them anyway).
+function _blankSquares(withOrders = true) {
+  return {
+    board: new Array(64).fill(NONE), sides: new Array(64).fill(0),
+    health: new Array(64).fill(1), elements: new Array(64).fill(0),
+    statuses: new Array(64).fill(0), attacks: new Array(64).fill(1),
+    speeds: new Array(64).fill(1),
+    effectOrders: withOrders ? Array.from({ length: 64 }, () => []) : null,
+  };
+}
+// Copy live square i's piece attributes into slot ni of a _blankSquares() set.
+function _copySquareTo(n, i, ni) {
+  n.board[ni] = board[i]; n.sides[ni] = sides[i]; n.health[ni] = health[i];
+  n.elements[ni] = elements[i]; n.statuses[ni] = statuses[i];
+  n.attacks[ni] = attacks[i]; n.speeds[ni] = speeds[i];
+  if (n.effectOrders) n.effectOrders[ni] = [...effectOrders[i]];
+}
+// Commit a _blankSquares() set into the live arrays.
+function _commitSquares(n) {
+  board.splice(0, 64, ...n.board); sides.splice(0, 64, ...n.sides);
+  health.splice(0, 64, ...n.health); elements.splice(0, 64, ...n.elements);
+  statuses.splice(0, 64, ...n.statuses); attacks.splice(0, 64, ...n.attacks);
+  speeds.splice(0, 64, ...n.speeds);
+  if (n.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = n.effectOrders[i];
+}
 function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
 function _removeEffect(i, eff) { const k = effectOrders[i].indexOf(eff); if (k >= 0) effectOrders[i].splice(k, 1); }
 function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
@@ -1442,9 +1474,6 @@ function _rollSpawnEffects(i) {
     count++;
   }
 }
-// Legacy aliases kept for any remaining direct callers during transition
-function _rollSpawnBonuses(i) { _rollSpawnEffects(i); }
-function _rollSpawnStatuses(i) { /* merged into _rollSpawnEffects */ }
 
 function applyRiverFlow(onDone) {
   const animPieces = [];
@@ -1491,7 +1520,7 @@ function applyRiverFlow(onDone) {
 function placeWave(row, wave) {
   for (const w of wave) {
     set(w.x, row, w.piece, B);
-    _rollSpawnBonuses(idx(w.x, row)); _rollSpawnStatuses(idx(w.x, row));
+    _rollSpawnEffects(idx(w.x, row));
   }
 }
 
@@ -1629,11 +1658,11 @@ function rollSetup() {
   shuffle(positions);
   const startKing = (randInt(100) === 0 && isDarkSquare(positions[0].x, positions[0].y)) ? CHECKERS_KING : KING;
   set(positions[0].x, positions[0].y, startKing, W);
-  _rollSpawnBonuses(idx(positions[0].x, positions[0].y), 64); _rollSpawnStatuses(idx(positions[0].x, positions[0].y), 64);
+  _rollSpawnEffects(idx(positions[0].x, positions[0].y));
 
   // Queen is guaranteed; remaining 14 slots random
   set(positions[1].x, positions[1].y, QUEEN, W);
-  _rollSpawnBonuses(idx(positions[1].x, positions[1].y), 64); _rollSpawnStatuses(idx(positions[1].x, positions[1].y), 64);
+  _rollSpawnEffects(idx(positions[1].x, positions[1].y));
   for (let i = 2; i < 16; i++) {
     let p;
     // Weights: King 11, Queen 100, Pawn 800, Rook 200, Bishop 200, Knight 200, Checkers Man 10, Checkers King 1 = 1522
@@ -1649,7 +1678,7 @@ function rollSetup() {
     // Checkers pieces must start on dark squares
     if ((p === CHECKERS || p === CHECKERS_KING) && !isDarkSquare(positions[i].x, positions[i].y)) p = PAWN;
     set(positions[i].x, positions[i].y, p, W);
-    _rollSpawnBonuses(idx(positions[i].x, positions[i].y), 64); _rollSpawnStatuses(idx(positions[i].x, positions[i].y), 64);
+    _rollSpawnEffects(idx(positions[i].x, positions[i].y));
   }
 
   // Starting inventory: guaranteed 1 item, then 1/8 chance of each additional
@@ -2424,27 +2453,11 @@ function teamAdvance() {
     }
   }
 
-  const newBoard = new Array(64).fill(NONE);
-  const newSides = new Array(64).fill(0);
-  const newHealth = new Array(64).fill(1);
-  const newElements = new Array(64).fill(0);
-  const newStatuses = new Array(64).fill(0);
-  const newAttacks = new Array(64).fill(1);
-  const newSpeeds = new Array(64).fill(1);
-  const newEffectOrdersLeap = Array.from({length: 64}, () => []);
+  const nsq = _blankSquares();
 
   // Enemies stay
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) {
-      newBoard[i] = board[i];
-      newSides[i] = sides[i];
-      newHealth[i] = health[i];
-      newElements[i] = elements[i];
-      newStatuses[i] = statuses[i];
-      newAttacks[i] = attacks[i];
-      newSpeeds[i] = speeds[i];
-      newEffectOrdersLeap[i] = [...effectOrders[i]];
-    }
+    if (sides[i] !== W) _copySquareTo(nsq, i, i);
   }
 
   // Move white pieces that can, leave the rest in place
@@ -2460,21 +2473,14 @@ function teamAdvance() {
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); playSfx('pickup'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
-        newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i]; newEffectOrdersLeap[ni] = [...effectOrders[i]];
+        _copySquareTo(nsq, i, ni);
       }
     } else {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i]; newEffectOrdersLeap[i] = [...effectOrders[i]];
+      _copySquareTo(nsq, i, i);
     }
   }
 
-  board.splice(0, 64, ...newBoard);
-  sides.splice(0, 64, ...newSides);
-  health.splice(0, 64, ...newHealth);
-  elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses);
-  attacks.splice(0, 64, ...newAttacks);
-  speeds.splice(0, 64, ...newSpeeds);
-  for (let i = 0; i < 64; i++) effectOrders[i] = newEffectOrdersLeap[i];
+  _commitSquares(nsq);
 
   epTarget = -1;
   selected = -1;
@@ -2539,14 +2545,7 @@ function fieldAdvance(playerTriggered = false) {
   if (merchantQueued) { merchantQueued = false; merchantQueuedCol = -1; }
 
   // Everything shifts down one row; row 7 is destroyed (including white pieces).
-  const newBoard = new Array(64).fill(NONE);
-  const newSides = new Array(64).fill(0);
-  const newHealth = new Array(64).fill(1);
-  const newElements = new Array(64).fill(0);
-  const newStatuses = new Array(64).fill(0);
-  const newAttacks = new Array(64).fill(1);
-  const newSpeeds = new Array(64).fill(1);
-  const newEffectOrders = Array.from({length: 64}, () => []);
+  const nsq = _blankSquares();
 
   let _fieldTook = false;
   for (let i = 0; i < 64; i++) {
@@ -2558,25 +2557,10 @@ function fieldAdvance(playerTriggered = false) {
       startCaptureAnim(board[i], sides[i], MARGIN + x * TILE + TILE / 2, BOARD_Y + MARGIN + y * TILE + TILE / 2);
       continue;
     }
-    const ni = idx(x, y + 1);
-    newBoard[ni] = board[i];
-    newSides[ni] = sides[i];
-    newHealth[ni] = health[i];
-    newElements[ni] = elements[i];
-    newStatuses[ni] = statuses[i];
-    newAttacks[ni] = attacks[i];
-    newSpeeds[ni] = speeds[i];
-    newEffectOrders[ni] = [...effectOrders[i]];
+    _copySquareTo(nsq, i, idx(x, y + 1));
   }
 
-  board.splice(0, 64, ...newBoard);
-  sides.splice(0, 64, ...newSides);
-  health.splice(0, 64, ...newHealth);
-  elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses);
-  attacks.splice(0, 64, ...newAttacks);
-  speeds.splice(0, 64, ...newSpeeds);
-  for (let i = 0; i < 64; i++) effectOrders[i] = newEffectOrders[i];
+  _commitSquares(nsq);
 
   // Scroll special spaces down
   const newSpecialSpaces = new Array(64).fill(null);
@@ -2663,7 +2647,7 @@ function fieldAdvance(playerTriggered = false) {
     }
     for (const b of nextBonuses) {
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); _rollSpawnStatuses(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
     }
   } else if (merchantEntersThisWave) {
     // Merchant slides in from fog preview: place pieces at their previewed positions
@@ -2679,7 +2663,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); _rollSpawnStatuses(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
     }
   } else {
     // Normal advance: wave works around merchant's current position
@@ -2692,7 +2676,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); _rollSpawnStatuses(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
     }
   }
 
@@ -2792,78 +2776,41 @@ function restoreState(st) {
 
 function withState(fn) { const st = saveState(); try { return fn(); } finally { restoreState(st); } }
 
-function canSimulateLeap() {
-  return true; // minimax always considers field advance as a White option
-}
-
 // Simulate a Team Advance (White pieces each move up 1 row) for AI evaluation
 function simulateTeamAdvance() {
-  const newBoard = new Array(64).fill(NONE);
-  const newSides = new Array(64).fill(0);
-  const newHealth = new Array(64).fill(1);
-  const newElements = new Array(64).fill(0);
-  const newStatuses = new Array(64).fill(0);
-  const newAttacks = new Array(64).fill(1);
-  const newSpeeds = new Array(64).fill(1);
+  const nsq = _blankSquares(false);
   // Enemies stay in place
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) { newBoard[i] = board[i]; newSides[i] = sides[i]; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i]; }
+    if (sides[i] !== W) _copySquareTo(nsq, i, i);
   }
   // White pieces try to move up (y-1); blocked by occupied squares or row 0
-  const blocked = new Set();
-  for (let i = 0; i < 64; i++) {
-    if (sides[i] === B || sides[i] === N || (merchantIdx >= 0 && i === merchantIdx)) blocked.add(xy(i)[1]);
-  }
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [x, y] = xy(i);
-    if (y === 0 || isBlockSpace(idx(x, y - 1)) || newBoard[idx(x, y - 1)] !== NONE) {
-      newBoard[i] = board[i]; newSides[i] = W; newHealth[i] = health[i]; newElements[i] = elements[i]; newStatuses[i] = statuses[i]; newAttacks[i] = attacks[i]; newSpeeds[i] = speeds[i];
+    if (y === 0 || isBlockSpace(idx(x, y - 1)) || nsq.board[idx(x, y - 1)] !== NONE) {
+      _copySquareTo(nsq, i, i);
     } else {
-      const ni = idx(x, y - 1);
-      newBoard[ni] = board[i]; newSides[ni] = W; newHealth[ni] = health[i]; newElements[ni] = elements[i]; newStatuses[ni] = statuses[i]; newAttacks[ni] = attacks[i]; newSpeeds[ni] = speeds[i];
+      _copySquareTo(nsq, i, idx(x, y - 1));
     }
   }
-  board.splice(0, 64, ...newBoard); sides.splice(0, 64, ...newSides);
-  health.splice(0, 64, ...newHealth); elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses); attacks.splice(0, 64, ...newAttacks); speeds.splice(0, 64, ...newSpeeds);
+  _commitSquares(nsq);
 }
 
 function simulateLeap() {
   // Simulates fieldAdvance for AI lookahead: everything shifts down, row 7 destroyed
-  const newBoard = new Array(64).fill(NONE);
-  const newSides = new Array(64).fill(0);
-  const newHealth = new Array(64).fill(1);
-  const newElements = new Array(64).fill(0);
-  const newStatuses = new Array(64).fill(0);
-  const newAttacks = new Array(64).fill(1);
-  const newSpeeds = new Array(64).fill(1);
+  const nsq = _blankSquares(false);
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
     if (y === 7) continue;
-    const ni = idx(x, y + 1);
-    newBoard[ni] = board[i];
-    newSides[ni] = sides[i];
-    newHealth[ni] = health[i];
-    newElements[ni] = elements[i];
-    newStatuses[ni] = statuses[i];
-    newAttacks[ni] = attacks[i];
-    newSpeeds[ni] = speeds[i];
+    _copySquareTo(nsq, i, idx(x, y + 1));
   }
-  board.splice(0, 64, ...newBoard);
-  sides.splice(0, 64, ...newSides);
-  health.splice(0, 64, ...newHealth);
-  elements.splice(0, 64, ...newElements);
-  statuses.splice(0, 64, ...newStatuses);
-  attacks.splice(0, 64, ...newAttacks);
-  speeds.splice(0, 64, ...newSpeeds);
-  speeds.splice(0, 64, ...newSpeeds);
+  _commitSquares(nsq);
   spawnCount++;
-  for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnBonuses(idx(w.x, 0)); _rollSpawnStatuses(idx(w.x, 0)); }
+  for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0)); }
   for (const b of nextBonuses) {
     if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
-    if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnBonuses(idx(b.col, 0)); _rollSpawnStatuses(idx(b.col, 0)); }
+    if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
   }
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
@@ -2972,7 +2919,8 @@ function minimax(depth, alpha, beta, maximizing) {
       alpha = Math.max(alpha, val);
       if (beta <= alpha) break;
     }
-    if (canSimulateLeap()) {
+    // Field advance is always a White option in the search
+    {
       const val = withState(() => { simulateLeap(); recordPosition(); return minimax(depth - 1, alpha, beta, false); });
       best = Math.max(best, val);
     }
@@ -5601,6 +5549,12 @@ function handleBoardClick(cx, cy) {
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
         const bounceI = result.mode === 'attacker-bounce' ? result.bounceI : fromI;
         selected = -1; validMoves = [];
+        // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
+        // (mirrors the AI's _aiSpeedContinue after a shield bounce).
+        const _sbFinalI = result.mode === 'earth-bonk' ? clicked : result.bounceI;
+        if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
+          _speedMovesUsed++; _speedIdx = _sbFinalI;
+        }
         recordPosition();
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
         return;
