@@ -1,4 +1,4 @@
-﻿const VERSION = "557";
+﻿const VERSION = "559";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3720,8 +3720,9 @@ const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 const ACH_GRID_X = MARGIN, ACH_GRID_Y = BOARD_Y + MARGIN;
 const ACH_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y, w: 300, h: 60 }; // on the setup menu
 const ACH_LABEL_Y = BOARD_Y + MARGIN + BOARD_PX + 24;                              // label under the grid
-const ACH_BACK_BTN  = { x: MARGIN + BOARD_PX / 2 - 230, y: ACH_LABEL_Y + 150, w: 210, h: 64 };
-const ACH_CLEAR_BTN = { x: MARGIN + BOARD_PX / 2 + 20,  y: ACH_LABEL_Y + 150, w: 210, h: 64 };
+const ACH_BACK_BTN  = { x: MARGIN + BOARD_PX / 2 - 110, y: ACH_LABEL_Y + 150, w: 220, h: 64 }; // centered under the label
+// Clear sits at the distant bottom of the screen, away from Back (computed from canvas height).
+function _achClearBtnRect() { const w = 200, h = 56; return { x: MARGIN + BOARD_PX / 2 - w / 2, y: canvas.height - h - 30, w, h }; }
 // Centered confirm dialog for Clear Achievements.
 function _achClearDlgRects() {
   const w = Math.min(BOARD_PX, 520), h = 220, x = MARGIN + (BOARD_PX - w) / 2, y = ACH_GRID_Y + (BOARD_PX - h) / 2;
@@ -5087,7 +5088,11 @@ function drawSellConfirm() {
 // localStorage. The grid maps cell index (row-major) → ACHIEVEMENTS[index]; cells
 // past the defined list are empty "coming soon" slots. Add more by appending here.
 const ACHIEVEMENTS = [
-  { id: 'take_1_king', name: 'First Blood', desc: 'Take 1 Black King', check: () => score >= 1 },
+  { id: 'take_1_king',  name: 'First Blood', desc: 'Take 1 Black King',            check: () => score >= 1 },
+  { id: 'take_5_king',  name: 'Bloodbath',   desc: 'Take 5 Black Kings in one run',  check: () => score >= 5 },
+  { id: 'take_10_king', name: 'Decimator',   desc: 'Take 10 Black Kings in one run', check: () => score >= 10 },
+  { id: 'take_25_king', name: 'Warlord',     desc: 'Take 25 Black Kings in one run', check: () => score >= 25 },
+  { id: 'take_50_king', name: 'Conqueror',   desc: 'Take 50 Black Kings in one run', check: () => score >= 50 },
 ];
 const ACH_GRID_CELLS = 64; // 8×8
 
@@ -5191,7 +5196,7 @@ function drawAchievementsScreen() {
     ctx.textBaseline = "alphabetic";
   };
   drawBtn(ACH_BACK_BTN, "#4a3a7a", "‹ Back");
-  drawBtn(ACH_CLEAR_BTN, "#7a2a2a", "Clear");
+  drawBtn(_achClearBtnRect(), "#7a2a2a", "Clear");
 
   // Are-you-sure dialog for Clear Achievements
   if (_achClearConfirm) {
@@ -5218,7 +5223,7 @@ function handleAchievementsClick(cx, cy) {
     return; // clicks elsewhere are ignored while the dialog is open
   }
   if (inR(ACH_BACK_BTN))  { playSfx('button'); achievementsOpen = false; draw(); return; }
-  if (inR(ACH_CLEAR_BTN)) { playSfx('button'); _achClearConfirm = true; draw(); return; }
+  if (inR(_achClearBtnRect())) { playSfx('button'); _achClearConfirm = true; draw(); return; }
   for (let i = 0; i < ACH_GRID_CELLS; i++) {
     const r = _achCellRect(i);
     if (inR(r)) {
