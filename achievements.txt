@@ -1,0 +1,39 @@
+Take 1 Black King
+Take 5 Black Kings in one run
+Take 10 Black Kings in one run 
+Take 25 Black Kings in one run 
+Take 50 Black Kings in one run 
+Take 5 Black Kings in one run with a 15 second timer
+Take 10 Black Kings in one run with a 15 second timer 
+Take 25 Black Kings in one run with a 15 second timer
+Take 50 Black Kings in one run with a 15 second timer
+Take 25 Black Kings in one run without losing a White Warrior
+Take 25 Black Kings in one run within x minutes
+Take the 20th Black King with a Rook
+Take the 20th King with a Bishop
+Take the 20th King with a Knight
+Take the 20th King with a Pawn
+Take the 20th King with a King
+Take the 20th King with a Checkers Man
+Take the 20th King with a Checkers King 
+Take the 20th Checkers King 
+Recruit a Checkers Man 
+Recruit a Checkers King 
+Collect 100 G in one run 
+Collect 250 G in one run
+Take 25 Black Kings without using an Item (start with Classic setup)
+Take 2 Black Kings in one turn
+Take 3 Black Kings in one turn
+Take 4 Black Kings in one turn 
+Take a Black Warrior by pushing them into a Void with a Water Piece
+Take a Black Warrior by pushing them into a Bomb with a Water Piece 
+Take a Shielded Black King with a Sworded White Warrior 
+Have 4 Kings in your team when you take the 25th Black King 
+Recruit a Grey Warrior three turns in a row
+Recruit a Grey Warrior with a Checkers King 
+Take 2 Black Warriors in a single turn with a Bloodthirsty or Fast Pawn 
+Take 2 Black Warriors in a single turn with a Bloodthirsty or Fast King 
+Take 2 Black Warriors with a chained Checkers Man jump
+Take 3 Black Warriors with a chained Checkers Man jump
+Take 2 Black Warriors with a chained Checkers King jump
+Take 3 Black Warriors with a chained Checkers King jump

@@ -1,4 +1,4 @@
-﻿const VERSION = "555";
+﻿const VERSION = "557";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3715,6 +3715,24 @@ const LAST_MOVE_BTN = { x: RESIGN_BTN.x + RESIGN_BTN.w + 16, y: RESIGN_BTN.y, w:
 const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
 const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 
+// --- Achievements screen geometry ---
+// The achievements grid reuses the board's exact geometry (8×8 equal cells).
+const ACH_GRID_X = MARGIN, ACH_GRID_Y = BOARD_Y + MARGIN;
+const ACH_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y, w: 300, h: 60 }; // on the setup menu
+const ACH_LABEL_Y = BOARD_Y + MARGIN + BOARD_PX + 24;                              // label under the grid
+const ACH_BACK_BTN  = { x: MARGIN + BOARD_PX / 2 - 230, y: ACH_LABEL_Y + 150, w: 210, h: 64 };
+const ACH_CLEAR_BTN = { x: MARGIN + BOARD_PX / 2 + 20,  y: ACH_LABEL_Y + 150, w: 210, h: 64 };
+// Centered confirm dialog for Clear Achievements.
+function _achClearDlgRects() {
+  const w = Math.min(BOARD_PX, 520), h = 220, x = MARGIN + (BOARD_PX - w) / 2, y = ACH_GRID_Y + (BOARD_PX - h) / 2;
+  const bw = 150, bh = 64, by = y + h - bh - 24, gap = 40;
+  return {
+    box: { x, y, w, h },
+    yes: { x: x + w / 2 - bw - gap / 2, y: by, w: bw, h: bh },
+    no:  { x: x + w / 2 + gap / 2,       y: by, w: bw, h: bh },
+  };
+}
+
 // --- Draw ---
 
 function drawBackground(_fieldAnim, _animT) {
@@ -4539,6 +4557,17 @@ if (!gameOver && isItemActive()) {
       });
     }
   }
+  // Achievements button
+  {
+    const b = ACH_MENU_BTN;
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = "#6e5a1a";
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Achievements", b.x + b.w / 2, b.y + b.h / 2);
+    ctx.textBaseline = "alphabetic";
+  }
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
   if (!replayMode || _miniReplayActive) {
@@ -5052,8 +5081,174 @@ function drawSellConfirm() {
   ctx.fillText("No", g.noX + g.btnW / 2, g.btnY + g.btnH / 2);
 }
 
+// ─── Achievements ─────────────────────────────────────────────────────────────
+// Framework: each achievement has an id, name, one-line desc, and a check()
+// predicate evaluated against live game state. Unlock state persists in
+// localStorage. The grid maps cell index (row-major) → ACHIEVEMENTS[index]; cells
+// past the defined list are empty "coming soon" slots. Add more by appending here.
+const ACHIEVEMENTS = [
+  { id: 'take_1_king', name: 'First Blood', desc: 'Take 1 Black King', check: () => score >= 1 },
+];
+const ACH_GRID_CELLS = 64; // 8×8
+
+let _achUnlocked = {};
+try { _achUnlocked = JSON.parse(localStorage.getItem('tk_achievements') || '{}') || {}; } catch (e) { _achUnlocked = {}; }
+let achievementsOpen = false;
+let _achSelected = 0;        // highlighted grid cell
+let _achClearConfirm = false; // "Are you sure?" dialog for Clear Achievements
+let _achToast = null;        // { name, startMs } — brief in-game unlock banner
+
+function _saveAchievements() { try { localStorage.setItem('tk_achievements', JSON.stringify(_achUnlocked)); } catch (e) {} }
+
+function unlockAchievement(id) {
+  if (_achUnlocked[id]) return;
+  const a = ACHIEVEMENTS.find(x => x.id === id);
+  if (!a) return;
+  _achUnlocked[id] = Date.now();
+  _saveAchievements();
+  _achToast = { name: a.name, startMs: performance.now() };
+  playSfx('recruit'); // celebratory cue
+  const tick = () => { draw(); if (_achToast) requestAnimationFrame(tick); }; // drive the fade
+  requestAnimationFrame(tick);
+}
+
+// Evaluate all still-locked achievements against current state. Called only from
+// real (non-simulated, non-replay) rendering so minimax's temporary score changes
+// never trigger an unlock.
+function checkAchievements() {
+  for (const a of ACHIEVEMENTS) {
+    if (_achUnlocked[a.id]) continue;
+    try { if (a.check()) unlockAchievement(a.id); } catch (e) {}
+  }
+}
+
+function _achCellRect(i) {
+  const col = i % 8, row = Math.floor(i / 8);
+  return { x: ACH_GRID_X + col * TILE, y: ACH_GRID_Y + row * TILE, w: TILE, h: TILE };
+}
+
+function drawAchievementsScreen() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Header
+  ctx.fillStyle = "#c8a060"; ctx.font = "56px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Achievements", canvas.width / 2, BOARD_Y - 40);
+  const unlockedCount = ACHIEVEMENTS.filter(a => _achUnlocked[a.id]).length;
+  ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "30px Canterbury";
+  ctx.fillText(`${unlockedCount} / ${ACHIEVEMENTS.length} unlocked`, canvas.width / 2, BOARD_Y - 4);
+
+  // 8×8 grid of equal cells
+  for (let i = 0; i < ACH_GRID_CELLS; i++) {
+    const r = _achCellRect(i);
+    const ach = ACHIEVEMENTS[i];
+    const unlocked = ach && _achUnlocked[ach.id];
+    // base cell
+    if (!ach)            ctx.fillStyle = ((i % 8 + Math.floor(i / 8)) % 2) ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)"; // empty slot
+    else if (unlocked)   ctx.fillStyle = "#2a8f4f"; // accomplished — filled in
+    else                 ctx.fillStyle = "#3a3a55"; // available but locked
+    ctx.beginPath(); ctx.roundRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 6); ctx.fill();
+    // check mark on unlocked cells
+    if (unlocked) {
+      ctx.strokeStyle = "#eaffea"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(r.x + r.w * 0.30, r.y + r.h * 0.52);
+      ctx.lineTo(r.x + r.w * 0.45, r.y + r.h * 0.68);
+      ctx.lineTo(r.x + r.w * 0.72, r.y + r.h * 0.34);
+      ctx.stroke();
+    }
+    // selection highlight
+    if (i === _achSelected) {
+      ctx.strokeStyle = "#f0c040"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.roundRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 6); ctx.stroke();
+    }
+  }
+
+  // Label for the highlighted cell
+  const sel = ACHIEVEMENTS[_achSelected];
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  if (sel) {
+    const done = !!_achUnlocked[sel.id];
+    ctx.fillStyle = done ? "#7fe0a0" : "#fff"; ctx.font = "44px Canterbury";
+    ctx.fillText(sel.name, canvas.width / 2, ACH_LABEL_Y);
+    ctx.fillStyle = "rgba(255,255,255,0.75)"; ctx.font = "32px Canterbury";
+    ctx.fillText(sel.desc, canvas.width / 2, ACH_LABEL_Y + 52);
+    ctx.fillStyle = done ? "#7fe0a0" : "rgba(255,255,255,0.45)"; ctx.font = "28px Canterbury";
+    ctx.fillText(done ? "✓ Unlocked" : "Locked", canvas.width / 2, ACH_LABEL_Y + 96);
+  } else {
+    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "34px Canterbury";
+    ctx.fillText("Empty slot", canvas.width / 2, ACH_LABEL_Y);
+    ctx.font = "28px Canterbury";
+    ctx.fillText("More achievements coming soon", canvas.width / 2, ACH_LABEL_Y + 48);
+  }
+
+  // Back + Clear buttons
+  const drawBtn = (r, fill, label) => {
+    ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
+    ctx.textBaseline = "alphabetic";
+  };
+  drawBtn(ACH_BACK_BTN, "#4a3a7a", "‹ Back");
+  drawBtn(ACH_CLEAR_BTN, "#7a2a2a", "Clear");
+
+  // Are-you-sure dialog for Clear Achievements
+  if (_achClearConfirm) {
+    const d = _achClearDlgRects();
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#26263e"; ctx.beginPath(); ctx.roundRect(d.box.x, d.box.y, d.box.w, d.box.h, 12); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(d.box.x, d.box.y, d.box.w, d.box.h, 12); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Clear all achievements?", d.box.x + d.box.w / 2, d.box.y + 46);
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "28px Canterbury";
+    ctx.fillText("This cannot be undone.", d.box.x + d.box.w / 2, d.box.y + 90);
+    drawBtn(d.yes, "#7a2a2a", "Yes");
+    drawBtn(d.no, "#4a3a7a", "No");
+  }
+}
+
+function handleAchievementsClick(cx, cy) {
+  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  // Modal confirm takes priority
+  if (_achClearConfirm) {
+    const d = _achClearDlgRects();
+    if (inR(d.yes)) { playSfx('button'); _achUnlocked = {}; _saveAchievements(); _achClearConfirm = false; draw(); return; }
+    if (inR(d.no))  { playSfx('button'); _achClearConfirm = false; draw(); return; }
+    return; // clicks elsewhere are ignored while the dialog is open
+  }
+  if (inR(ACH_BACK_BTN))  { playSfx('button'); achievementsOpen = false; draw(); return; }
+  if (inR(ACH_CLEAR_BTN)) { playSfx('button'); _achClearConfirm = true; draw(); return; }
+  for (let i = 0; i < ACH_GRID_CELLS; i++) {
+    const r = _achCellRect(i);
+    if (inR(r)) {
+      if (_achSelected !== i) { _achSelected = i; playSfx('draw'); draw(); }
+      return;
+    }
+  }
+}
+
+// Brief banner when an achievement unlocks mid-game (fades after ~3.5s).
+function drawAchievementToast() {
+  if (!_achToast) return;
+  const t = performance.now() - _achToast.startMs;
+  if (t > 3500) { _achToast = null; return; }
+  const alpha = t < 300 ? t / 300 : (t > 3000 ? Math.max(0, 1 - (t - 3000) / 500) : 1);
+  const bw = Math.min(canvas.width - 40, 560), bh = 92, bx = (canvas.width - bw) / 2, by = BOARD_Y + 12;
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#2a8f4f"; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.stroke();
+  ctx.fillStyle = "#eaffea"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "30px Canterbury"; ctx.fillText("Achievement Unlocked!", bx + bw / 2, by + 30);
+  ctx.font = "40px Canterbury"; ctx.fillStyle = "#fff"; ctx.fillText(_achToast.name, bx + bw / 2, by + 66);
+  ctx.restore();
+  ctx.textBaseline = "alphabetic";
+}
+
 function draw() {
   if (!spritesLoaded || !_continued) { _drawSplash(); return; }
+  if (achievementsOpen) { drawAchievementsScreen(); return; }
+  if (gamePhase === 'playing' && !replayMode) checkAchievements();
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
     const s = new Set();
@@ -5107,6 +5302,7 @@ function draw() {
     const lw = logoEl.width * scale, lh = logoEl.height * scale;
     ctx.drawImage(logoEl, MARGIN, (LOGO_H - lh) / 2, lw, lh);
   }
+  drawAchievementToast();
   ctx.font = "22px monospace";
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.textAlign = "left";
@@ -5804,6 +6000,7 @@ canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
   if (spritesLoaded && !_continued) { _doContinue(); return; } // Continue button on the loading screen
+  if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
@@ -5859,6 +6056,8 @@ canvas.addEventListener("click", (e) => {
         cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); rollSetup(); draw(); return; }
     if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
         cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
+    if (cx >= ACH_MENU_BTN.x && cx <= ACH_MENU_BTN.x + ACH_MENU_BTN.w &&
+        cy >= ACH_MENU_BTN.y && cy <= ACH_MENU_BTN.y + ACH_MENU_BTN.h) { playSfx('button'); achievementsOpen = true; _achSelected = 0; _achClearConfirm = false; draw(); return; }
     // Timed mode toggle
     {
       const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
