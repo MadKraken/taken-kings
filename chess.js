@@ -1,4 +1,4 @@
-﻿const VERSION = "554";
+﻿const VERSION = "555";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1541,6 +1541,9 @@ function applyRiverFlow(onDone) {
         {
           animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
           movePiece(i, di);
+          // Pushed onto an item space — activate it (e.g. a Bomb detonates on whoever
+          // the river shoves onto it), same as a piece landing on the item by moving.
+          if (itemSpaces[di] !== ITEM_NONE) _applyItemAuto(itemSpaces[di], di);
         }
         continue;
       }
