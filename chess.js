@@ -1,4 +1,4 @@
-﻿const VERSION = "570";
+﻿const VERSION = "571";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2161,6 +2161,13 @@ function applyFireTrail(fromI, toI, p, s) {
   while (cx !== tx || cy !== ty) { fireSquares.set(idx(cx, cy), s); cx += dx; cy += dy; }
 }
 
+// Remove all fire owned by side s (fireSquares maps square -> the side that laid it,
+// which is the side immune to it). Used at turn boundaries: a fire has done its job
+// threatening the opponent during their turn, so it clears when they finish moving.
+function _clearFireOfSide(s) {
+  for (const [i, fs] of [...fireSquares]) if (fs === s) fireSquares.delete(i);
+}
+
 function _shoveMerchant(dx, dy) {
   const [mx, my] = xy(merchantIdx);
   const nx = mx + dx, ny = my + dy;
@@ -2504,6 +2511,7 @@ function endWhiteTurn() {
   stopWhiteTurnTimer();
   lastActingSide = W;
   _turnBoundaryUpdate(); // fold this turn's activity into streaks, clear per-turn counters
+  _clearFireOfSide(B);   // White moved a piece — enemy fire has done its job; clear it
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     fieldAdvance();
@@ -2563,6 +2571,7 @@ function canTeamLeap() {
 function teamAdvance() {
   if (gameOver || turn !== W || aiThinking || anim) return;
   _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
+  _clearFireOfSide(B);   // Team Advance counts as a White move — enemy fire clears (Field Advance never does)
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   playSfx('torch');  // Team Advance
 
@@ -3286,7 +3295,7 @@ function aiPlay() {
         neutralPlay(() => {
           merchantPlay(() => {
             applyRiverFlow(() => {
-              if (_piecesMovedSinceFire) fireSquares.clear(); // fire expires only once a piece actually moved
+              _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance to burn Black
               _doSkyDropPhase(() => {
                 turn = W;
                 aiThinking = false;
@@ -3374,7 +3383,7 @@ function aiPlay() {
       neutralPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
-            if (_piecesMovedSinceFire) fireSquares.clear();
+            _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance
             _doSkyDropPhase(() => {
               turn = W;
               aiThinking = false;
