@@ -1,4 +1,4 @@
-﻿const VERSION = "539";
+﻿const VERSION = "541";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1305,6 +1305,27 @@ function exitReplay() {
   draw();
 }
 
+// Reproduce the key audio cue for one replay transition event, mirroring the
+// sounds the live game plays for the same action. (playSfx self-gates on mute.)
+function _replaySfx(ev) {
+  if (ev.type === 'fly') { // a captured piece flying to the graveyard
+    const p = ev.piece;
+    if (p === QUEEN) playSfx('queencap');
+    else if (p === ROOK) { playSfx('rookcap'); playSfx('anvil'); }
+    else { playSfx('capture'); playSfx('punch'); }
+    playSfx('body'); if (ev.side === B) playSfx('loot');
+    return;
+  }
+  if (ev.type === 'wave') { playSfx('water'); return; }
+  if (ev.exitRow) { // Field Advance
+    playSfx('whoosh');
+    if (ev.exitRow.some(r => r.piece && r.piece !== NONE)) playSfx('crunch');
+    return;
+  }
+  const first = ev.pieces && ev.pieces[0]; // ordinary piece move
+  if (first) playSfx(first.piece === KNIGHT ? 'horse' : 'move');
+}
+
 function _playReplayTransition(snapIdx, onDone) {
   const events = _replayTransitions[snapIdx] || [];
   let ei = 0;
@@ -1312,6 +1333,7 @@ function _playReplayTransition(snapIdx, onDone) {
     // Fire all consecutive fly events (fire-and-forget, no waiting)
     while (ei < events.length && events[ei].type === 'fly') {
       const ev = events[ei++];
+      _replaySfx(ev);
       startFlyAnim(ev.piece, ev.side, ev.sx, ev.sy, ev.tx, ev.ty, null);
     }
     if (ei >= events.length) {
@@ -1346,6 +1368,7 @@ function _playReplayTransition(snapIdx, onDone) {
       }
       playNext();
     };
+    _replaySfx(ev);
     if (ev.type === 'wave') {
       startWaveAnim(ev.squares, {...ev.shoveParams}, evOnDone);
     } else {
@@ -2841,7 +2864,7 @@ function evaluate() {
     const effectiveV = shields > 0 ? v * (1 + 0.5 * shields) : v;
     if (sides[i] === W) {
       val += effectiveV + PIECE_SURVIVAL_BONUS;
-      if (board[i] === KING) whiteKing = true;
+      if (board[i] === KING || board[i] === CHECKERS_KING) whiteKing = true; // a Checkers King counts — without this eval collapses to -99999 and Black moves randomly
     } else {
       val -= effectiveV;
     }
@@ -2983,8 +3006,8 @@ function aiBestMove() {
   }
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
-  const kingAttacks = moves.filter(([, to]) => board[to] === KING && sides[to] === W);
-  const kingIdx = board.findIndex((p, i) => p === KING && sides[i] === W);
+  const kingAttacks = moves.filter(([, to]) => (board[to] === KING || board[to] === CHECKERS_KING) && sides[to] === W);
+  const kingIdx = board.findIndex((p, i) => (p === KING || p === CHECKERS_KING) && sides[i] === W);
   console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
   // Also compelled: Checkers jumps whose chain will reach a White King
