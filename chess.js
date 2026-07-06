@@ -1,4 +1,4 @@
-﻿const VERSION = "569";
+﻿const VERSION = "570";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1603,6 +1603,7 @@ function applyRiverFlow(onDone) {
           // Pushed onto an item space — activate it (e.g. a Bomb detonates on whoever
           // the river shoves onto it), same as a piece landing on the item by moving.
           if (itemSpaces[di] !== ITEM_NONE) _applyItemAuto(itemSpaces[di], di);
+          checkFireDeath(di); // river pushed the piece onto enemy fire
         }
         continue;
       }
@@ -2205,6 +2206,7 @@ function shovePiece(srcI, dx, dy) {
     if (_destBomb && _shovedSide === B && _waterShoveActive) _pushedBlackIntoBombByWater = true;
     _applyItemAuto(itemSpaces[destI], destI);
   }
+  if (!replayMode) checkFireDeath(destI); // shoved onto enemy fire burns (consistent with voids/bombs)
 }
 
 function applyWaterWave(fromI, toI, p) {
@@ -2248,6 +2250,8 @@ function checkFireDeath(i) {
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
   if (s === W) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior burned to death
   clearSquare(i);
+  // A burning White King ends the game (was: silently deleted, leaving a kingless zombie game)
+  if ((p === KING || p === CHECKERS_KING) && s === W && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
   return true;
 }
 
@@ -3528,7 +3532,9 @@ function _autoTeleport(i) {
   }
   if (dests.length === 0) return;
   playSfx('teleport');
-  movePiece(i, dests[randInt(dests.length)]); // preserves side/stats/effects
+  const _tDest = dests[randInt(dests.length)];
+  movePiece(i, _tDest); // preserves side/stats/effects
+  checkFireDeath(_tDest); // teleported onto enemy fire — burns
 }
 
 // Auto-clone: drop a same-side copy of the piece at i onto a random adjacent empty square.
@@ -3536,7 +3542,9 @@ function _autoClone(i) {
   const dests = adjacentClonerDests(i).filter(j => j !== merchantIdx && !isVoidSpace(j) && !isBlockSpace(j));
   if (dests.length === 0) return;
   playSfx('clone');
-  copyPiece(i, dests[randInt(dests.length)]); // clone keeps the same side/stats/effects
+  const _cDest = dests[randInt(dests.length)];
+  copyPiece(i, _cDest); // clone keeps the same side/stats/effects
+  checkFireDeath(_cDest); // clone dropped onto enemy fire — burns
 }
 
 function countKings(s) {
@@ -5781,6 +5789,7 @@ function handleClonerClick(cx, cy) {
       if (dests.includes(i)) {
         if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         copyPiece(clonerSelected, i); sides[i] = W; playSfx('clone');
+        checkFireDeath(i); // clone dropped onto enemy fire — burns
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
@@ -5829,6 +5838,7 @@ function handleTeleporterClick(cx, cy) {
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
         const _tPiece = board[i] || _tPiece0, _tHlth = health[i] || _tHlth0;
+        checkFireDeath(i); // teleported onto enemy fire — burns (checkWhiteKingAlive below covers the King)
         const _tFinish = () => {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
@@ -6103,6 +6113,7 @@ function handleBoardClick(cx, cy) {
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wContinue = (movedTo) => {
         pendingCaptures = {};
+        checkFireDeath(movedTo); // landing on enemy fire burns (same as the AI/auto paths)
         checkWhiteKingAlive();
         if (!gameOver) {
           if (_isCheckersJump && (board[movedTo] === CHECKERS || board[movedTo] === CHECKERS_KING) && sides[movedTo] === W) {
