@@ -1,4 +1,4 @@
-﻿const VERSION = "548";
+﻿const VERSION = "549";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2820,21 +2820,26 @@ function restoreState(st) {
 
 function withState(fn) { const st = saveState(); try { return fn(); } finally { restoreState(st); } }
 
-// Simulate a Team Advance (White pieces each move up 1 row) for AI evaluation
+// Simulate a Team Advance (White pieces each move up 1 row) for AI evaluation.
+// Mirrors teamAdvance: enemies/merchant/blocks block, voids kill the mover.
 function simulateTeamAdvance() {
   const nsq = _blankSquares(false);
   // Enemies stay in place
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) _copySquareTo(nsq, i, i);
   }
-  // White pieces try to move up (y-1); blocked by occupied squares or row 0
+  // White pieces try to move up (y-1); blocked by occupied squares, merchant, or row 0
   for (let i = 0; i < 64; i++) {
     if (sides[i] !== W) continue;
     const [x, y] = xy(i);
-    if (y === 0 || isBlockSpace(idx(x, y - 1)) || nsq.board[idx(x, y - 1)] !== NONE) {
+    const ni = idx(x, y - 1);
+    if (y === 0 || isBlockSpace(ni) || ni === merchantIdx || nsq.board[ni] !== NONE) {
       _copySquareTo(nsq, i, i);
+    } else if (isVoidSpace(ni)) {
+      // piece falls into the void and dies — don't place it (a dead King is
+      // caught by minimax's findKing check, so the search avoids this)
     } else {
-      _copySquareTo(nsq, i, idx(x, y - 1));
+      _copySquareTo(nsq, i, ni);
     }
   }
   _commitSquares(nsq);
@@ -2886,12 +2891,17 @@ function evaluate() {
     const effectiveV = shields > 0 ? v * (1 + 0.5 * shields) : v;
     if (sides[i] === W) {
       val += effectiveV + PIECE_SURVIVAL_BONUS;
+      // Mild advance shaping: reward forward progress so quiet positions still
+      // drift toward the enemy instead of shuffling (small vs. piece values).
+      if (board[i] !== KING && board[i] !== CHECKERS_KING) val += (7 - Math.floor(i / 8)) * 2;
       if (board[i] === KING || board[i] === CHECKERS_KING) whiteKing = true; // a Checkers King counts — without this eval collapses to -99999 and Black moves randomly
     } else {
       val -= effectiveV;
     }
   }
   if (!whiteKing) return -99999;
+  // Items are worth having: makes the search value chest pickups and shop buys.
+  for (let k = 0; k < inventory.length; k++) if (inventory[k] !== ITEM_NONE) val += 60;
   // Penalize white pieces on y=7 when field auto-advance is imminent (they'll be destroyed)
   if (shiftCountdown <= 3) {
     for (let x = 0; x < 8; x++) {
@@ -3063,7 +3073,8 @@ function aiBestMove() {
 
 let hintMove = null; // {from, to} or "leap"
 
-function playerBestMove() {
+// Best White piece-move by minimax. Returns { move: [from,to]|null, score }.
+function playerBestMove(depth = HINT_DEPTH) {
   const moves = allLegalMovesForSide(W);
   let bestScore = -Infinity;
   let bestMoves = [];
@@ -3072,7 +3083,7 @@ function playerBestMove() {
     const val = withState(() => {
       const wasCap = sides[to] === B;
       makeMove(from, to); recordPosition();
-      return _turnContinuation(to, _extraMoveBudget(to, wasCap), HINT_DEPTH, -Infinity, Infinity, true);
+      return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, true);
     }) + captureBonus;
     if (val > bestScore) {
       bestScore = val;
@@ -3081,7 +3092,7 @@ function playerBestMove() {
       bestMoves.push([from, to]);
     }
   }
-  return bestMoves.length > 0 ? bestMoves[randInt(bestMoves.length)] : null;
+  return { move: bestMoves.length > 0 ? bestMoves[randInt(bestMoves.length)] : null, score: bestScore };
 }
 
 function showHint() {
@@ -3089,7 +3100,7 @@ function showHint() {
   aiThinking = true;
   draw();
   setTimeout(() => {
-    hintMove = playerBestMove();
+    hintMove = playerBestMove().move;
     aiThinking = false;
     if (hintMove === "leap") {
       // Flash the leap button
@@ -5848,211 +5859,27 @@ function _aiItemVal(item) {
   return 100;
 }
 
-// Score moving a white piece from fromI to toI (pure heuristic, no board mutation)
-function _aiScoreMove(fromI, toI) {
-  let score = 0;
-  const [fx, fy] = xy(fromI);
-  const [tx, ty] = xy(toI);
-  const isKing = board[fromI] === KING;
-
-  // Never move the King into a void (instant death)
-  if (isKing && isVoidSpace(toI)) return -1000000;
-  // Non-King pieces: void is mildly bad (lose the piece) but not fatal
-  if (!isKing && isVoidSpace(toI)) score -= _aiPieceVal(board[fromI]) * 5;
-
-  // Capture enemy
-  if (board[toI] !== NONE && sides[toI] === B) {
-    score += _aiPieceVal(board[toI]) * 10;
-  }
-  // Recruit neutral (bounce: they join us)
-  if (sides[toI] === N) {
-    score += (_aiPieceVal(board[toI]) + 200) * 10;
-  }
-  // Bump merchant → open shop (we buy after)
-  if (toI === merchantIdx) {
-    score += 800;
-  }
-  // Land on item space
-  if (itemSpaces[toI] !== ITEM_NONE) {
-    score += _aiItemVal(itemSpaces[toI]) * 3;
-  }
-  // Land on chest
-  if (chestSpaces.has(toI)) {
-    score += 600;
-  }
-  // Positional: mild bonus for advancing non-King pieces toward enemies
-  if (!isKing) {
-    score += (7 - ty) * 5;
-    if (ty > fy) score -= 15; // penalty for retreating
-  }
-  // SURVIVAL URGENCY: pieces on y=7 die when the field auto-advances.
-  // The closer the countdown, the more critical it is to escape row 7 (and row 6).
-  if (fy === 7 && ty < 7) {
-    const urgency = Math.max(0, 5 - shiftCountdown);
-    score += urgency * 300 + 100; // always at least a little incentive to leave y=7
-  }
-  if (fy === 6 && ty < 6 && shiftCountdown <= 2) {
-    score += (3 - shiftCountdown) * 200; // row 6 pieces will be on y=7 after next advance
-  }
-  // King safety: sweet spot is y=4-5 (not at risk from auto-advance, not too close to enemies)
-  if (isKing) {
-    const KING_IDEAL = [0, -300, -200, -50, 30, 40, 10, -2000]; // score per row y=0..7
-    score += KING_IDEAL[ty] ?? 0;
-    // Extra urgency: if shiftCountdown is low and King is deep, penalise staying low
-    if (ty >= 6 && shiftCountdown <= 3) score -= (7 - shiftCountdown) * 300;
-  }
-
-  // Safety: simulate the move and check King safety + destination attacks
-  const savedBoard = board.slice(), savedSides = sides.slice();
-  board[toI] = board[fromI]; sides[toI] = sides[fromI];
-  board[fromI] = NONE; sides[fromI] = 0;
-
-  // Would this leave/expose our King to attack?
-  const [kx, ky] = findKing(W);
-  if (kx >= 0 && isAttacked(kx, ky, W)) {
-    score -= 100000; // Illegal-style: never leave King in check
-  }
-  // Is the destination square still attacked after the move? (enemy recapture)
-  if (!isKing && isAttacked(tx, ty, W)) {
-    score -= _aiPieceVal(savedBoard[fromI]) * 8;
-  }
-  if (isKing && isAttacked(tx, ty, W)) {
-    score -= 100000; // Don't walk King into fire
-  }
-
-  board.splice(0, 64, ...savedBoard); sides.splice(0, 64, ...savedSides);
-
-  return score;
-}
-
-// Find best single-piece move; returns {fx,fy,tx,ty,score} or null
-function _aiBestMove() {
-  const [wkx, wky] = findKing(W);
-  const kingInCheck = wkx >= 0 && isAttacked(wkx, wky, W);
-
-  // King liberation: if King is boxed in (no legal moves) and in danger zone, boost moves
-  // that would vacate a square the King could safely escape to.
-  const kingTrapped = wkx >= 0 && legalMoves(wkx, wky).length === 0;
-  const kingEscapeBonus = new Set(); // indices that would free a square for the King
-  if (kingTrapped && wky >= 5) {
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (!dx && !dy) continue;
-      const nx = wkx + dx, ny = wky + dy;
-      if (!inB(nx, ny)) continue;
-      const ni = idx(nx, ny);
-      // Square is occupied by own piece — if we move it away, could King go there?
-      if (sides[ni] === W) {
-        // Simulate: remove piece from ni, check if King could move there safely
-        const sv = board.slice(), ss = sides.slice();
-        board[ni] = NONE; sides[ni] = 0;
-        const safeForKing = !isAttacked(nx, ny, W);
-        board.splice(0, 64, ...sv); sides.splice(0, 64, ...ss);
-        if (safeForKing) kingEscapeBonus.add(ni); // moving this piece frees King
-      }
-    }
-  }
-
-  let best = null, bestScore = -Infinity;
-  for (let fy = 0; fy < 8; fy++) {
-    for (let fx = 0; fx < 8; fx++) {
-      const fromI = idx(fx, fy);
-      if (board[fromI] === NONE || sides[fromI] !== W) continue;
-      const moves = legalMoves(fx, fy);
-      for (const toI of moves) {
-        let score = _aiScoreMove(fromI, toI);
-        // King liberation: big bonus for moving a blocking piece away
-        if (kingEscapeBonus.has(fromI)) score += 800;
-        // If King is in check, heavily favour moves that get it out
-        if (kingInCheck && board[fromI] !== KING) {
-          // Non-King moves during check: only worth it if they block/capture attacker
-          // Approximate: keep the penalty if King remains in check after move
-          const sv = board.slice(), ss = sides.slice();
-          board[toI] = board[fromI]; sides[toI] = W;
-          board[fromI] = NONE; sides[fromI] = 0;
-          if (isAttacked(wkx, wky, W)) score -= 80000; // still in check
-          board.splice(0, 64, ...sv); sides.splice(0, 64, ...ss);
-        }
-        if (score > bestScore) {
-          bestScore = score;
-          const [tx, ty] = xy(toI);
-          best = { fx, fy, tx, ty, score };
-        }
-      }
-    }
-  }
-  return best;
-}
-
-// Estimate value of doing a Team Advance right now
-function _aiTeamAdvanceScore() {
-  // Only count concrete gains: captures, items, recruits.
-  // Positional bonuses excluded so we don't spam leap over real moves.
-  let score = 0;
-  let canAnyMove = false;
-  for (let fy = 1; fy < 8; fy++) {
-    for (let fx = 0; fx < 8; fx++) {
-      const fromI = idx(fx, fy);
-      if (sides[fromI] !== W) continue;
-      const toI = idx(fx, fy - 1);
-      if (isBlockSpace(toI)) continue;
-      if (sides[toI] === B && board[toI] !== NONE) {
-        score += _aiPieceVal(board[toI]) * 10;
-        canAnyMove = true;
-      } else if (board[toI] === NONE) {
-        canAnyMove = true;
-        if (itemSpaces[toI] !== ITEM_NONE) score += _aiItemVal(itemSpaces[toI]) * 3;
-        if (chestSpaces.has(toI)) score += 600;
-      }
-      if (sides[toI] === N) score += (_aiPieceVal(board[toI]) + 200) * 10;
-      // Hard stop: don't leap King into void or check
-      if (board[fromI] === KING && isVoidSpace(toI)) { score -= 1000000; continue; }
-      if (board[fromI] === KING && sides[toI] !== B && isAttacked(fx, fy - 1, W)) score -= 100000;
-    }
-  }
-  if (!canAnyMove) return -Infinity; // fully blocked, useless
-
-  // Emergency: if pieces on y=7 would die in the next auto-advance, strongly prefer leap
-  // (leap moves ALL pieces up at once, saving everything on y=7 in one turn)
-  let row7Pieces = 0;
-  for (let x = 0; x < 8; x++) {
-    const i = idx(x, 7);
-    if (sides[i] === W) row7Pieces++;
-  }
-  if (row7Pieces >= 2 && shiftCountdown <= 3) score += row7Pieces * 200;
-  else if (row7Pieces >= 1 && shiftCountdown <= 1) score += 600;
-
-  return score;
-}
-
-// Estimate value of doing a manual Field Advance (kills row-7 enemies; costs move)
-function _aiFieldAdvanceScore() {
-  if (!canManualPitchShift()) return -Infinity;
-  let score = 0;
-  for (let x = 0; x < 8; x++) {
-    const i = idx(x, 7);
-    if (sides[i] === B) score += _aiPieceVal(board[i]) * 10;
-  }
-  // Only worthwhile if we'd actually kill something or shiftCountdown is high (stalling)
-  return score > 0 ? score : -200;
-}
-
 // ── Item usage ────────────────────────────────────────────────────────────────
 
 function _aiUseBomb() {
-  // Find 3×3 center that maximises (enemy hits - white hits), must hit ≥2 enemies or a King
+  // Find 3×3 center that maximises (enemy hits - white hits); must hit ≥2 enemies
+  // or a Black King — don't waste a bomb on a lone pawn.
   let bestI = -1, bestScore = -Infinity;
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
-      let score = 0, enemies = 0;
+      let score = 0, enemies = 0, hitsKing = false;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (!inB(x + dx, y + dy)) continue;
           const ni = idx(x + dx, y + dy);
-          if (sides[ni] === B) { score += _aiPieceVal(board[ni]) * 10; enemies++; }
+          if (sides[ni] === B) {
+            score += _aiPieceVal(board[ni]) * 10; enemies++;
+            if (board[ni] === KING || board[ni] === CHECKERS_KING) hitsKing = true;
+          }
           if (sides[ni] === W) score -= _aiPieceVal(board[ni]) * 8; // penalise own losses
         }
       }
-      if (enemies >= 1 && score > 0 && score > bestScore) { bestScore = score; bestI = idx(x, y); }
+      if ((enemies >= 2 || hitsKing) && score > 0 && score > bestScore) { bestScore = score; bestI = idx(x, y); }
     }
   }
   if (bestI < 0) return false;
@@ -6113,7 +5940,7 @@ function _aiUseTeleporter(slot) {
   let bestDestI = -1, bestDestScore = -Infinity;
   for (let i = 0; i < 64; i++) {
     if (board[i] !== NONE || chestSpaces.has(i)) continue;
-    if (i === merchantIdx) continue;
+    if (i === merchantIdx || isVoidSpace(i) || isBlockSpace(i)) continue; // void = death, block = illegal
     const [tx, ty] = xy(i);
     let s = (7 - ty) * 20;
     if (itemSpaces[i] !== ITEM_NONE) s += 300;
@@ -6174,6 +6001,28 @@ function _aiUseElementalizer(slot) {
   return true;
 }
 
+// Use a single-target stat buff (Sword / Vampire Fang / Boots) on the best
+// eligible piece. Boots prefer the King (a double-move King is a huge survival
+// tool); Sword/Fang prefer the most valuable attacker.
+function _aiUseStatItem(slot, item, clickFn) {
+  let bestI = -1, bestVal = -1;
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== W || !canItemAffectPiece(item, i)) continue;
+    let v = _aiPieceVal(board[i]);
+    if (item === ITEM_BOOTS && (board[i] === KING || board[i] === CHECKERS_KING)) v = 1e9;
+    if (item !== ITEM_BOOTS && (board[i] === KING || board[i] === CHECKERS_KING)) v = 0; // buff fighters, not the King
+    if (v > bestVal) { bestVal = v; bestI = i; }
+  }
+  if (bestI < 0) return false;
+  inventory._activeSlot = slot;
+  if (item === ITEM_SWORD) swordMode = true;
+  else if (item === ITEM_VAMPIRE_FANG) vampireFangMode = true;
+  else if (item === ITEM_BOOTS) speedMode = true;
+  const [px, py] = xy(bestI);
+  setTimeout(() => clickFn(MARGIN + px * TILE + TILE / 2, BOARD_Y + MARGIN + py * TILE + TILE / 2), 150);
+  return true;
+}
+
 // Try to use a high-value inventory item. Returns true if triggered (async).
 function _aiTryUseItem() {
   for (let slot = 0; slot < inventory.length; slot++) {
@@ -6184,7 +6033,7 @@ function _aiTryUseItem() {
     if (isPromoterItem(item) && _aiUsePromoter(slot)) return true;
     if (item === ITEM_CLONER && _aiUseCloner(slot)) return true;
 
-    // Bomb: use when ≥1 enemy hit and score is positive
+    // Bomb: use when it hits ≥2 enemies (or a King) at positive value
     if (item === ITEM_BOMB && _aiUseBomb()) return true;
 
     // Shield: use on any piece worth ≥ a Rook (no threat requirement)
@@ -6195,6 +6044,11 @@ function _aiTryUseItem() {
 
     // Elementalizer: use on best non-elemental piece regardless of threat state
     if (isElementalizerItem(item) && _aiUseElementalizer(slot)) return true;
+
+    // Stat buffs: apply immediately (using an item doesn't consume the turn)
+    if (item === ITEM_SWORD && _aiUseStatItem(slot, item, handleSwordClick)) return true;
+    if (item === ITEM_VAMPIRE_FANG && _aiUseStatItem(slot, item, handleVampireFangClick)) return true;
+    if (item === ITEM_BOOTS && _aiUseStatItem(slot, item, handleSpeedClick)) return true;
   }
   return false;
 }
@@ -6227,32 +6081,55 @@ function _aiHandleShop() {
 
 // ── Main auto-play step ───────────────────────────────────────────────────────
 
+const AUTO_DEPTH = 4; // search depth for auto-play decisions (all actions compared at this depth)
+
 function _aiWhiteStep() {
   if (!autoPlay || gameOver || turn !== W || aiThinking || anim) return;
-  if (shopMode || piecePromoterMode || shieldMode || bombMode || clonerMode || teleporterMode || elementizerMode) return;
+  if (shopMode || piecePromoterMode || shieldMode || bombMode || clonerMode || teleporterMode || elementizerMode || vampireFangMode || swordMode || speedMode) return;
 
-  // 1. Try using a high-value item first (bomb, cloner, promoter)
+  // 0. Pending extra-move (Speed / Bloodthirsty / checkers chain): only the
+  //    selected piece may act — play its best continuation, or pass (click the
+  //    piece again) when ending the turn scores better. Without this the auto
+  //    player deadlocks trying to move other pieces.
+  if (selected >= 0 && (_speedIdx >= 0 || _bloodthirstyIdx >= 0 || _checkersChainIdx >= 0)) {
+    const from = selected;
+    const cc = i => [MARGIN + (i % 8) * TILE + TILE / 2, BOARD_Y + MARGIN + Math.floor(i / 8) * TILE + TILE / 2];
+    let bestTo = -1, bestVal = -Infinity;
+    for (const to of validMoves) {
+      const val = withState(() => {
+        const wasCap = sides[to] === B;
+        makeMove(from, to); recordPosition();
+        return _turnContinuation(to, _extraMoveBudget(to, wasCap), AUTO_DEPTH, -Infinity, Infinity, true);
+      });
+      if (val > bestVal) { bestVal = val; bestTo = to; }
+    }
+    const inChain = _checkersChainIdx >= 0; // chain jumps can't be passed by re-clicking
+    const passVal = inChain ? -Infinity : withState(() => minimax(AUTO_DEPTH - 1, -Infinity, Infinity, false));
+    const target = (bestTo >= 0 && bestVal >= passVal) ? bestTo : from;
+    const [ccx, ccy] = cc(target);
+    handleBoardClick(ccx, ccy);
+    return;
+  }
+
+  // 1. Try using a high-value item first (bomb, cloner, promoter, buffs)
   if (_aiTryUseItem()) return;
 
-  // 2. Use playerBestMove (full minimax) for the piece move.
-  //    Use cheap depth-1 minimax to compare Team Advance and Field Advance vs the move.
-  const move = playerBestMove(); // [fromI, toI] or null
-
-  // Eval after a simulated action (depth 2 — sees two plies for Team/Field comparison)
-  const quickEval = (simFn) => withState(() => {
+  // 2. Compare best piece-move, Team Advance and Field Advance — all at the SAME
+  //    search depth so the values are directly comparable (a move's value is
+  //    "position after action" searched to AUTO_DEPTH-1 with Black to reply).
+  const { move, score: moveVal } = playerBestMove(AUTO_DEPTH);
+  const advEval = (simFn) => withState(() => {
     simFn();
     recordPosition();
-    return minimax(2, -Infinity, Infinity, false);
+    return minimax(AUTO_DEPTH - 1, -Infinity, Infinity, false);
   });
+  const teamVal  = canTeamLeap() ? advEval(simulateTeamAdvance) : -Infinity;
+  const fieldVal = canManualPitchShift() ? advEval(simulateLeap) : -Infinity;
 
-  const moveVal  = move ? quickEval(() => makeMove(move[0], move[1])) : -Infinity;
-  const teamVal  = quickEval(simulateTeamAdvance);
-  const fieldVal = canManualPitchShift() ? quickEval(simulateLeap) : -Infinity;
-
-  // 3. Execute the highest-valued action
-  const best = Math.max(moveVal, teamVal, fieldVal);
-  if (teamVal >= best && teamVal > moveVal) { teamAdvance(); return; }
-  if (fieldVal >= best && fieldVal > moveVal) { fieldAdvance(true); return; }
+  // 3. Execute the highest-valued action; on ties prefer the piece move
+  //    (advances are all-in tempo plays — only take them when strictly better).
+  if (teamVal > moveVal && teamVal >= fieldVal) { teamAdvance(); return; }
+  if (fieldVal > moveVal && fieldVal > teamVal) { fieldAdvance(true); return; }
   if (move) {
     const [fromI, toI] = move;
     const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
@@ -6261,6 +6138,10 @@ function _aiWhiteStep() {
       handleBoardClick(MARGIN + tx * TILE + TILE / 2, BOARD_Y + MARGIN + ty * TILE + TILE / 2);
       setTimeout(() => { if (shopMode) _aiHandleShop(); }, 250);
     }, 150);
+  } else if (teamVal > -Infinity) {
+    teamAdvance(); // no legal piece move — advance rather than stall
+  } else if (fieldVal > -Infinity) {
+    fieldAdvance(true);
   }
 }
 
@@ -6376,16 +6257,40 @@ function _aiCompleteActiveMode() {
     else { swordMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
     return;
   }
+
+  if (speedMode) {
+    let bestI = -1, bestVal = -1;
+    for (let i = 0; i < 64; i++) {
+      if (sides[i] !== W || !canItemAffectPiece(ITEM_BOOTS, i)) continue;
+      const v = (board[i] === KING || board[i] === CHECKERS_KING) ? 1e9 : _aiPieceVal(board[i]);
+      if (v > bestVal) { bestVal = v; bestI = i; }
+    }
+    if (bestI >= 0) { const [cx,cy] = cc(bestI); setTimeout(() => handleSpeedClick(cx, cy), 100); }
+    else { speedMode = false; if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); }
+    return;
+  }
 }
 
-// Poll every 600ms: trigger auto-play, and resolve any stuck interactive-item UI
+// Poll every 600ms: trigger auto-play, and resolve any stuck interactive-item UI.
+// Wrapped in try/catch so one bad step can't permanently kill auto-play.
 setInterval(() => {
   if (!autoPlay || gameOver || aiThinking || anim || _autoScheduled) return;
-  if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || vampireFangMode || swordMode) {
-    _aiCompleteActiveMode(); return;
+  try {
+    // Rewinder save offer: always accept — it extends the run
+    if (_rewinderSaveOffer) {
+      const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+      const btnY = boardCY + 90 + 46;
+      handleRewinderSaveOfferClick(boardCX - 40 / 2 - 180 + 5, btnY + 5); // Yes button
+      return;
+    }
+    if (shopMode || clonerMode || teleporterMode || bombMode || shieldMode || piecePromoterMode || elementizerMode || vampireFangMode || swordMode || speedMode) {
+      _aiCompleteActiveMode(); return;
+    }
+    if (turn !== W) return;
+    autoWhitePlay();
+  } catch (e) {
+    console.warn('[auto] step failed:', e);
   }
-  if (turn !== W) return;
-  autoWhitePlay();
 }, 600);
 
 // ─────────────────────────────────────────────────────────────────────────────
