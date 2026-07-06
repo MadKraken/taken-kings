@@ -1,4 +1,4 @@
-﻿const VERSION = "541";
+﻿const VERSION = "542";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2266,9 +2266,9 @@ function makeMove(fromI, toI, visual = false) {
     }
   }
 
-  // White piece attacks neutral: King recruits, all others kill
+  // White piece attacks neutral: King (or Checkers King) recruits, all others kill
   if (s === W && sides[toI] === N) {
-    if (p === KING) {
+    if (p === KING || p === CHECKERS_KING) {
       sides[toI] = W;
       const bounceI = calcBouncePos(fromI, toI, p);
       if (bounceI !== fromI) {
@@ -5555,7 +5555,7 @@ function handleBoardClick(cx, cy) {
       if (sides[clicked] === N) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
-        if (attackPiece === KING) playSfx('recruit'); // King recruits the Neutral
+        if (attackPiece === KING || attackPiece === CHECKERS_KING) playSfx('recruit'); // King (or Checkers King) recruits the Neutral
         const bounceI = calcBouncePos(fromI, clicked, attackPiece);
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
