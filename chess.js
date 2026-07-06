@@ -1,4 +1,4 @@
-﻿const VERSION = "549";
+﻿const VERSION = "552";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2377,6 +2377,13 @@ function makeMove(fromI, toI, visual = false) {
   effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
 
+  // Ground items (sky drops): in simulation, bank the item so the search values
+  // landing on item squares (via the inventory eval term). Real pickups run
+  // through activateItemSpace in the click/AI flow instead.
+  if (!visual && s === W && itemSpaces[toI] !== ITEM_NONE && canItemAffectPiece(itemSpaces[toI], toI)) {
+    addToInventory(itemSpaces[toI]);
+    itemSpaces[toI] = ITEM_NONE;
+  }
 }
 
 function endWhiteTurn() {
@@ -2799,6 +2806,7 @@ function saveState() {
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length, shiftCountdown,
     chestSpaces: new Set(chestSpaces),
+    itemSpaces: [...itemSpaces],
     merchantIdx, merchantQueued, merchantQueuedCol,
   };
 }
@@ -2814,6 +2822,7 @@ function restoreState(st) {
   positionHistory.length = st.histLen;
   shiftCountdown = st.shiftCountdown;
   if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
+  if (st.itemSpaces) itemSpaces.splice(0, 64, ...st.itemSpaces);
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
 }
@@ -2845,13 +2854,18 @@ function simulateTeamAdvance() {
   _commitSquares(nsq);
 }
 
-function simulateLeap() {
-  // Simulates fieldAdvance for AI lookahead: everything shifts down, row 7 destroyed
+function simulateLeap(scoring = true) {
+  // Simulates fieldAdvance for AI lookahead: everything shifts down, row 7 destroyed.
+  // scoring=true models a player-triggered advance (scores Black Kings pushed off
+  // row 7); scoring=false models the countdown-forced auto-advance (no scoring).
   const nsq = _blankSquares(false);
   for (let i = 0; i < 64; i++) {
     if (board[i] === NONE) continue;
     const [x, y] = xy(i);
-    if (y === 7) continue;
+    if (y === 7) {
+      if (scoring && sides[i] === B && (board[i] === KING || board[i] === CHECKERS_KING)) score++;
+      continue;
+    }
     _copySquareTo(nsq, i, idx(x, y + 1));
   }
   _commitSquares(nsq);
@@ -2900,6 +2914,10 @@ function evaluate() {
     }
   }
   if (!whiteKing) return -99999;
+  // Taken Kings is the win condition — value it directly, not just as the
+  // material of the removed King. Lets the search see that scoring (incl. field
+  // advancing enemy Kings off row 7) is progress toward winning, not just a trade.
+  val += score * 4000;
   // Items are worth having: makes the search value chest pickups and shop buys.
   for (let k = 0; k < inventory.length; k++) if (inventory[k] !== ITEM_NONE) val += 60;
   // Penalize white pieces on y=7 when field auto-advance is imminent (they'll be destroyed)
@@ -3074,7 +3092,10 @@ function aiBestMove() {
 let hintMove = null; // {from, to} or "leap"
 
 // Best White piece-move by minimax. Returns { move: [from,to]|null, score }.
-function playerBestMove(depth = HINT_DEPTH) {
+// forcedAdvance=true folds a non-scoring auto-advance in after the move (used by
+// auto-play when the countdown will force the field to advance this turn), so the
+// move value reflects the incoming preview wave the player can't avoid.
+function playerBestMove(depth = HINT_DEPTH, forcedAdvance = false) {
   const moves = allLegalMovesForSide(W);
   let bestScore = -Infinity;
   let bestMoves = [];
@@ -3082,7 +3103,9 @@ function playerBestMove(depth = HINT_DEPTH) {
     const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
     const val = withState(() => {
       const wasCap = sides[to] === B;
-      makeMove(from, to); recordPosition();
+      makeMove(from, to);
+      if (forcedAdvance) { simulateLeap(false); recordPosition(); return minimax(depth - 1, -Infinity, Infinity, false); }
+      recordPosition();
       return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, true);
     }) + captureBonus;
     if (val > bestScore) {
@@ -6117,7 +6140,13 @@ function _aiWhiteStep() {
   // 2. Compare best piece-move, Team Advance and Field Advance — all at the SAME
   //    search depth so the values are directly comparable (a move's value is
   //    "position after action" searched to AUTO_DEPTH-1 with Black to reply).
-  const { move, score: moveVal } = playerBestMove(AUTO_DEPTH);
+  //    When the countdown will force an auto-advance at the end of THIS turn, a
+  //    plain piece move is immediately followed by that (non-scoring) forced wave
+  //    — fold it into the move eval so the AI braces for the incoming preview row
+  //    (and can see that a manual, scoring Field Advance is better than wasting it).
+  //    Team/Field Advance reset the countdown, so they get no forced advance.
+  const autoAdvanceAfterMove = shiftCountdown <= 1;
+  const { move, score: moveVal } = playerBestMove(AUTO_DEPTH, autoAdvanceAfterMove);
   const advEval = (simFn) => withState(() => {
     simFn();
     recordPosition();
