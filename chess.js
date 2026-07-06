@@ -1,4 +1,4 @@
-﻿const VERSION = "533";
+﻿const VERSION = "534";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -43,8 +43,7 @@ function _loadSfx() {
   }
   // Unlock/resume the audio context on the first user gesture (mobile autoplay policy).
   const unlock = () => {
-    _sfxUnlocked = true;
-    if (_sfxCtx && _sfxCtx.state === 'suspended') _sfxCtx.resume();
+    _sfxUnlockCtx();
     window.removeEventListener('pointerdown', unlock);
     window.removeEventListener('touchstart', unlock);
     window.removeEventListener('keydown', unlock);
@@ -52,6 +51,21 @@ function _loadSfx() {
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('touchstart', unlock);
   window.addEventListener('keydown', unlock);
+}
+
+// iOS Safari only truly unlocks the AudioContext if a buffer is STARTED during
+// the user gesture — resume() alone is not enough. Play a 1-sample silent buffer.
+function _sfxUnlockCtx() {
+  _sfxUnlocked = true;
+  if (!_sfxCtx) return;
+  if (_sfxCtx.state === 'suspended') _sfxCtx.resume();
+  try {
+    const b = _sfxCtx.createBuffer(1, 1, 22050);
+    const s = _sfxCtx.createBufferSource();
+    s.buffer = b;
+    s.connect(_sfxCtx.destination);
+    s.start(0);
+  } catch (e) {}
 }
 
 function playSfx(name) {
@@ -383,8 +397,7 @@ function _continueBtnRect() {
 function _doContinue() {
   if (_continued || !spritesLoaded) return;
   _continued = true;
-  _sfxUnlocked = true;
-  if (_sfxCtx && _sfxCtx.state === 'suspended') _sfxCtx.resume();
+  _sfxUnlockCtx();
   playSfx('button');
   startIdleAnim();
   draw();
