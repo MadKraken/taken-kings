@@ -8,14 +8,14 @@ Take 10 Black Kings in one run with a 15 second timer
 Take 25 Black Kings in one run with a 15 second timer
 Take 50 Black Kings in one run with a 15 second timer
 Take 25 Black Kings in one run without losing a White Warrior
-Take 25 Black Kings in one run within x minutes
+Take 25 Black Kings in one run within 15 minutes
 Take the 20th Black King with a Rook
-Take the 20th King with a Bishop
-Take the 20th King with a Knight
-Take the 20th King with a Pawn
-Take the 20th King with a King
-Take the 20th King with a Checkers Man
-Take the 20th King with a Checkers King 
+Take the 20th Black King with a Bishop
+Take the 20th Black King with a Knight
+Take the 20th Black King with a Pawn
+Take the 20th Black King with a King
+Take the 20th Black King with a Checkers Man
+Take the 20th Black King with a Checkers King 
 Take the 20th Checkers King 
 Recruit a Checkers Man 
 Recruit a Checkers King 
@@ -37,3 +37,19 @@ Take 2 Black Warriors with a chained Checkers Man jump
 Take 3 Black Warriors with a chained Checkers Man jump
 Take 2 Black Warriors with a chained Checkers King jump
 Take 3 Black Warriors with a chained Checkers King jump
+Take a Shielded Black Warrior by hitting them twice with a Fast Warrior in one turn 
+Take 6 Black Warriors in one turn with a Bomb 
+Take 6 Black Warriors in one turn by moving a White Warrior onto a Bomb square
+Take 25 Black Kings on a run starting with at least 12 Pawns
+Take 25 Black Kings on a run starting with at least 4 Knights
+Take 25 Black Kings on a run starting with at least 4 Rooks 
+Take 25 Black Kings on a run starting with at least 4 Bishops
+Have three White Warriors with three Effects each
+Take 25 Black Kings in 15 second timer mode without timing out on a single turn 
+Take at least 1 Black Warrior with a Bomb 3 turns in a row
+Survive 8 Field Advances without taking a single Black King or losing a single White Warrior
+Sell 8 Items in one turn 
+Take 25 Black Pawns in one run
+Take 25 Black Rooks in one run
+Take 25 Black Bishops in one run
+Take 25 Black Knights in one run

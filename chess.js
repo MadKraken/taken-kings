@@ -1,4 +1,4 @@
-﻿const VERSION = "559";
+﻿const VERSION = "561";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -502,6 +502,8 @@ let gameOver = false;
 let gameMsg = "";
 let score = 0;
 let gold = 0;
+let _lostWhiteThisRun = false; // any White piece died this run (for the "no losses" achievement)
+let _runStartMs = 0;           // wall-clock start of the current run (for timed achievements)
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
@@ -756,6 +758,7 @@ function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
 
 function startCaptureAnim(piece, side, sx, sy) {
   const isPlayer = side === W;
+  if (isPlayer) _lostWhiteThisRun = true; // a White Warrior fell (capture / field advance / bomb)
   const pool = isPlayer ? playerDead : enemyDead;
   const [tgx, tgy] = graveSlotPos(isPlayer, piece);
   startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
@@ -790,6 +793,7 @@ function _chestBobTick() {
 
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
+  if (side === W && piece) _lostWhiteThisRun = true; // a White Warrior fell into the void
   if (piece && piece !== QUEEN) playSfx('man'); // male piece screams falling into the void (Queen doesn't)
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
@@ -1636,6 +1640,7 @@ function initBoard() {
   _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _resetTurnState();
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
+  _lostWhiteThisRun = false;
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
   _blackKingsInCheckmate.clear();
@@ -1754,6 +1759,7 @@ function classicSetup() {
 
 function startGame() {
   gamePhase = 'playing';
+  _runStartMs = performance.now(); // start the run clock (for timed achievements)
   takeReplaySnapshot();
   _turnStartSnapIndices.push(replaySnapshots.length - 1);
   draw();
@@ -2160,6 +2166,7 @@ function checkFireDeath(i) {
   const p = board[i], s = sides[i];
   if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
+  if (s === W) _lostWhiteThisRun = true; // a White Warrior burned to death
   clearSquare(i);
   return true;
 }
@@ -5093,6 +5100,12 @@ const ACHIEVEMENTS = [
   { id: 'take_10_king', name: 'Decimator',   desc: 'Take 10 Black Kings in one run', check: () => score >= 10 },
   { id: 'take_25_king', name: 'Warlord',     desc: 'Take 25 Black Kings in one run', check: () => score >= 25 },
   { id: 'take_50_king', name: 'Conqueror',   desc: 'Take 50 Black Kings in one run', check: () => score >= 50 },
+  { id: 'blitz_5',  name: 'Blitz Bloodbath', desc: 'Take 5 Black Kings in one run with a 15-second timer',  check: () => score >= 5  && timedMode && timedModeSecs === 15 },
+  { id: 'blitz_10', name: 'Blitz Decimator', desc: 'Take 10 Black Kings in one run with a 15-second timer', check: () => score >= 10 && timedMode && timedModeSecs === 15 },
+  { id: 'blitz_25', name: 'Blitz Warlord',   desc: 'Take 25 Black Kings in one run with a 15-second timer', check: () => score >= 25 && timedMode && timedModeSecs === 15 },
+  { id: 'blitz_50', name: 'Blitz Conqueror', desc: 'Take 50 Black Kings in one run with a 15-second timer', check: () => score >= 50 && timedMode && timedModeSecs === 15 },
+  { id: 'flawless_25', name: 'Flawless',  desc: 'Take 25 Black Kings in one run without losing a White Warrior', check: () => score >= 25 && !_lostWhiteThisRun },
+  { id: 'speed_25',    name: 'Speedrun',  desc: 'Take 25 Black Kings in one run within 15 minutes',            check: () => score >= 25 && _runStartMs > 0 && (performance.now() - _runStartMs) <= 15 * 60 * 1000 },
 ];
 const ACH_GRID_CELLS = 64; // 8×8
 
