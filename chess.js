@@ -1,4 +1,4 @@
-﻿const VERSION = "547";
+﻿const VERSION = "548";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -34,7 +34,10 @@ function _loadSfx() {
   for (const [name, count] of Object.entries(SFX_DEFS)) {
     _sfxBuffers[name] = [];
     for (let i = 1; i <= count; i++) {
-      fetch(`${SFX_PATH}${name}_${i}.mp3?v=${VERSION}`)
+      // cache: 'no-store' — Safari's disk cache can serve audio responses that
+      // decodeAudioData rejects (works on first load of a new ?v URL, then
+      // silent on every refresh). Files are tiny; always fetch fresh.
+      fetch(`${SFX_PATH}${name}_${i}.mp3?v=${VERSION}`, { cache: 'no-store' })
         .then(r => r.arrayBuffer())
         .then(ab => _sfxCtx.decodeAudioData(ab))
         .then(buf => { _sfxBuffers[name].push(buf); })
