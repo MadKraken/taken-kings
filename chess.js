@@ -1,4 +1,4 @@
-﻿const VERSION = "534";
+﻿const VERSION = "535";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1364,7 +1364,7 @@ function generateWave(count) {
   const kingPiece = (randInt(100) === 0 && isDarkSquare(cols[0], 0)) ? CHECKERS_KING : KING;
   const wave = [{x: cols[0], piece: kingPiece}];
   for (let i = 1; i < cols.length; i++) {
-    let piece = _randomEnemyPiece();
+    let piece = _randomEnemyPiece(count);
     // Checkers pieces must spawn on dark squares (pieces enter at row 0)
     if ((piece === CHECKERS || piece === CHECKERS_KING) && !isDarkSquare(cols[i], 0)) piece = PAWN;
     wave.push({x: cols[i], piece});
@@ -1579,16 +1579,25 @@ function _randomSetupPiece() {
   return CHECKERS_KING;
 }
 
-function _randomEnemyPiece() {
-  // Weights mirror White setup: Queen 100, Pawn 800, Rook 200, Bishop 200, Knight 200, Checkers Man 10, Checkers King 1 = 1511
-  const r = randInt(1511);
-  if (r < 100)  return QUEEN;
-  if (r < 900)  return PAWN;
-  if (r < 1100) return ROOK;
-  if (r < 1300) return BISHOP;
-  if (r < 1500) return KNIGHT;
-  if (r < 1510) return CHECKERS;
-  return CHECKERS_KING;
+function _randomEnemyPiece(waveCount = spawnCount) {
+  // Difficulty ramp: odds shift from Pawn-heavy (early) toward Queen-heavy (late).
+  // t = 0 at wave 1 → 1 at wave 30 (and stays 1 after). At wave 1 the weights
+  // mirror White's setup; by wave 30 Queens dominate (~65%).
+  const t = Math.max(0, Math.min(1, (waveCount - 1) / 29));
+  const lerp = (a, b) => a + (b - a) * t;
+  const w = [
+    [QUEEN,        lerp(100, 1000)],
+    [PAWN,         lerp(800,   40)],
+    [ROOK,         lerp(200,  160)],
+    [BISHOP,       lerp(200,  150)],
+    [KNIGHT,       lerp(200,  150)],
+    [CHECKERS,     10],
+    [CHECKERS_KING, 1],
+  ];
+  const total = w.reduce((s, [, wt]) => s + wt, 0);
+  let r = Math.random() * total;
+  for (const [piece, wt] of w) { if ((r -= wt) < 0) return piece; }
+  return PAWN;
 }
 
 function rollSetup() {
