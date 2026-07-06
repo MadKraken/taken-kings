@@ -1,4 +1,4 @@
-﻿const VERSION = "538";
+﻿const VERSION = "539";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1840,8 +1840,7 @@ function neutralPlay(onDone) {
     const dest = moves[randInt(moves.length)];
     const [fx, fy] = xy(i), [tx, ty] = xy(dest);
     const p = board[i], h = health[i];
-    board[dest] = p; sides[dest] = N; health[dest] = h;
-    clearSquare(i);
+    movePiece(i, dest); // preserves statuses/elements/attacks/speeds/effectOrders (e.g. Bloodthirsty)
     if (itemSpaces[dest] !== ITEM_NONE) _applyItemAuto(itemSpaces[dest], dest);
     checkFireDeath(dest);
     startAnim([{
