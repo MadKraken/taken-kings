@@ -1,4 +1,4 @@
-﻿const VERSION = "571";
+﻿const VERSION = "572";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3162,22 +3162,35 @@ function _isSingleKingCheckmated(ki) {
       board[to] = board[from]; sides[to] = sides[from]; board[from] = NONE; sides[from] = 0;
       const newPos = (from === ki) ? to : ki;
       const [nkx, nky] = xy(newPos);
-      return board[newPos] === KING && sides[newPos] === B && !isAttacked(nkx, nky, B);
+      return (board[newPos] === KING || board[newPos] === CHECKERS_KING) && sides[newPos] === B && !isAttacked(nkx, nky, B);
     });
     if (safe) return false;
   }
   return true;
 }
 
+// Recompute which Black Kings are Desperate (trapped) on the CURRENT board.
+// Rule: if Black truly has no legal moves, every Black King is Desperate; otherwise
+// a King is Desperate when it's checkmated individually. Called at the start of
+// Black's turn AND again when control returns to White — Black's forced fallback
+// move, wandering Neutrals, the merchant, or river flow may have changed the board,
+// and the glow must reflect the position the player actually sees.
+function _recomputeDesperateKings() {
+  _blackKingsInCheckmate.clear();
+  const isBK = i => (board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === B;
+  if (allLegalMovesForSide(B).length === 0) {
+    for (let i = 0; i < 64; i++) if (isBK(i)) _blackKingsInCheckmate.add(i);
+  } else {
+    for (let i = 0; i < 64; i++) if (isBK(i) && _isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i);
+  }
+}
+
 function aiBestMove() {
   // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
   let moves = allLegalMovesForSide(B);
-  _blackKingsInCheckmate.clear();
+  _recomputeDesperateKings();
   if (moves.length === 0) {
-    for (let i = 0; i < 64; i++) { if (board[i] === KING && sides[i] === B) _blackKingsInCheckmate.add(i); }
     moves = allPseudoMovesForSide(B);
-  } else {
-    for (let i = 0; i < 64; i++) { if (board[i] === KING && sides[i] === B && _isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i); }
   }
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
@@ -3298,6 +3311,7 @@ function aiPlay() {
               _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance to burn Black
               _doSkyDropPhase(() => {
                 turn = W;
+                _recomputeDesperateKings(); // board changed since Black's turn started (fallback move / neutrals / river)
                 aiThinking = false;
                 takeReplaySnapshot();
                 _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -3386,6 +3400,7 @@ function aiPlay() {
             _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance
             _doSkyDropPhase(() => {
               turn = W;
+              _recomputeDesperateKings(); // board changed since Black's turn started (fallback move / neutrals / river)
               aiThinking = false;
               takeReplaySnapshot();
               _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -4252,7 +4267,7 @@ for (let i = 0; i < 64; i++) {
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
   const _drawY = (_waveOv ? _waveOv.cy : MARGIN + y * TILE) + _pieceHopAt(i); // + per-piece hop during capture shake
   const _isActivePiece = (i === selected);
-  if (board[i] === KING && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
+  if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
     ctx.save();
     ctx.shadowColor = '#ff1111';
     ctx.shadowBlur = 28;
@@ -4405,7 +4420,7 @@ if (anim && anim.pieces) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
-      const _isCheckmatedBK = ap.piece === KING && ap.side === B && (_blackKingsInCheckmate.has(ap.fromIdx ?? -1) || _blackKingsInCheckmate.has(ap.toIdx ?? -1));
+      const _isCheckmatedBK = (ap.piece === KING || ap.piece === CHECKERS_KING) && ap.side === B && (_blackKingsInCheckmate.has(ap.fromIdx ?? -1) || _blackKingsInCheckmate.has(ap.toIdx ?? -1));
       if (_isCheckmatedBK) {
         ctx.save(); ctx.shadowColor = '#ff1111'; ctx.shadowBlur = 28;
         _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
@@ -4969,7 +4984,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     const rSlot = inventory.indexOf(ITEM_REWINDER);
     if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
     turn = W; aiThinking = false; selected = -1; validMoves = [];
-    _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
+    _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
     shopMode = false; gameOver = false; gameMsg = "";
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
@@ -5982,7 +5997,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
+        _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
