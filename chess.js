@@ -1,4 +1,4 @@
-﻿const VERSION = "535";
+﻿const VERSION = "536";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -51,6 +51,19 @@ function _loadSfx() {
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('touchstart', unlock);
   window.addEventListener('keydown', unlock);
+  // Silence audio (esp. the looping wind) when the app is backgrounded / the
+  // phone sleeps; resume on return. Mobile browsers otherwise keep the
+  // AudioContext running in the background.
+  const onVisibility = () => {
+    if (!_sfxCtx) return;
+    if (document.hidden) {
+      if (_sfxCtx.state === 'running') _sfxCtx.suspend();
+    } else if (_sfxUnlocked && !_sfxMuted && _sfxCtx.state === 'suspended') {
+      _sfxCtx.resume();
+    }
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', onVisibility);
 }
 
 // iOS Safari only truly unlocks the AudioContext if a buffer is STARTED during
