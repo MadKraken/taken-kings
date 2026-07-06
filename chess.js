@@ -1,4 +1,4 @@
-﻿const VERSION = "561";
+﻿const VERSION = "569";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -504,6 +504,58 @@ let score = 0;
 let gold = 0;
 let _lostWhiteThisRun = false; // any White piece died this run (for the "no losses" achievement)
 let _runStartMs = 0;           // wall-clock start of the current run (for timed achievements)
+let _king20TakenBy = NONE;     // piece type that captured the 20th Black King (0 if not via a direct capture)
+let _recruitedCManThisRun = false;  // recruited a neutral Checkers Man this run
+let _recruitedCKingThisRun = false; // recruited a neutral Checkers King this run
+let _maxGoldThisRun = 0;            // high-water mark of gold held this run
+let _usedItemThisRun = false;       // consumed any inventory item this run (for the no-item achievement)
+let _startedClassic = false;        // this run began from the Classic setup
+let _startCounts = {};              // White piece-type counts at run start (for "starting with N of X")
+let _had4KingsAt25 = false;         // had ≥4 White Kings on the team when the 25th Black King fell
+let _timedOutThisRun = false;       // a turn ran out of time this run (for the no-timeout achievement)
+// Per-White-turn counters (reset at the end of each White turn):
+let _turnKingsTaken = 0;            // Black Kings taken this turn (any means)
+let _turnActorTakes = 0;            // Black warriors taken by the single acting White piece this turn
+let _turnActorType = NONE;          // type of that acting piece
+let _turnActorBuffed = false;       // was it Fast (speed>1) or Bloodthirsty on its first take
+let _turnBombKills = 0;             // Black warriors killed by a Bomb this turn
+let _turnBombFromInv = false;       // a Bomb used from inventory this turn
+let _turnBombFromSquare = false;    // a Bomb triggered by moving onto a board Bomb square this turn
+let _turnSells = 0;                 // items sold this turn
+let _bombSource = '';               // 'inv' | 'square' — source of the currently-detonating bomb
+let _turnRecruited = false;         // recruited a Grey this turn (for the 3-in-a-row streak)
+let _turnFastBounced = new Set();   // squares a Fast White piece bounced off (shield-damaged) this turn
+// Event flags / streaks (per run unless noted):
+let _tookShieldedKingWithSword = false; // 30
+let _pushedBlackIntoVoidByWater = false; // 28
+let _pushedBlackIntoBombByWater = false; // 29
+let _waterShoveActive = false;      // a water-wave shove is currently applying (attributes shoves to a Water piece)
+let _tookShieldedWithDoubleHit = false; // 40
+let _recruitedWithCKing = false;    // 33
+let _recruitStreak = 0;             // consecutive turns recruiting a Grey (32)
+let _bombStreak = 0;                // consecutive turns taking ≥1 Black with a Bomb (49)
+let _flawlessAdvances = 0;          // consecutive Field Advances with no King taken / White lost (50)
+let _lastAdvanceScore = 0;          // score at the previous Field Advance (50)
+let _whiteLostSinceAdvance = false; // a White piece died since the previous Field Advance (50)
+
+function _resetTurnCounters() {
+  _turnKingsTaken = 0; _turnActorTakes = 0; _turnActorType = NONE; _turnActorBuffed = false;
+  _turnBombKills = 0; _turnBombFromInv = false; _turnBombFromSquare = false; _turnSells = 0;
+  _turnRecruited = false; _turnFastBounced = new Set();
+}
+// White's turn is over (via move, Team Advance, or Field Advance): fold this turn's
+// activity into the streak trackers, then clear the per-turn counters.
+function _turnBoundaryUpdate() {
+  _recruitStreak = _turnRecruited ? _recruitStreak + 1 : 0;
+  _bombStreak = _turnBombKills > 0 ? _bombStreak + 1 : 0;
+  _resetTurnCounters();
+}
+// Record a Black warrior taken by the acting White piece (called real-only from makeMove).
+function _trackWhiteTake(pieceMoved, fromI, capturedPiece) {
+  if (_turnActorTakes === 0) { _turnActorType = pieceMoved; _turnActorBuffed = (speeds[fromI] > 1) || !!(statuses[fromI] & STATUS_BLOODTHIRSTY); }
+  _turnActorTakes++;
+  if (capturedPiece === KING || capturedPiece === CHECKERS_KING) _turnKingsTaken++;
+}
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
@@ -758,7 +810,7 @@ function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
 
 function startCaptureAnim(piece, side, sx, sy) {
   const isPlayer = side === W;
-  if (isPlayer) _lostWhiteThisRun = true; // a White Warrior fell (capture / field advance / bomb)
+  if (isPlayer && !replayMode) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell (capture / field advance / bomb); replayed falls don't count
   const pool = isPlayer ? playerDead : enemyDead;
   const [tgx, tgy] = graveSlotPos(isPlayer, piece);
   startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
@@ -793,7 +845,7 @@ function _chestBobTick() {
 
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
-  if (side === W && piece) _lostWhiteThisRun = true; // a White Warrior fell into the void
+  if (side === W && piece) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell into the void
   if (piece && piece !== QUEEN) playSfx('man'); // male piece screams falling into the void (Queen doesn't)
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
@@ -905,6 +957,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
   // Released (deleted) when the wave head reaches releaseK.
   const drawAt = new Map();
 
+  _waterShoveActive = true; // shoves below are from a Water piece's wave
   if (sp.isKnight) {
     const [tx, ty] = xy(sp.toI);
     for (const ni of squares) {
@@ -969,6 +1022,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
     }
   }
 
+  _waterShoveActive = false;
   waveAnim = { squares, shoveParams, drawAt, lastHead: -1, startMs: performance.now(), dur: 500, onDone };
   requestAnimationFrame(_waveTick);
 }
@@ -1236,6 +1290,7 @@ function startItemFlyAnim(item, fromX, fromY, slotIdx, skipAdd = false) {
 function removeFromInventory(slot) {
   const item = inventory[slot];
   inventory[slot] = ITEM_NONE;
+  if (item !== ITEM_NONE) _usedItemThisRun = true; // consumed an inventory item (for the no-item achievement)
   return item;
 }
 
@@ -1640,7 +1695,13 @@ function initBoard() {
   _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _resetTurnState();
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
-  _lostWhiteThisRun = false;
+  _lostWhiteThisRun = false; _king20TakenBy = NONE;
+  _recruitedCManThisRun = false; _recruitedCKingThisRun = false; _maxGoldThisRun = 0;
+  _usedItemThisRun = false; _had4KingsAt25 = false; _timedOutThisRun = false; _startCounts = {};
+  _tookShieldedKingWithSword = false; _pushedBlackIntoVoidByWater = false; _pushedBlackIntoBombByWater = false;
+  _tookShieldedWithDoubleHit = false; _recruitedWithCKing = false; _recruitStreak = 0; _bombStreak = 0;
+  _flawlessAdvances = 0; _lastAdvanceScore = 0; _whiteLostSinceAdvance = false;
+  _resetTurnCounters();
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
   _blackKingsInCheckmate.clear();
@@ -1696,6 +1757,7 @@ function _randomEnemyPiece(waveCount = spawnCount) {
 }
 
 function rollSetup() {
+  _startedClassic = false;
   // Clear all pieces and regenerate enemy wave
   board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
   for (let i = 0; i < 64; i++) effectOrders[i] = [];
@@ -1743,6 +1805,7 @@ function rollSetup() {
 }
 
 function classicSetup() {
+  _startedClassic = true;
   board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
@@ -1760,6 +1823,8 @@ function classicSetup() {
 function startGame() {
   gamePhase = 'playing';
   _runStartMs = performance.now(); // start the run clock (for timed achievements)
+  _startCounts = {};               // tally White's starting army by piece type
+  for (let i = 0; i < 64; i++) if (sides[i] === W) _startCounts[board[i]] = (_startCounts[board[i]] || 0) + 1;
   takeReplaySnapshot();
   _turnStartSnapIndices.push(replaySnapshots.length - 1);
   draw();
@@ -1781,11 +1846,12 @@ function startWhiteTurnTimer() {
   // setTimeout fires when time is up; retries if blocked by animation/shop
   const onExpire = () => {
     if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
-    if (anim || isItemActive() || shopMode) {
+    if (anim || isItemActive() || shopMode || replayMode) {
       _timerTimeoutId = setTimeout(onExpire, 100);
       return;
     }
     stopWhiteTurnTimer();
+    _timedOutThisRun = true; // a turn ran out of time (for the no-timeout achievement)
     selected = -1; validMoves = [];
     endWhiteTurn();
   };
@@ -2124,13 +2190,25 @@ function shovePiece(srcI, dx, dy) {
     const p = board[srcI], s = sides[srcI];
     if ((p === KING || p === CHECKERS_KING) && s === W) _triggerGameOver(`Game Over! Score: ${score}`);
     if (s === B) { if (p === KING || p === CHECKERS_KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
+    if (s === B && _waterShoveActive && !replayMode) _pushedBlackIntoVoidByWater = true; // pushed a Black into a Void with a Water piece
     clearSquare(srcI);
     return;
   }
+  const _shovedSide = sides[srcI];
+  const _destBomb = itemSpaces[destI] === ITEM_BOMB;
   movePiece(srcI, destI);
+  // Pushed onto an item space (e.g. a Bomb) — activate it, same as landing there by
+  // moving. NOT during replay: recorded frames already contain the detonation's
+  // outcome, and re-running it live leaks side effects (merchant respawn, game over,
+  // graveyard counts landing after the snapshot restore).
+  if (itemSpaces[destI] !== ITEM_NONE && !replayMode) {
+    if (_destBomb && _shovedSide === B && _waterShoveActive) _pushedBlackIntoBombByWater = true;
+    _applyItemAuto(itemSpaces[destI], destI);
+  }
 }
 
 function applyWaterWave(fromI, toI, p) {
+  _waterShoveActive = true; // this whole shove sweep is from a Water piece
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   if (p === KNIGHT) {
     // Radial shove from landing square
@@ -2140,6 +2218,7 @@ function applyWaterWave(fromI, toI, p) {
       if (!inB(tx + dx, ty + dy) || ni === toI) continue;
       if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, dx, dy);
     }
+    _waterShoveActive = false;
     return;
   }
   // Sliding piece: wave travels the full movement axis, edge to edge
@@ -2158,6 +2237,7 @@ function applyWaterWave(fromI, toI, p) {
     if (ni === toI) continue; // don't shove the mover itself
     if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, dx, dy);
   }
+  _waterShoveActive = false;
 }
 
 function checkFireDeath(i) {
@@ -2166,7 +2246,7 @@ function checkFireDeath(i) {
   const p = board[i], s = sides[i];
   if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
-  if (s === W) _lostWhiteThisRun = true; // a White Warrior burned to death
+  if (s === W) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior burned to death
   clearSquare(i);
   return true;
 }
@@ -2293,7 +2373,8 @@ function makeMove(fromI, toI, visual = false) {
     if (capPiece !== NONE && capSide !== s && capSide !== N) {
       if (visual) { playSfx('capture'); playSfx('punch'); _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], spd: speeds[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 }); }
       if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
-      if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) score += 1;
+      if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) { score += 1; if (visual && score === 20) _king20TakenBy = p; if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; }
+      if (visual && s === W) _trackWhiteTake(p, fromI, capPiece); // per-turn take tracking (checkers chain, etc.)
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
     }
   }
@@ -2331,6 +2412,15 @@ function makeMove(fromI, toI, visual = false) {
   }
   if ((captured === KING || captured === CHECKERS_KING) && sides[toI] !== s && s === W) {
     score += 1;
+    if (visual && score === 20) _king20TakenBy = p; // record the piece that took the 20th King
+    if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; // team size at the 25th King
+  }
+  if (visual && s === W && captured !== NONE && capSide === B) {
+    _trackWhiteTake(p, fromI, captured); // per-turn take tracking
+    // Shielded King (health≥2) captured (only possible with attack≥2 = a Sworded warrior)
+    if ((captured === KING || captured === CHECKERS_KING) && health[toI] >= 2) _tookShieldedKingWithSword = true;
+    // A Fast warrior finished off a shielded Black piece it had bounced off earlier this turn
+    if (_turnFastBounced.has(toI)) _tookShieldedWithDoubleHit = true;
   }
   if (chestSpaces.has(toI) && s === W) {
     chestSpaces.delete(toI);
@@ -2409,6 +2499,7 @@ function endWhiteTurn() {
   }
   stopWhiteTurnTimer();
   lastActingSide = W;
+  _turnBoundaryUpdate(); // fold this turn's activity into streaks, clear per-turn counters
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     fieldAdvance();
@@ -2467,6 +2558,7 @@ function canTeamLeap() {
 
 function teamAdvance() {
   if (gameOver || turn !== W || aiThinking || anim) return;
+  _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   playSfx('torch');  // Team Advance
 
@@ -2586,6 +2678,12 @@ function _placeChestBonus(col) {
 
 function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
+  // Flawless-survival streak: count consecutive advances during which no Black King
+  // was taken and no White Warrior was lost (the interval since the previous advance).
+  if (score === _lastAdvanceScore && !_whiteLostSinceAdvance) _flawlessAdvances++;
+  else _flawlessAdvances = 0;
+  _lastAdvanceScore = score; _whiteLostSinceAdvance = false;
+  _turnBoundaryUpdate(); // Field Advance ends the White turn — update streaks, clear per-turn counters
   _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   stopWindLoop();     // a new wave is incoming — fade the calm wind back out
   playSfx('whoosh');  // Field Advance
@@ -3548,10 +3646,18 @@ function detonateBomb(centerI, _alreadyDetonated) {
     const i = idx(nx, ny);
     if (itemSpaces[i] === ITEM_BOMB && !detonated.has(i)) chainBombs.push(i);
     if (board[i] !== NONE) {
-      if (sides[i] === W && board[i] === KING) _triggerGameOver(`Game Over! Score: ${score}`);
-      if (sides[i] === B && board[i] === KING) score++;
-      if (sides[i] === B) gold += GOLD_VALUE[board[i]] ?? 0;
-      startCaptureAnim(board[i], sides[i], MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2);
+      const _bp = board[i], _bs = sides[i];
+      if (_bs === W && (_bp === KING || _bp === CHECKERS_KING)) _triggerGameOver(`Game Over! Score: ${score}`);
+      if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) { score++; if (!replayMode) _turnKingsTaken++; }
+      if (_bs === B) {
+        gold += GOLD_VALUE[_bp] ?? 0;
+        if (!replayMode) { // replayed explosions must not pollute live achievement counters
+          _turnBombKills++; // Black warrior killed by a Bomb this turn
+          if (_bombSource === 'inv') _turnBombFromInv = true;
+          else if (_bombSource === 'square') _turnBombFromSquare = true;
+        }
+      }
+      startCaptureAnim(_bp, _bs, MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2);
       board[i] = NONE; sides[i] = 0; health[i] = 1;
     }
     if (specialSpaces[i]?.type === 'block') specialSpaces[i] = null;
@@ -3598,6 +3704,7 @@ function activateItemSpace(item, i) {
       draw();
       return false;
     case ITEM_BOMB:
+      _bombSource = 'square'; // triggered by a piece moving onto a board Bomb square
       detonateBomb(i);
       activeItemSpaceIdx = -1;
       return true;
@@ -4845,7 +4952,7 @@ if (cy >= btnY && cy <= btnY + btnH) {
     const rSlot = inventory.indexOf(ITEM_REWINDER);
     if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
     turn = W; aiThinking = false; selected = -1; validMoves = [];
-    _resetTurnState();
+    _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
     shopMode = false; gameOver = false; gameMsg = "";
     draw();
   } else if (cx >= noX && cx <= noX + btnW) {
@@ -5106,7 +5213,58 @@ const ACHIEVEMENTS = [
   { id: 'blitz_50', name: 'Blitz Conqueror', desc: 'Take 50 Black Kings in one run with a 15-second timer', check: () => score >= 50 && timedMode && timedModeSecs === 15 },
   { id: 'flawless_25', name: 'Flawless',  desc: 'Take 25 Black Kings in one run without losing a White Warrior', check: () => score >= 25 && !_lostWhiteThisRun },
   { id: 'speed_25',    name: 'Speedrun',  desc: 'Take 25 Black Kings in one run within 15 minutes',            check: () => score >= 25 && _runStartMs > 0 && (performance.now() - _runStartMs) <= 15 * 60 * 1000 },
+  { id: 'king20_rook',   name: 'Siege Breaker', desc: 'Take the 20th Black King with a Rook',         check: () => _king20TakenBy === ROOK },
+  { id: 'king20_bishop', name: 'Crusader',      desc: 'Take the 20th Black King with a Bishop',       check: () => _king20TakenBy === BISHOP },
+  { id: 'king20_knight', name: 'Cavalier',      desc: 'Take the 20th Black King with a Knight',       check: () => _king20TakenBy === KNIGHT },
+  { id: 'king20_pawn',   name: 'Giant Slayer',  desc: 'Take the 20th Black King with a Pawn',         check: () => _king20TakenBy === PAWN },
+  { id: 'king20_king',   name: 'Duel of Kings', desc: 'Take the 20th Black King with a King',         check: () => _king20TakenBy === KING },
+  { id: 'king20_cman',   name: 'Draughtsman',   desc: 'Take the 20th Black King with a Checkers Man', check: () => _king20TakenBy === CHECKERS },
+  { id: 'king20_cking',  name: 'Double Crown',  desc: 'Take the 20th Black King with a Checkers King',check: () => _king20TakenBy === CHECKERS_KING },
+  { id: 'cking20',    name: 'King Hunter',   desc: 'Take the 20th Checkers King', check: () => (enemyDead[CHECKERS_KING] || 0) >= 20 },
+  { id: 'recruit_cman',  name: 'Enlist',    desc: 'Recruit a Checkers Man',  check: () => _recruitedCManThisRun },
+  { id: 'recruit_cking', name: 'Kingmaker', desc: 'Recruit a Checkers King', check: () => _recruitedCKingThisRun },
+  { id: 'gold_100', name: 'Prospector', desc: 'Collect 100 G in one run', check: () => _maxGoldThisRun >= 100 },
+  { id: 'gold_250', name: 'Tycoon',     desc: 'Collect 250 G in one run', check: () => _maxGoldThisRun >= 250 },
+  { id: 'no_item_25',  name: 'Purist',      desc: 'Take 25 Black Kings without using an Item (Classic setup)', check: () => score >= 25 && !_usedItemThisRun && _startedClassic },
+  { id: 'four_kings',  name: 'Court',        desc: 'Have 4 Kings in your team when you take the 25th Black King', check: () => _had4KingsAt25 },
+  { id: 'start_12pawn',  name: 'Pawn Storm',  desc: 'Take 25 Black Kings on a run starting with at least 12 Pawns',   check: () => score >= 25 && (_startCounts[PAWN]   || 0) >= 12 },
+  { id: 'start_4knight', name: 'Cavalry',     desc: 'Take 25 Black Kings on a run starting with at least 4 Knights',  check: () => score >= 25 && (_startCounts[KNIGHT] || 0) >= 4 },
+  { id: 'start_4rook',   name: 'Battlements', desc: 'Take 25 Black Kings on a run starting with at least 4 Rooks',    check: () => score >= 25 && (_startCounts[ROOK]   || 0) >= 4 },
+  { id: 'start_4bishop', name: 'Conclave',    desc: 'Take 25 Black Kings on a run starting with at least 4 Bishops',  check: () => score >= 25 && (_startCounts[BISHOP] || 0) >= 4 },
+  { id: 'triple_effect', name: 'Empowered',   desc: 'Have three White Warriors with three Effects each',             check: () => _countWhiteWithEffects(3) >= 3 },
+  { id: 'blitz_25_clean', name: 'Clockwork',  desc: 'Take 25 Black Kings in 15-second timer mode without timing out', check: () => score >= 25 && timedMode && timedModeSecs === 15 && !_timedOutThisRun },
+  { id: 'kill_25_pawn',   name: 'Pawnbroker', desc: 'Take 25 Black Pawns in one run',   check: () => (enemyDead[PAWN]   || 0) >= 25 },
+  { id: 'kill_25_rook',   name: 'Rook Ruin',  desc: 'Take 25 Black Rooks in one run',   check: () => (enemyDead[ROOK]   || 0) >= 25 },
+  { id: 'kill_25_bishop', name: 'Iconoclast', desc: 'Take 25 Black Bishops in one run', check: () => (enemyDead[BISHOP] || 0) >= 25 },
+  { id: 'kill_25_knight', name: 'Horse Tamer',desc: 'Take 25 Black Knights in one run', check: () => (enemyDead[KNIGHT] || 0) >= 25 },
+  { id: 'kings_2_turn', name: 'Double Kill', desc: 'Take 2 Black Kings in one turn', check: () => _turnKingsTaken >= 2 },
+  { id: 'kings_3_turn', name: 'Triple Kill', desc: 'Take 3 Black Kings in one turn', check: () => _turnKingsTaken >= 3 },
+  { id: 'kings_4_turn', name: 'Overkill',    desc: 'Take 4 Black Kings in one turn', check: () => _turnKingsTaken >= 4 },
+  { id: 'bt_pawn_2', name: 'Rabid Pawn', desc: 'Take 2 Black Warriors in one turn with a Bloodthirsty or Fast Pawn', check: () => _turnActorType === PAWN && _turnActorBuffed && _turnActorTakes >= 2 },
+  { id: 'bt_king_2', name: 'Rampage',    desc: 'Take 2 Black Warriors in one turn with a Bloodthirsty or Fast King', check: () => _turnActorType === KING && _turnActorBuffed && _turnActorTakes >= 2 },
+  { id: 'cman_chain_2', name: 'Double Jump', desc: 'Take 2 Black Warriors with a chained Checkers Man jump',  check: () => _turnActorType === CHECKERS && _turnActorTakes >= 2 },
+  { id: 'cman_chain_3', name: 'Triple Jump', desc: 'Take 3 Black Warriors with a chained Checkers Man jump',  check: () => _turnActorType === CHECKERS && _turnActorTakes >= 3 },
+  { id: 'cking_chain_2', name: 'Royal Leap',  desc: 'Take 2 Black Warriors with a chained Checkers King jump', check: () => _turnActorType === CHECKERS_KING && _turnActorTakes >= 2 },
+  { id: 'cking_chain_3', name: 'Royal Rampage',desc: 'Take 3 Black Warriors with a chained Checkers King jump', check: () => _turnActorType === CHECKERS_KING && _turnActorTakes >= 3 },
+  { id: 'bomb_6_inv',   name: 'Demolitionist', desc: 'Take 6 Black Warriors in one turn with a Bomb', check: () => _turnBombKills >= 6 && _turnBombFromInv },
+  { id: 'bomb_6_square',name: 'Minesweeper',   desc: 'Take 6 Black Warriors in one turn by moving onto a Bomb square', check: () => _turnBombKills >= 6 && _turnBombFromSquare },
+  { id: 'sell_8_turn', name: 'Liquidation', desc: 'Sell 8 Items in one turn', check: () => _turnSells >= 8 },
+  { id: 'water_void',  name: 'Riptide',  desc: 'Take a Black Warrior by pushing them into a Void with a Water Piece', check: () => _pushedBlackIntoVoidByWater },
+  { id: 'water_bomb',  name: 'Flushed',  desc: 'Take a Black Warrior by pushing them into a Bomb with a Water Piece', check: () => _pushedBlackIntoBombByWater },
+  { id: 'sword_shield_king', name: 'Shieldbreaker', desc: 'Take a Shielded Black King with a Sworded White Warrior', check: () => _tookShieldedKingWithSword },
+  { id: 'recruit_streak_3', name: 'Recruiter',  desc: 'Recruit a Grey Warrior three turns in a row', check: () => _recruitStreak >= 3 },
+  { id: 'recruit_cking_grey', name: 'Talent Scout', desc: 'Recruit a Grey Warrior with a Checkers King', check: () => _recruitedWithCKing },
+  { id: 'double_hit_shield', name: 'One-Two',    desc: 'Take a Shielded Black Warrior by hitting them twice with a Fast Warrior in one turn', check: () => _tookShieldedWithDoubleHit },
+  { id: 'bomb_streak_3', name: 'Serial Bomber', desc: 'Take at least 1 Black Warrior with a Bomb 3 turns in a row', check: () => _bombStreak >= 3 },
+  { id: 'flawless_8_adv', name: 'Untouchable', desc: 'Survive 8 Field Advances without taking a Black King or losing a White Warrior', check: () => _flawlessAdvances >= 8 },
 ];
+
+// Count White pieces carrying at least n effect badges (attack/health/speed/status/element).
+function _countWhiteWithEffects(n) {
+  let c = 0;
+  for (let i = 0; i < 64; i++) if (sides[i] === W && effectOrders[i] && effectOrders[i].length >= n) c++;
+  return c;
+}
 const ACH_GRID_CELLS = 64; // 8×8
 
 let _achUnlocked = {};
@@ -5134,6 +5292,7 @@ function unlockAchievement(id) {
 // real (non-simulated, non-replay) rendering so minimax's temporary score changes
 // never trigger an unlock.
 function checkAchievements() {
+  if (gold > _maxGoldThisRun) _maxGoldThisRun = gold; // high-water mark for "collect N gold"
   for (const a of ACHIEVEMENTS) {
     if (_achUnlocked[a.id]) continue;
     try { if (a.check()) unlockAchievement(a.id); } catch (e) {}
@@ -5462,6 +5621,7 @@ canvas.addEventListener("mouseup", (e) => {
 // --- Click handler sub-functions ---
 
 function handleReplayClick(cx, cy) {
+  if (_miniReplayActive) return; // mini replay draws no controls — invisible buttons must not react (Exit would end the game!)
   const ctrlX = MARGIN, ctrlY = INV_PANEL_BOTTOM + 90;
   const ctrlH = 130;
   const midX = ctrlX + BOARD_PX / 2;
@@ -5557,7 +5717,7 @@ function handleSellConfirmClick(cx, cy) {
   const hit = (bx) => cx >= bx && cx <= bx + g.btnW && cy >= g.btnY && cy <= g.btnY + g.btnH;
   if (hit(g.yesX)) {
     const item = inventory[sellConfirmSlot];
-    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); playSfx('sell'); }
+    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); playSfx('sell'); _turnSells++; }
     sellConfirmSlot = -1; draw(); // stay in sell mode with the shop still open
     return;
   }
@@ -5601,6 +5761,7 @@ function handleBombClick(cx, cy) {
   const i = cellIdxFromCoords(cx, cy);
   bombMode = false; bombHoverIdx = -1;
   if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+  _bombSource = 'inv'; // Bomb used from inventory
   if (i >= 0) {
     detonateBomb(i);
     recordPosition();
@@ -5802,7 +5963,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        _resetTurnState();
+        _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
@@ -5857,7 +6018,14 @@ function handleBoardClick(cx, cy) {
       if (sides[clicked] === N) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
-        if (attackPiece === KING || attackPiece === CHECKERS_KING) playSfx('recruit'); // King (or Checkers King) recruits the Neutral
+        const recruitedType = board[clicked]; // the neutral being recruited (only a King/Checkers King actually recruits)
+        if (attackPiece === KING || attackPiece === CHECKERS_KING) {
+          playSfx('recruit'); // King (or Checkers King) recruits the Neutral
+          _turnRecruited = true;                                    // recruited a Grey this turn (streak)
+          if (attackPiece === CHECKERS_KING) _recruitedWithCKing = true; // recruited with a Checkers King
+          if (recruitedType === CHECKERS) _recruitedCManThisRun = true;
+          if (recruitedType === CHECKERS_KING) _recruitedCKingThisRun = true;
+        }
         const bounceI = calcBouncePos(fromI, clicked, attackPiece);
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
@@ -5869,6 +6037,9 @@ function handleBoardClick(cx, cy) {
       if (sides[clicked] === B && health[clicked] > attacks[selected]) {
         playSfx('shield'); // shield block sound at attack start (pop stays on impact)
         const fromI = selected;
+        // A Fast piece bounced off a shielded Black piece — remember it, so finishing it
+        // off this turn (with the Speed extra move) unlocks the two-hit achievement.
+        if (speeds[fromI] > 1 && health[clicked] - attacks[fromI] >= 1) _turnFastBounced.add(clicked);
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
         const bounceI = result.mode === 'attacker-bounce' ? result.bounceI : fromI;
@@ -6047,9 +6218,12 @@ canvas.addEventListener("click", (e) => {
   if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
       cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { playSfx('button'); resignConfirm = true; draw(); return; }
   if (!gameOver && replaySnapshots.length > 1 &&
+      turn === W && !aiThinking &&
+      _speedIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0 && // mid-turn extra-move pending: replay would revert the first move
       cx >= LAST_MOVE_BTN.x && cx <= LAST_MOVE_BTN.x + LAST_MOVE_BTN.w &&
       cy >= LAST_MOVE_BTN.y && cy <= LAST_MOVE_BTN.y + LAST_MOVE_BTN.h) {
     playSfx('button');
+    selected = -1; validMoves = []; // clear any selection — the board is about to be spliced
     replayMode = true; _miniReplayActive = true;
     _playReplayTransition(replaySnapshots.length - 1, () => {
       replayMode = false; _miniReplayActive = false;
@@ -6352,7 +6526,7 @@ function _aiHandleShop() {
 const AUTO_DEPTH = 4; // search depth for auto-play decisions (all actions compared at this depth)
 
 function _aiWhiteStep() {
-  if (!autoPlay || gameOver || turn !== W || aiThinking || anim) return;
+  if (!autoPlay || gameOver || turn !== W || aiThinking || anim || replayMode) return;
   if (shopMode || piecePromoterMode || shieldMode || bombMode || clonerMode || teleporterMode || elementizerMode || vampireFangMode || swordMode || speedMode) return;
 
   // 0. Pending extra-move (Speed / Bloodthirsty / checkers chain): only the
@@ -6420,7 +6594,7 @@ function _aiWhiteStep() {
 }
 
 function autoWhitePlay() {
-  if (!autoPlay || gameOver || turn !== W || aiThinking || anim || _autoScheduled) return;
+  if (!autoPlay || gameOver || turn !== W || aiThinking || anim || _autoScheduled || replayMode) return;
   _autoScheduled = true;
   setTimeout(() => { _autoScheduled = false; _aiWhiteStep(); }, 450);
 }
@@ -6551,7 +6725,7 @@ function _aiCompleteActiveMode() {
 // Poll every 600ms: trigger auto-play, and resolve any stuck interactive-item UI.
 // Wrapped in try/catch so one bad step can't permanently kill auto-play.
 setInterval(() => {
-  if (!autoPlay || gameOver || aiThinking || anim || _autoScheduled) return;
+  if (!autoPlay || gameOver || aiThinking || anim || _autoScheduled || replayMode) return;
   try {
     // Rewinder save offer: always accept — it extends the run
     if (_rewinderSaveOffer) {
