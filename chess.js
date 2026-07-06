@@ -1,4 +1,4 @@
-﻿const VERSION = "542";
+﻿const VERSION = "547";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1442,29 +1442,45 @@ function generateWave(count) {
 
 function isDarkSquare(x, y) { return (x + y) % 2 === 1; }
 
-// Each open column has a 1-in-5 chance of becoming a bonus.
-function generateRowBonuses(wave) {
+// Roll bonuses (chest / obstacle / neutral) into the empty columns of an incoming wave.
+// Obstacles ramp with depth: at wave 1 an empty column has the baseline 1-in-12
+// chance of any bonus (of which 1/3 is an obstacle → 2.78% obstacle); by wave 40
+// every empty column on an obstacle-row is a guaranteed obstacle, no chests/neutrals.
+// Obstacles are gated to alternating waves so two obstacle-rows never spawn back to
+// back — since all rows scroll down uniformly, that guarantees a clear row between
+// every obstacle row, so obstacles can never wall the player off into a Field Advance.
+function generateRowBonuses(wave, waveCount = spawnCount + 1) {
   const waveCols = new Set(wave.map(w => w.x));
   const bonuses = [];
-  // 1/32 chance the incoming row is a River
-  if (randInt(32) === 0) {
+  const t = Math.max(0, Math.min(1, (waveCount - 1) / 39)); // 0 at wave 1 → 1 at wave 40+
+  // River-row chance ramps with depth: 1/32 (~3.1%) at wave 1 → 1/5 (20%) at wave 40+.
+  const pRiver = (1 / 32) + (0.2 - 1 / 32) * t;
+  if (Math.random() < pRiver) {
     const dx = randInt(2) === 0 ? -1 : 1;
     for (let x = 0; x < 8; x++) bonuses.push({ type: 'river', col: x, dx });
     return bonuses; // river replaces all other bonuses for this row
   }
+  const obstacleRow = (waveCount % 2 === 1); // only odd waves may spawn obstacles
+  const pBonus = (1 / 12) + (1 - 1 / 12) * t;   // chance an empty column rolls anything: 1/12 → 1
+  // Type weights lerp from baseline [chest1, void1, block1, neutral3] toward obstacle-only.
+  // On non-obstacle rows the void/block weight is zeroed (keeps the every-other-row guarantee).
+  const wChest = 1 - t, wNeutral = 3 * (1 - t);
+  const wVoid = obstacleRow ? (1 + 2 * t) : 0, wBlock = obstacleRow ? (1 + 2 * t) : 0;
+  const wTotal = wChest + wNeutral + wVoid + wBlock;
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
-    if (randInt(12) !== 0) continue;
-    const type = ['chest', 'void', 'block', 'neutral', 'neutral', 'neutral'][randInt(6)];
-    if (type === 'chest') {
+    if (wTotal <= 0) continue;           // late-game non-obstacle row: nothing left to spawn
+    if (Math.random() >= pBonus) continue;
+    let r = Math.random() * wTotal, type;
+    if ((r -= wVoid) < 0) type = 'void';
+    else if ((r -= wBlock) < 0) type = 'block';
+    else if ((r -= wChest) < 0) type = 'chest';
+    else type = 'neutral';
+    if (type === 'void' || type === 'block') {
+      bonuses.push({ type, col: x });
+    } else if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
-    } else if (type === 'item') {
-      bonuses.push({ type: 'item', col: x, item: _randomItem() });
-    } else if (type === 'void') {
-      bonuses.push({ type: 'void', col: x });
-    } else if (type === 'block') {
-      bonuses.push({ type: 'block', col: x });
-    } else if (type === 'neutral') {
+    } else {
       let neutralPiece = _randomSetupPiece();
       // Checkers pieces must spawn on dark squares (neutrals enter at row 0)
       if ((neutralPiece === CHECKERS || neutralPiece === CHECKERS_KING) && !isDarkSquare(x, 0)) neutralPiece = PAWN;
@@ -1474,16 +1490,19 @@ function generateRowBonuses(wave) {
   return bonuses;
 }
 
-function _rollSpawnEffects(i) {
-  // 6.25% (1/16) per roll; reroll until false.
+function _rollSpawnEffects(i, waveCount = spawnCount) {
+  // Per-roll effect chance ramps with wave: 1/16 (6.25%) at wave 1 → 1/2 (50%)
+  // at wave 30, then holds. Each success grants one distinct effect (max 3),
+  // drawn uniformly from the pool.
   // Pool: Attack+1, Health+1, Speed+1, Bloodthirsty, Fire, Water, Earth, Air.
-  // Statuses/elements removed from pool once granted; stats may stack.
+  const t = Math.max(0, Math.min(1, (waveCount - 1) / 29));
+  const p = 0.0625 + (0.5 - 0.0625) * t;
   let pool = [
     'atk', 'hlth', 'spd',
     'bt', 'fire', 'water', 'earth', 'air'
   ];
   let count = 0;
-  while (count < 3 && randInt(16) === 0 && pool.length > 0) {
+  while (count < 3 && Math.random() < p && pool.length > 0) {
     const pick = pool[randInt(pool.length)];
     pool = pool.filter(x => x !== pick);
     if (pick === 'atk')   { attacks[i] = 2;                        _grantEffect(i, 'atk'); }
@@ -2665,7 +2684,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B);
+      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
     }
     for (const b of nextBonuses) {
       if (b.type === 'chest') _placeChestBonus(b.col);
@@ -2680,7 +2699,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B);
+      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
     }
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
@@ -2693,7 +2712,7 @@ function fieldAdvance(playerTriggered = false) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (idx(w.x, 0) === merchantIdx) continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B);
+      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
     }
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
@@ -2916,6 +2935,10 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
 }
 
 function minimax(depth, alpha, beta, maximizing) {
+  // Dead White king ends the search immediately, scored more negative the
+  // sooner it happens (higher remaining depth) — so Black prefers the fastest
+  // kill instead of treating "win now" and "win eventually" as equal ties.
+  if (findKing(W)[0] < 0) return -(99999 + depth);
   if (depth === 0) return evaluate();
 
   const s = maximizing ? W : B;
@@ -3262,11 +3285,14 @@ function _aiExtraMove(dest, onDone) {
   const [dx, dy] = xy(dest);
   const pMoves = legalMoves(dx, dy);
   if (pMoves.length === 0) { onDone(dest); return; }
-  // Pick greedily: capture > advance (higher y = closer to White's back rank)
-  let best = pMoves[0];
+  // Pick greedily: King capture > best capture by value > advance (higher y = closer to White's back rank)
+  let best = pMoves[0], bestScore = -Infinity;
   for (const m of pMoves) {
-    if (board[m] !== NONE && sides[m] === W) { best = m; break; }
-    if (xy(m)[1] > xy(best)[1]) best = m;
+    let s;
+    if (sides[m] === W && (board[m] === KING || board[m] === CHECKERS_KING)) s = 1e9;
+    else if (board[m] !== NONE && sides[m] === W) s = 1000 + (PIECE_VALUE[board[m]] || 0);
+    else s = xy(m)[1];
+    if (s > bestScore) { bestScore = s; best = m; }
   }
   const [fx, fy] = xy(dest), [tx, ty] = xy(best);
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
