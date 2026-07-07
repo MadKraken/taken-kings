@@ -1,11 +1,10 @@
 -- Taken Kings — leaderboard schema
 -- Run once in the Supabase dashboard: SQL Editor → New query → paste → Run.
 --
--- Design: one row per validated run. Four boards distinguished by `board`.
---   hs_classic -> High Score, Classic setup   -> value = Taken Kings  (higher is better)
---   hs_rolled  -> High Score, Rolled setup    -> value = Taken Kings  (higher is better)
---   hs_15s     -> High Score, 15s Timer mode   -> value = Taken Kings  (higher is better)
---   speedrun   -> Fastest to 25 Kings          -> value = milliseconds (LOWER is better)
+-- Design: one row per validated run. Three boards distinguished by `board`.
+--   hs_untimed -> High Score, untimed (Classic or Rolled) -> value = Taken Kings  (higher is better)
+--   hs_15s     -> High Score, 15s Timer (Classic or Rolled) -> value = Taken Kings (higher is better)
+--   speedrun   -> Fastest to 25 Kings (all modes)         -> value = milliseconds (LOWER is better)
 --
 -- Security (serious anti-cheat): clients may only READ. All inserts go through a
 -- validating Edge Function using the service_role key, which bypasses RLS — so we
@@ -13,7 +12,7 @@
 
 create table if not exists public.scores (
   id         bigint generated always as identity primary key,
-  board      text not null check (board in ('hs_classic', 'hs_rolled', 'hs_15s', 'speedrun')),
+  board      text not null check (board in ('hs_untimed', 'hs_15s', 'speedrun')),
   name       text not null check (char_length(trim(name)) between 1 and 20),
   value      integer not null check (value >= 0),
   seed       bigint,               -- run seed, for reproducibility / replay

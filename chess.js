@@ -1,4 +1,4 @@
-﻿const VERSION = "579";
+﻿const VERSION = "581";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3923,16 +3923,13 @@ function _achClearDlgRects() {
 
 // --- Leaderboard screen geometry ---
 const LB_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y + 70, w: 300, h: 60 }; // setup menu, below Achievements
-const LB_TAB_H = 60, LB_TAB_GAP = 16, LB_TAB_ROWGAP = 12, LB_TABS_Y = BOARD_Y + MARGIN;
-// 2×2 grid of tab buttons, one per board (order matches LB_BOARDS).
+const LB_TAB_H = 60, LB_TAB_GAP = 14, LB_TABS_Y = BOARD_Y + MARGIN;
+// Single row of tab buttons, one per board (order matches LB_BOARDS).
 function _lbTabRects() {
-  const w = (BOARD_PX - LB_TAB_GAP) / 2;
-  return LB_BOARDS.map((b, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
-    return { key: b.key, x: MARGIN + col * (w + LB_TAB_GAP), y: LB_TABS_Y + row * (LB_TAB_H + LB_TAB_ROWGAP), w, h: LB_TAB_H };
-  });
+  const n = LB_BOARDS.length, w = (BOARD_PX - LB_TAB_GAP * (n - 1)) / n;
+  return LB_BOARDS.map((b, i) => ({ key: b.key, x: MARGIN + i * (w + LB_TAB_GAP), y: LB_TABS_Y, w, h: LB_TAB_H }));
 }
-const LB_TABS_BOTTOM = LB_TABS_Y + LB_TAB_H * 2 + LB_TAB_ROWGAP; // two rows
+const LB_TABS_BOTTOM = LB_TABS_Y + LB_TAB_H; // single row
 const LB_SUBTITLE_Y = LB_TABS_BOTTOM + 44;
 const LB_LIST_TOP = LB_TABS_BOTTOM + 118; // gap below the tab buttons + subtitle
 const LB_ROW_H = 56, LB_MAX_ROWS = 15;
@@ -5352,7 +5349,7 @@ const ACHIEVEMENTS = [
   { id: 'bomb_6_square',name: 'Minesweeper',   desc: 'Take 6 Black Warriors in one turn by moving onto a Bomb square', check: () => _turnBombKills >= 6 && _turnBombFromSquare },
   { id: 'sell_8_turn', name: 'Liquidation', desc: 'Sell 8 Items in one turn', check: () => _turnSells >= 8 },
   { id: 'water_void',  name: 'Riptide',  desc: 'Take a Black Warrior by pushing them into a Void with a Water Piece', check: () => _pushedBlackIntoVoidByWater },
-  { id: 'water_bomb',  name: 'Flushed',  desc: 'Take a Black Warrior by pushing them into a Bomb with a Water Piece', check: () => _pushedBlackIntoBombByWater },
+  { id: 'water_bomb',  name: 'Flushed',  desc: 'Take a Black Warrior by pushing them into a Bomb with a Water Warrior', check: () => _pushedBlackIntoBombByWater },
   { id: 'sword_shield_king', name: 'Shieldbreaker', desc: 'Take a Shielded Black King with a Sworded White Warrior', check: () => _tookShieldedKingWithSword },
   { id: 'recruit_streak_3', name: 'Recruiter',  desc: 'Recruit a Grey Warrior three turns in a row', check: () => _recruitStreak >= 3 },
   { id: 'recruit_cking_grey', name: 'Talent Scout', desc: 'Recruit a Grey Warrior with a Checkers King', check: () => _recruitedWithCKing },
@@ -5376,12 +5373,12 @@ let achievementsOpen = false;
 // --- Leaderboard (Phase 2): read-only boards from Supabase (client reads; writes are server-only) ---
 const SUPABASE_URL = 'https://froggegesqnoznvenoyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo'; // publishable/client-safe
-// Four boards. `key` is the DB `board` value; `speed` boards rank by LOWEST value (time).
+// Three boards. `key` is the DB `board` value; `speed` boards rank by LOWEST value (time).
+// hs_untimed / hs_15s each read both setups (Classic + Rolled); speedrun spans all modes.
 const LB_BOARDS = [
-  { key: 'hs_classic', tab: 'Classic',   title: 'High Score — Classic Setup', metric: 'Kings', speed: false },
-  { key: 'hs_rolled',  tab: 'Rolled',    title: 'High Score — Rolled Setup',  metric: 'Kings', speed: false },
-  { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer',     metric: 'Kings', speed: false },
-  { key: 'speedrun',   tab: 'Fastest 25', title: 'Fastest to 25 Kings',       metric: 'Time',  speed: true  },
+  { key: 'hs_untimed', tab: 'Untimed',   title: 'High Score — Untimed',   metric: 'Kings', speed: false },
+  { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer', metric: 'Kings', speed: false },
+  { key: 'speedrun',   tab: 'Fastest 25', title: 'Fastest to 25 Kings',   metric: 'Time',  speed: true  },
 ];
 const _lbBoard = (key) => LB_BOARDS.find(b => b.key === key);
 let leaderboardOpen = false;
@@ -5563,7 +5560,7 @@ function drawLeaderboardScreen() {
     ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
     ctx.strokeStyle = active ? "#7fe0a0" : "rgba(255,255,255,0.15)"; ctx.lineWidth = active ? 3 : 2;
     ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
-    ctx.fillStyle = active ? "#fff" : "#9a9ab0"; ctx.font = "36px Canterbury";
+    ctx.fillStyle = active ? "#fff" : "#9a9ab0"; ctx.font = "33px Canterbury";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(_lbBoard(r.key).tab, r.x + r.w / 2, r.y + r.h / 2 + 2);
   }
