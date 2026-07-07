@@ -1,4 +1,4 @@
-﻿const VERSION = "627";
+﻿const VERSION = "628";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2593,6 +2593,21 @@ function checkFireDeath(i) {
   return true;
 }
 
+// Sim-only fire death for the AI lookahead (minimax/eval). Mirrors checkFireDeath's board +
+// score/gold effects but touches ONLY state that saveState/restoreState roll back — no enemyDead,
+// no _lostWhiteThisRun, no _triggerGameOver — so it's safe inside withState. Applied after each
+// simulated move so the search sees a piece land on enemy fire and burn; that lets the Black King
+// avoid suicidally capturing a Fire/Water Warrior (self-preservation) unless it's Desperate.
+function _simFireDeath(i) {
+  if (!fireSquares.has(i)) return;
+  if (board[i] === NONE || fireSquares.get(i) === sides[i]) return; // own-faction fire is harmless
+  if (elements[i] & (ELEM_FIRE | ELEM_WATER)) return;               // Fire & Water Warriors are immune
+  const p = board[i], s = sides[i];
+  if ((p === KING || p === CHECKERS_KING) && s === B) score++;      // matches checkFireDeath; restored by withState
+  if (s === B) gold += GOLD_VALUE[p] ?? 0;                          // gold is restored too
+  clearSquare(i);
+}
+
 function isAttacked(tx, ty, bySide) {
   const att = enemy(bySide);
   for (let i = 0; i < 64; i++) {
@@ -3418,7 +3433,7 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
     if (s === B && to === merchantIdx) continue;
     const val = withState(() => {
       const wasCap = sides[to] === opp;
-      makeMove(pieceI, to); recordPosition();
+      makeMove(pieceI, to); _simFireDeath(to); recordPosition();
       return _turnContinuation(to, extra - 1, depth, alpha, beta, moverIsMax);
     });
     if (moverIsMax) { best = Math.max(best, val); if (best >= beta) break; alpha = Math.max(alpha, best); }
@@ -3450,7 +3465,7 @@ function minimax(depth, alpha, beta, maximizing) {
     for (const [from, to] of moves) {
       const val = withState(() => {
         const wasCap = sides[to] === B;
-        makeMove(from, to); recordPosition();
+        makeMove(from, to); _simFireDeath(to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, true);
       });
       best = Math.max(best, val);
@@ -3468,7 +3483,7 @@ function minimax(depth, alpha, beta, maximizing) {
     for (const [from, to] of moves) {
       const val = withState(() => {
         const wasCap = sides[to] === W;
-        makeMove(from, to); recordPosition();
+        makeMove(from, to); _simFireDeath(to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, false);
       });
       best = Math.min(best, val);
@@ -3561,7 +3576,7 @@ function aiBestMove() {
   for (const [from, to] of moves) {
     const val = withState(() => {
       const wasCap = sides[to] === W;
-      makeMove(from, to); recordPosition();
+      makeMove(from, to); _simFireDeath(to); recordPosition();
       return _turnContinuation(to, _extraMoveBudget(to, wasCap), AI_DEPTH, -Infinity, Infinity, false);
     });
     if (val < bestScore) {
@@ -3588,7 +3603,7 @@ function playerBestMove(depth = HINT_DEPTH, forcedAdvance = false) {
     const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
     const val = withState(() => {
       const wasCap = sides[to] === B;
-      makeMove(from, to);
+      makeMove(from, to); _simFireDeath(to);
       if (forcedAdvance) { simulateLeap(false); recordPosition(); return minimax(depth - 1, -Infinity, Infinity, false); }
       recordPosition();
       return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, true);
@@ -7338,7 +7353,7 @@ function _aiWhiteStep() {
     for (const to of validMoves) {
       const val = withState(() => {
         const wasCap = sides[to] === B;
-        makeMove(from, to); recordPosition();
+        makeMove(from, to); _simFireDeath(to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), AUTO_DEPTH, -Infinity, Infinity, true);
       });
       if (val > bestVal) { bestVal = val; bestTo = to; }
