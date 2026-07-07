@@ -1,4 +1,4 @@
-﻿const VERSION = "600";
+﻿const VERSION = "604";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5032,16 +5032,26 @@ if (gameOver && !replayMode) {
   // Submit-to-leaderboard button (only for eligible runs)
   if (L.eligible) {
     const st = _lbSubmitState;
-    const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : (st === 'submitting' || st === 'naming') ? "#444" : "#b8912e";
-    const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'naming' ? "Naming…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
-    fillBtn(L.submit, col, label);
-    if (_lbSubmitMsg) {
-      ctx.font = "30px Canterbury"; ctx.fillStyle = st === 'error' ? "#e0a0a0" : "#cfe8cf"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(_lbSubmitMsg, boardCX, L.submit.y + L.submit.h + 26);
+    if (st === 'naming') {
+      // The HTML input covers the right of the row; draw its label on the left.
+      const f = _lbNameFieldRect();
+      ctx.fillStyle = "#e8dcc0"; ctx.font = "36px Canterbury"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText("Your name:", f.labelRight, f.midY);
+    } else {
+      const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : st === 'submitting' ? "#444" : "#b8912e";
+      const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
+      fillBtn(L.submit, col, label);
     }
   }
   fillBtn(L.startOver, "#2a6e3f", "Start Over");
   fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
+  // Only errors get a status line (they explain the failure, e.g. "Refresh the page").
+  // Success is conveyed by the button label ("✓ Submitted") — no extra text needed.
+  if (L.eligible && _lbSubmitState === 'error' && _lbSubmitMsg) {
+    ctx.font = "30px Canterbury"; ctx.fillStyle = "#e0a0a0";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(_lbSubmitMsg, boardCX, L.startOver.y + L.startOver.h + 28);
+  }
   ctx.textBaseline = "alphabetic";
 }
 }
@@ -5602,12 +5612,20 @@ function _lbShowNameEntry(prefill, cb) {
   if (!_lbNameInput) {
     _lbNameInput = document.createElement('input');
     _lbNameInput.type = 'text'; _lbNameInput.maxLength = 20;
-    _lbNameInput.setAttribute('placeholder', 'Enter your name');
+    _lbNameInput.setAttribute('placeholder', 'Your name');
     _lbNameInput.setAttribute('autocomplete', 'off'); _lbNameInput.setAttribute('autocapitalize', 'off');
-    _lbNameInput.style.cssText = 'position:absolute; left:50%; top:44%; transform:translate(-50%,-50%); z-index:20; box-sizing:border-box; width:66%; max-width:360px; padding:12px 14px; font-size:22px; font-family:sans-serif; text-align:center; color:#fff; background:#12122a; border:2px solid #b8912e; border-radius:8px; outline:none;';
+    _lbNameInput.style.cssText = 'position:absolute; z-index:20; box-sizing:border-box; text-align:center; font-family:sans-serif; color:#fff; background:#12122a; border:2px solid #b8912e; border-radius:8px; outline:none; padding:0 10px;';
     wrap.appendChild(_lbNameInput);
   }
   const inp = _lbNameInput;
+  // Position the input over the right portion of the submit row (label sits to its left).
+  const b = _lbNameFieldRect();
+  const scale = (canvas.getBoundingClientRect().width || canvas.width) / canvas.width;
+  inp.style.left = (b.x * scale) + 'px';
+  inp.style.top = (b.y * scale) + 'px';
+  inp.style.width = (b.w * scale) + 'px';
+  inp.style.height = (b.h * scale) + 'px';
+  inp.style.fontSize = Math.max(12, Math.round(b.h * scale * 0.48)) + 'px';
   inp.value = prefill || '';
   inp.style.display = 'block';
   let done = false;
@@ -5624,7 +5642,7 @@ function _lbShowNameEntry(prefill, cb) {
 function _lbSubmit() {
   if (_lbSubmitState === 'submitting' || _lbSubmitState === 'done' || _lbSubmitState === 'naming') return;
   let prev = ''; try { prev = localStorage.getItem('tk_lb_name') || ''; } catch (e) {}
-  _lbSubmitState = 'naming'; _lbSubmitMsg = 'Enter a name, then press Enter'; draw();
+  _lbSubmitState = 'naming'; _lbSubmitMsg = ''; draw(); // label drawn beside the field, not below
   _lbShowNameEntry(prev, (name) => {
     if (!name) { _lbSubmitState = 'idle'; _lbSubmitMsg = ''; draw(); return; } // cancelled / empty
     _lbDoSubmit(name);
@@ -5670,6 +5688,13 @@ function _gameOverBtns() {
     startOver: { x: soX, y: rowY, w: btnW, h: btnH },
     replay: { x: repX, y: rowY, w: btnW, h: btnH },
   };
+}
+
+// During naming, the submit row splits into a "Your name:" label (left) + input field (right).
+function _lbNameFieldRect() {
+  const b = _gameOverBtns().submit;
+  const labelW = Math.round(b.w * 0.34);
+  return { x: b.x + labelW, y: b.y, w: b.w - labelW, h: b.h, labelRight: b.x + labelW - 14, midY: b.y + b.h / 2 };
 }
 let _achSelected = 0;        // highlighted grid cell
 let _achClearConfirm = false; // "Are you sure?" dialog for Clear Achievements
