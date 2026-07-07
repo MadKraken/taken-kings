@@ -83,8 +83,23 @@ Serious validation requires the game to be deterministic + replayable:
     score + game-over (`run_test.ts`). Deno is installed locally (2.9.1, via winget).
     NOTE: chess.js leaves a background timer running, so the test forces `Deno.exit()`; the
     Edge Function returns a Response so this won't matter there.
-  - **3c:** Edge Function — receives a run, calls `_replayRun`, inserts via service_role
-    (bypasses RLS) only if the recomputed value is legit and `_autoPlayUsedThisRun` is false.
+  - **3c (done, code):** Edge Function `supabase/functions/validate/index.ts` (single
+    self-contained file). Client POSTs `{version, name, run}`; the function fetches the exact
+    deployed `chess.js?v=<version>` (rejects version mismatch), re-sims via `loadEngine` +
+    `replayRun`, derives the board server-side (`hs_untimed`, or `hs_15s` when timed & secs==15;
+    else ineligible), and inserts the *authoritative* score via `SUPABASE_SERVICE_ROLE_KEY`
+    (auto-injected — no secret to paste). Client score is never trusted; auto-play runs
+    self-reject (RNG can't reproduce). `loadEngine` uses `new Function` (scoped, re-loadable).
+    **Locally verified** (Deno): valid run inserts-path (RLS blocks non-service-role, 42501),
+    score-0 → `ranked:false`, version 999 → rejected. `deno check` clean.
+    **DEPLOYED & verified in production (2026-07-07):** live endpoint (Verify JWT OFF) is
+    `https://froggegesqnoznvenoyt.supabase.co/functions/v1/bright-task` (slug locked at
+    creation — the display name is "validate" but the URL slug stays `bright-task`). A real
+    run POSTed → `{ok:true,ranked:true,board:hs_untimed,value:2}` → row landed and the in-game
+    board displays it. NOTE: needed a one-time `ALTER TABLE scores ... board check
+    ('hs_untimed','hs_15s')` because `create table if not exists` never updated the stale
+    original CHECK. A `DeployTest` test row exists on hs_untimed (delete via dashboard:
+    `delete from public.scores where name='DeployTest';`).
   - **3d:** client submission UI (name entry at game over → POST to the Edge Function).
 
 RLS model: clients may **read** the boards; **no client writes** — inserts happen
