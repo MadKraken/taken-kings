@@ -20,7 +20,24 @@ Serious validation requires the game to be deterministic + replayable:
 - **Phase 1a (done, v573):** seeded mulberry32 PRNG (`_rng`/`_seedRng`/`_freshSeed`);
   seed recorded per run in `_runSeed`, set at the setup trigger (`_beginSetup`) so a
   validator can reproduce a run via `_seedRng(recordedSeed)` + the same setup fn.
-- **Phase 1b (next):** input log (`_replayInputs`) — semantic actions per run.
+- **Phase 1b (done, v575):** input log (`_replayInputs`) — ordered semantic actions,
+  logged real-only via `_logInput` / `_logItemUse` (guarded `gamePhase==='playing' && !replayMode`).
+  Everything else (AI moves, spawns, auto-advances, neutrals, merchant, mystery/wild rolls)
+  is derived from the seed. Auto-play sets `_autoPlayUsedThisRun` → run not leaderboard-eligible.
+  Input-log schema (each entry is one player action, in order):
+  - `{t:'m', f, to}` — board move/attack/recruit/merchant-engage/checkers-jump (from→to square)
+  - `{t:'ta'}` — Team Advance (counts as a White move) · `{t:'fa'}` — manual Field Advance
+  - `{t:'p'}` — pass (end a Speed/Bloodthirsty turn early)
+  - `{t:'buy', i}` — shop buy (item index) · `{t:'sell', s}` — shop sell (inventory slot)
+  - `{t:'it', s, tg}` — item use. `s` = inventory slot, or `-1` if the item came from a
+    board square (fromSpace; validator derives the item from the move that triggered it).
+    `tg` = array of target squares (`[sq]` for bomb/shield/stat/promoter/elementizer,
+    `[from,to]` for teleporter/cloner), or `null` for a cancel. Inventory cancels aren't
+    logged (validator never enters the mode); board-space cancels are. Item *variant*
+    (which element / promotion) comes from `inventory[s]` / the board item; mystery/wild
+    re-roll via the seeded RNG, so only slot+targets are logged.
+  - `{t:'rw'}` — Rewinder. Validator must rewind its own sim **and RNG state** to the prior
+    turn-start and drop that turn's inputs (needs per-turn-start RNG snapshots — Phase 3 work).
 - **Phase 2:** Supabase tables + boards UI (read/submit via fetch).
 - **Phase 3:** headless engine + Edge Function validator (re-sim, insert only if valid).
 

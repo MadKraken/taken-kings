@@ -1,4 +1,4 @@
-﻿const VERSION = "574";
+﻿const VERSION = "575";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -804,6 +804,15 @@ let _autoPlayUsedThisRun = false; // auto-play engaged this run -> run is not le
 // not the setup screen). The server replays these against a seed-reproduced world;
 // everything else (AI moves, spawns, auto-advances, neutrals, merchant) is derived.
 function _logInput(a) { if (gamePhase === 'playing' && !replayMode) _replayInputs.push(a); }
+// Log an item use (inventory or board-space). `slot` = inventory._activeSlot, or -1 when
+// the item came from a board square (fromSpace) — the server derives the item variant from
+// inventory[slot] / the board-space item, and re-rolls any mystery/wild via the seeded RNG.
+// `tg` = array of target squares, or null for a cancel. Inventory cancels are no-ops for the
+// validator (it never enters the mode), so only board-space cancels are logged.
+function _logItemUse(slot, fromSpace, tg) {
+  if (tg === null && !fromSpace) return;
+  _logInput({ t: 'it', s: (slot === undefined ? -1 : slot), tg: tg });
+}
 function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; }
 function _rng() {
   // mulberry32 — fast, well-distributed 32-bit PRNG
@@ -5636,12 +5645,14 @@ canvas.addEventListener("mouseup", (e) => {
     inventory._activeSlot = slot;
 
     if (isPromoterItem(item) && sides[i] === W && board[i] === PAWN) {
+      _logItemUse(slot, false, [i]);
       _promotePawnTo(item, i);
       removeFromInventory(slot); delete inventory._activeSlot;
       piecePromoterMode = false; piecePromoterTo = NONE;
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_SHIELD && sides[i] === W) {
+      _logItemUse(slot, false, [i]);
       _applyStatEffect(ITEM_SHIELD, i);
       removeFromInventory(slot); delete inventory._activeSlot;
       shieldMode = false;
@@ -5794,9 +5805,11 @@ function handleSellConfirmClick(cx, cy) {
 }
 
 function handlePiecePromoterClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i2 = cellIdxFromCoords(cx, cy);
   const eligible = i2 >= 0 && sides[i2] === W && board[i2] === PAWN;
   if (eligible) {
+    _logItemUse(_s, _fs, [i2]);
     board[i2] = piecePromoterTo === PROMOTER_WILD ? _rollWildTo() : piecePromoterTo;
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
@@ -5805,26 +5818,32 @@ function handlePiecePromoterClick(cx, cy) {
     if (fromSpace) { processNextQueuedItem(); } else { draw(); }
     return;
   }
+  _logItemUse(_s, _fs, null);
   piecePromoterMode = false; piecePromoterTo = NONE;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
 }
 
 function handleShieldClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
   if (i >= 0 && sides[i] === W) {
+    _logItemUse(_s, _fs, [i]);
     _applyStatEffect(ITEM_SHIELD, i);
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     shieldMode = false; draw(); return;
   }
+  _logItemUse(_s, _fs, null);
   shieldMode = false;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
 }
 
 function handleBombClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
   bombMode = false; bombHoverIdx = -1;
+  _logItemUse(_s, _fs, i >= 0 ? [i] : null);
   if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
   _bombSource = 'inv'; // Bomb used from inventory
   if (i >= 0) {
@@ -5835,6 +5854,7 @@ function handleBombClick(cx, cy) {
 }
 
 function handleClonerClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
   if (i >= 0) {
     if (clonerSelected < 0) {
@@ -5844,6 +5864,7 @@ function handleClonerClick(cx, cy) {
     } else {
       const dests = adjacentClonerDests(clonerSelected);
       if (dests.includes(i)) {
+        _logItemUse(_s, _fs, [clonerSelected, i]);
         if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         copyPiece(clonerSelected, i); sides[i] = W; playSfx('clone');
         checkFireDeath(i); // clone dropped onto enemy fire — burns
@@ -5869,6 +5890,7 @@ function handleClonerClick(cx, cy) {
     }
   }
   const clonerCancelSpace = activeItemSpaceIdx >= 0;
+  _logItemUse(_s, clonerCancelSpace, null);
   activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   if (clonerCancelSpace) { processNextQueuedItem(); } else { draw(); }
@@ -5876,12 +5898,14 @@ function handleClonerClick(cx, cy) {
 
 
 function handleTeleporterClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
   if (i >= 0) {
     if (teleporterSelected < 0) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
       if (board[i] === NONE) {
+        _logItemUse(_s, _fs, [teleporterSelected, i]);
         playSfx('teleport');
         if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
@@ -5919,14 +5943,17 @@ function handleTeleporterClick(cx, cy) {
     }
   }
   const teleFromSpace = activeItemSpaceIdx >= 0;
+  _logItemUse(_s, teleFromSpace, null);
   activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   if (teleFromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
 function handleElementizerClick(cx, cy) {
+  const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
   if (i >= 0 && sides[i] === W) {
+    _logItemUse(_s, _fs, [i]);
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
     effectOrders[i] = effectOrders[i].filter(e => e !== 'fire' && e !== 'water' && e !== 'earth' && e !== 'air');
     elements[i] = resolvedElem;
@@ -5940,6 +5967,7 @@ function handleElementizerClick(cx, cy) {
     return;
   }
   const fromSpace = activeItemSpaceIdx >= 0;
+  _logItemUse(_s, fromSpace, null);
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   activeItemSpaceIdx = -1; elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   if (fromSpace) { processNextQueuedItem(); } else { draw(); }
@@ -5948,9 +5976,11 @@ function handleElementizerClick(cx, cy) {
 // Shared handler for single-target stat-buff item modes (Sword, Speed, Vampire Fang).
 // Applies `item` to a clicked White piece, else cancels; `clearMode` resets the mode flag.
 function _handleStatItemClick(cx, cy, item, clearMode) {
+  const _s = inventory._activeSlot;
   const i = cellIdxFromCoords(cx, cy);
   const fromSpace = activeItemSpaceIdx >= 0;
   const hit = i >= 0 && sides[i] === W;
+  _logItemUse(_s, fromSpace, hit ? [i] : null);
   if (hit) {
     _applyStatEffect(item, i);
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
@@ -6013,6 +6043,7 @@ function handleInventoryClick(cx, cy) {
       // Rewinder: immediate action, no board-interaction mode
       if (item === ITEM_REWINDER) {
         if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
+        _logInput({ t: 'rw' }); // Phase-3 validator rewinds its sim + RNG to the prior turn-start, dropping the aborted turn's inputs
         _turnStartSnapIndices.pop(); // discard current turn start
         const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
         const targetSnap = replaySnapshots[targetIdx];
