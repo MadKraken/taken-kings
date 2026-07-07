@@ -1,4 +1,4 @@
-﻿const VERSION = "611";
+﻿const VERSION = "623";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -411,8 +411,8 @@ function _continueBtnRect() {
 }
 
 // --- Start-screen video: a looping attract clip shown once loading completes; tapping it
-// unlocks audio and enters the menu (the tap passes through to the canvas click handler,
-// which calls _doContinue). Falls back to the on-canvas "Continue" button if the video fails.
+// unlocks audio and enters the main menu. Falls back to the on-canvas "Continue" button if the
+// video fails.
 let _startVideo = null;
 function _createStartVideo() {
   if (_startVideo) return;
@@ -424,14 +424,14 @@ function _createStartVideo() {
     v.src = 'start_screen_2_1080.mp4';
     v.loop = true; v.muted = true; v.defaultMuted = true; v.autoplay = false;
     v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('preload', 'auto');
-    v.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; z-index:5; pointer-events:none; background:#1a1a2e; display:none;';
+    v.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; pointer-events:none; background:#1a1a2e; display:none; z-index:5;';
     v.addEventListener('error', () => { v.style.display = 'none'; }); // fall back to the Continue button
     wrap.appendChild(v);
     _startVideo = v;
     v.load(); // begin buffering during sprite load so it's ready the instant loading completes
   } catch (e) {}
 }
-function _showStartScreen() {
+function _showStartScreen() { // attract video ON TOP of the canvas (covers the splash / fallback)
   if (_continued) return;
   if (!_startVideo) _createStartVideo();
   if (!_startVideo) return;
@@ -445,10 +445,88 @@ function _hideStartScreen() {
   _startVideo.style.display = 'none';
 }
 
-// Tapping the start screen (Continue): unlock audio + proceed into the menu.
-// White-circle "iris" transition from the tap point: grow to swallow the screen, then
-// shrink away to reveal the menu. Rendered on the canvas (the start-screen frame is snapshotted
-// off the video first, since the video is an HTML overlay above the canvas).
+// --- Menu background: the gameplay ground texture, slowly scrolling up. It backs the main menu
+// and the Achievements / Leaderboard screens. Pressing Play freezes the scroll; the frozen
+// offset carries into drawBackground so it becomes the static gameplay background with no jump.
+let _menuScrollY = 0;
+let _menuScrollLastMs = 0;
+let _menuBgRaf = null;
+const MENU_SCROLL_PXPS = 33; // slow upward drift, px/sec
+function _menuBgActive() {
+  if (!spritesLoaded || !_continued) return false;      // start screen shows the video, not the ground
+  return mainMenuOpen || achievementsOpen || leaderboardOpen;
+}
+function _menuBgTick(now) {
+  if (!_menuBgActive()) { _menuBgRaf = null; _menuScrollLastMs = 0; return; }
+  if (_menuScrollLastMs) _menuScrollY -= MENU_SCROLL_PXPS * (now - _menuScrollLastMs) / 1000;
+  _menuScrollLastMs = now;
+  if (!_menuTransition) draw(); // during the entry transition, _menuTransitionTick drives drawing
+  _menuBgRaf = requestAnimationFrame(_menuBgTick);
+}
+function startMenuBg() {
+  if (_menuBgRaf) return;
+  _menuScrollLastMs = performance.now();
+  _menuBgRaf = requestAnimationFrame(_menuBgTick);
+}
+// Pressing Play: instead of freezing the scroll dead, let it coast to a stop over a short window
+// (velocity eased to 0). drawBackground reads _menuScrollY, so the setup/gameplay ground glides.
+let _menuDecelRaf = null;
+const _MENU_DECEL_MS = 750;
+function _startMenuDecel() {
+  if (_menuBgRaf) { cancelAnimationFrame(_menuBgRaf); _menuBgRaf = null; _menuScrollLastMs = 0; }
+  if (_menuDecelRaf) cancelAnimationFrame(_menuDecelRaf);
+  const t0 = performance.now();
+  let last = t0;
+  const v0 = -MENU_SCROLL_PXPS; // current velocity, px/sec (scroll decrements)
+  const tick = (now) => {
+    const el = now - t0, dt = now - last; last = now;
+    if (el >= _MENU_DECEL_MS) { _menuDecelRaf = null; draw(); return; }
+    const v = v0 * (1 - el / _MENU_DECEL_MS) * (1 - el / _MENU_DECEL_MS); // quadratic ease-out to 0
+    _menuScrollY += v * dt / 1000;
+    draw();
+    _menuDecelRaf = requestAnimationFrame(tick);
+  };
+  _menuDecelRaf = requestAnimationFrame(tick);
+}
+// Tiled ground background used by the menu screens. `scrim` (0..1) darkens it for legibility.
+function drawScrollingGround(scrim) {
+  ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const groundEl = spriteImages["ground"];
+  if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
+    const gw = groundEl.naturalWidth, gh = groundEl.naturalHeight;
+    const scale = canvas.width / gw, tileH = gh * scale;
+    const startY = -((_menuScrollY % tileH) + tileH) % tileH;
+    for (let ty = startY; ty < canvas.height; ty += tileH) ctx.drawImage(groundEl, 0, ty, canvas.width, tileH);
+  }
+  if (scrim) { ctx.fillStyle = `rgba(12,12,30,${scrim})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+}
+
+// On-canvas start-screen fallback (drawn under the video; visible only if the video fails).
+function drawStartScreen() {
+  drawScrollingGround(0.28);
+  const W2 = canvas.width, H2 = canvas.height, cx = W2 / 2, cy = H2 * 0.38;
+  const logo = spriteImages['logo'];
+  if (logo && logo.complete && logo.naturalWidth > 0) {
+    const lw = Math.min(W2 * 0.62, 440), lh = lw * (logo.naturalHeight / logo.naturalWidth);
+    ctx.drawImage(logo, cx - lw / 2, cy - lh / 2 - 40, lw, lh);
+  } else {
+    ctx.fillStyle = '#c8a060'; ctx.font = '76px Canterbury'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Taken Kings', cx, cy - 40);
+  }
+  const r = _continueBtnRect();
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+  ctx.fillStyle = '#2a6e3f'; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = '48px Canterbury'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('Continue', r.x + r.w / 2, r.y + r.h / 2 + 2);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Tapping the start screen: unlock audio + enter the main menu. White-circle "iris" transition
+// from the tap point: grow to swallow the screen in white, then fade out to reveal the main menu
+// (with its scrolling-ground background). The video frame is snapshotted first (it's an HTML
+// overlay above the canvas), then hidden so the whole transition renders on the canvas.
 let _menuTransition = null;
 const _MENU_GROW_MS = 240, _MENU_FADE_MS = 320;
 function _menuTransitionTick() {
@@ -460,7 +538,7 @@ function _menuTransitionTick() {
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.fill();
     requestAnimationFrame(_menuTransitionTick);
   } else if (el < _MENU_GROW_MS + _MENU_FADE_MS) {
-    draw();                                             // the menu underneath
+    draw();                                             // the main menu (scrolling ground + buttons)
     const p = (el - _MENU_GROW_MS) / _MENU_FADE_MS;
     ctx.save();
     ctx.globalAlpha = 1 - easeOut(p);                   // fade the full-screen white out to the menu
@@ -469,7 +547,7 @@ function _menuTransitionTick() {
     requestAnimationFrame(_menuTransitionTick);
   } else {
     _menuTransition = null;
-    startIdleAnim();                                    // resume the menu's idle bob
+    startMenuBg();                                      // now begin the continuous ground scroll
     draw();
   }
 }
@@ -477,10 +555,11 @@ function _menuTransitionTick() {
 function _doContinue(tapX, tapY) {
   if (_continued || !spritesLoaded) return;
   _continued = true;
+  mainMenuOpen = true; // the start screen leads into the main menu (Play / Achievements / Leaderboard)
   _sfxUnlockCtx();
   playSfx('button');
-  // Freeze the current start-screen frame onto an offscreen canvas, then hide the video so
-  // the whole transition renders on the game canvas.
+  // Freeze the current start-screen frame onto an offscreen canvas, then hide the video so the
+  // whole transition renders on the game canvas.
   const snap = document.createElement('canvas');
   snap.width = canvas.width; snap.height = canvas.height;
   const sctx = snap.getContext('2d');
@@ -551,7 +630,7 @@ function loadSprites() {
       _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
       _showStartScreen(); // attract-loop video over the canvas; tap enters the menu
-      draw(); // draws the Continue-button fallback beneath (covered by the video if it plays)
+      draw();             // draws the Continue-button fallback beneath (covered by the video if it plays)
     }
   };
   for (const [key, src, needsBg] of spriteList) {
@@ -1883,8 +1962,7 @@ function _drainCaptureAnims() {
 let _pendingShopFlies = []; // queued by handleShopClick, attached to next startAnim replayAnimBuffer event
 let _turnStartSnapIndices = []; // snapshot index at start of each White turn, for Rewinder
 let timedMode = false;
-let timedModeSecs = 60;
-const TIMED_PRESETS = [15, 30, 60, 120, 300];
+let timedModeSecs = 15; // 15s is the only timed option
 let _timerEnd = 0;        // Date.now() when White's turn expires (0 = not running)
 let _timerDisplay = 0;    // last computed seconds-left value; frozen when timer stops
 let _timerRafId = null;   // rAF handle for clock-redraw loop
@@ -1923,6 +2001,7 @@ function initBoard() {
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
   if (_lbNameInput) { _lbNameInput.onblur = null; _lbNameInput.onkeydown = null; _lbNameInput.style.display = 'none'; } // hide the name field on Start Over
+  mainMenuOpen = false; // Start Over / new run lands on the setup screen (menu-bg scroll stops on its own)
   _blackKingsInCheckmate.clear();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -4117,10 +4196,16 @@ const BTN_Y = INV_PANEL_BOTTOM + 20;
 const BTN_GAP = 8;
 const LEAP_BTN = { x: MARGIN, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
 const PITCH_BTN = { x: MARGIN + BOARD_PX / 2 + BTN_GAP / 2, y: BTN_Y, w: BOARD_PX / 2 - BTN_GAP / 2, h: 60 };
-const _SETUP_BTN_W = Math.floor((BOARD_PX - 2 * BTN_GAP) / 3);
-const CLASSIC_BTN  = { x: MARGIN, y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
-const SETUP_ROLL_BTN = { x: MARGIN + _SETUP_BTN_W + BTN_GAP, y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
-const SETUP_GO_BTN   = { x: MARGIN + 2 * (_SETUP_BTN_W + BTN_GAP), y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
+// Setup buttons laid out in three rows: [Classic | Roll] / [Untimed | Timed] / [Go].
+const _SETUP_BTN_W = Math.floor((BOARD_PX - BTN_GAP) / 2);      // left column of each pair
+const _SETUP_BTN_W2 = BOARD_PX - _SETUP_BTN_W - BTN_GAP;         // right column takes the remainder (exact fit)
+const _SETUP_ROW2_Y = BTN_Y + 68;
+const _SETUP_ROW3_Y = _SETUP_ROW2_Y + 68;
+const CLASSIC_BTN    = { x: MARGIN, y: BTN_Y, w: _SETUP_BTN_W, h: 60 };
+const SETUP_ROLL_BTN = { x: MARGIN + _SETUP_BTN_W + BTN_GAP, y: BTN_Y, w: _SETUP_BTN_W2, h: 60 };
+const UNTIMED_BTN    = { x: MARGIN, y: _SETUP_ROW2_Y, w: _SETUP_BTN_W, h: 60 };
+const TIMED_BTN      = { x: MARGIN + _SETUP_BTN_W + BTN_GAP, y: _SETUP_ROW2_Y, w: _SETUP_BTN_W2, h: 60 };
+const SETUP_GO_BTN   = { x: MARGIN, y: _SETUP_ROW3_Y, w: BOARD_PX, h: 60 };
 const COUNTDOWN_Y = BTN_Y + 60 + 46;
 const GRAVE_Y = COUNTDOWN_Y + 100;
 const GRAVE_H = 150;
@@ -4151,6 +4236,10 @@ function _achClearDlgRects() {
   };
 }
 
+// Setup screen: a Back button (to the main menu) sits where the old Achievements/Leaderboard
+// buttons were — those now live on the main menu instead.
+const SETUP_BACK_BTN = { x: MARGIN + BOARD_PX / 2 - 130, y: GRAVE_Y + 20, w: 260, h: 60 };
+
 // --- Leaderboard screen geometry ---
 const LB_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y + 70, w: 300, h: 60 }; // setup menu, below Achievements
 const LB_TAB_H = 60, LB_TAB_GAP = 14, LB_TABS_Y = BOARD_Y + MARGIN;
@@ -4175,7 +4264,8 @@ if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
   const scale = canvas.width / gw;
   const tileH = gh * scale;
   const animScrollDy = _fieldAnim ? -anim.boardDy * (1 - _animT) : 0;
-  const rawOffset = -leapCount * TILE + animScrollDy;
+  // + _menuScrollY: carry the (now-frozen) menu scroll phase into gameplay so Play doesn't jump.
+  const rawOffset = -leapCount * TILE + animScrollDy + _menuScrollY;
   const startY = -((rawOffset % tileH) + tileH) % tileH;
   for (let ty = startY; ty < canvas.height; ty += tileH) {
     ctx.drawImage(groundEl, 0, ty, canvas.width, tileH);
@@ -4920,6 +5010,7 @@ if (!gameOver && isItemActive()) {
   const halfW = BOARD_PX / 2 - BTN_GAP / 2;
   const btnH = 80;
   // Cancel (X)
+  _registerBtn(MARGIN, BTN_Y, halfW, btnH, 8);
   ctx.fillStyle = "#5a2a2a";
   ctx.beginPath(); ctx.roundRect(MARGIN, BTN_Y, halfW, btnH, 8); ctx.fill();
   ctx.fillStyle = "#ff8888";
@@ -4927,88 +5018,40 @@ if (!gameOver && isItemActive()) {
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText("✕  Cancel", MARGIN + halfW / 2, BTN_Y + btnH / 2);
   // Trash
+  _registerBtn(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8);
   ctx.fillStyle = "#2a2a2a";
   ctx.beginPath(); ctx.roundRect(MARGIN + BOARD_PX / 2 + BTN_GAP / 2, BTN_Y, halfW, btnH, 8); ctx.fill();
   ctx.fillStyle = "#aaa";
   ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
 } else if (!gameOver && gamePhase === 'setup') {
-  // Classic | Roll | Go
-  const _setupBtns = [
-    { btn: CLASSIC_BTN,    color: "#b8912e", label: "Classic" },
-    { btn: SETUP_ROLL_BTN, color: "#4a3a7a", label: "🎲 Roll" },
-    { btn: SETUP_GO_BTN,   color: "#2a6e3f", label: "▶ Go!" },
-  ];
-  for (const { btn, color, label } of _setupBtns) {
+  // Rows: [Classic | Roll] / [Untimed | Timed] / [Go]. 15s is the only timed option.
+  const _drawSetupBtn = (btn, color, label, opts) => {
+    _registerBtn(btn.x, btn.y, btn.w, btn.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6); ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (opts && opts.border) { ctx.strokeStyle = opts.border; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6); ctx.stroke(); }
+    ctx.fillStyle = (opts && opts.textColor) || "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(label, btn.x + btn.w / 2, btn.y + btn.h / 2);
-  }
-
-  // Timed Mode toggle row
+  };
+  _drawSetupBtn(CLASSIC_BTN, "#b8912e", "Classic");
+  _drawSetupBtn(SETUP_ROLL_BTN, "#4a3a7a", "🎲 Roll");
+  _drawSetupBtn(UNTIMED_BTN, !timedMode ? "#1a5a8a" : "#33334d", "Untimed",
+    !timedMode ? { border: "#6ab0e0" } : { textColor: "#9a9ab0" });
+  _drawSetupBtn(TIMED_BTN, timedMode ? "#1a5a8a" : "#33334d", "⏱ Timed 15s",
+    timedMode ? { border: "#6ab0e0" } : { textColor: "#9a9ab0" });
+  _drawSetupBtn(SETUP_GO_BTN, "#2a6e3f", "▶ Go!");
+  // Back to main menu
   {
-    const tmY = COUNTDOWN_Y;
-    const tmCX = MARGIN + BOARD_PX / 2; // center divider: labels right-align here, chips left-align here
-    const chipW = 86, chipH = 44, chipGap = 10;
-    ctx.font = "42px Canterbury"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Timed:", tmCX - 12, tmY);
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    const offX = tmCX + 12, onX = tmCX + 12 + chipW + chipGap;
-    // OFF chip
-    ctx.fillStyle = !timedMode ? "#4a3a7a" : "#333";
-    ctx.beginPath(); ctx.roundRect(offX, tmY - chipH / 2, chipW, chipH, 6); ctx.fill();
-    ctx.fillStyle = !timedMode ? "#fff" : "#888"; ctx.font = "34px Canterbury"; ctx.textAlign = "center";
-    ctx.fillText("OFF", offX + chipW / 2, tmY);
-    // ON chip
-    ctx.fillStyle = timedMode ? "#2a6e3f" : "#333";
-    ctx.beginPath(); ctx.roundRect(onX, tmY - chipH / 2, chipW, chipH, 6); ctx.fill();
-    ctx.fillStyle = timedMode ? "#fff" : "#888";
-    ctx.fillText("ON", onX + chipW / 2, tmY);
-
-    if (timedMode) {
-      const psY = tmY + 62;
-      ctx.font = "42px Canterbury"; ctx.textAlign = "right";
-      ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-      ctx.fillStyle = "#fff";
-      ctx.fillText("Seconds per turn:", tmCX - 12, psY);
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      const labels = ["15s", "30s", "1m", "2m", "5m"];
-      const pW = chipW, pGap = chipGap;
-      let px = tmCX + 12;
-      TIMED_PRESETS.forEach((secs, i) => {
-        const active = timedModeSecs === secs;
-        ctx.fillStyle = active ? "#1a5a8a" : "#333";
-        ctx.beginPath(); ctx.roundRect(px, psY - 22, pW, 44, 6); ctx.fill();
-        ctx.fillStyle = active ? "#fff" : "#888"; ctx.textAlign = "center";
-        ctx.fillText(labels[i], px + pW / 2, psY);
-        px += pW + pGap;
-      });
-    }
-  }
-  // Achievements button
-  {
-    const b = ACH_MENU_BTN;
+    const b = SETUP_BACK_BTN;
+    _registerBtn(b.x, b.y, b.w, b.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#b8912e";
+    ctx.fillStyle = "#4a3a7a";
     ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Achievements", b.x + b.w / 2, b.y + b.h / 2);
-    ctx.textBaseline = "alphabetic";
-  }
-  // Leaderboard button
-  {
-    const b = LB_MENU_BTN;
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#1a5a6e";
-    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Leaderboard", b.x + b.w / 2, b.y + b.h / 2);
+    ctx.fillText("‹ Back", b.x + b.w / 2, b.y + b.h / 2);
     ctx.textBaseline = "alphabetic";
   }
 } else if (!gameOver && gamePhase === 'playing') {
@@ -5016,6 +5059,7 @@ if (!gameOver && isItemActive()) {
   if (!replayMode || _miniReplayActive) {
     // Team Leap
     const canLeap = canTeamLeap();
+    _registerBtn(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
     ctx.beginPath();
@@ -5029,6 +5073,7 @@ if (!gameOver && isItemActive()) {
     // Pitch Shift
     const canShift = canManualPitchShift();
     const shiftHighlight = hintMove === "leap";
+    _registerBtn(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
     ctx.beginPath();
@@ -5051,6 +5096,7 @@ if (!gameOver && isItemActive()) {
 
   if (!replayMode || _miniReplayActive) {
     // Resign
+    _registerBtn(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = "#993333";
     ctx.beginPath();
@@ -5061,6 +5107,7 @@ if (!gameOver && isItemActive()) {
     ctx.fillText("Resign", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
 
     // Auto-play toggle button
+    _registerBtn(AUTO_BTN.x, AUTO_BTN.y, AUTO_BTN.w, AUTO_BTN.h, 6);
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = autoPlay ? "#1a7a3a" : "#444466";
     ctx.beginPath();
@@ -5072,6 +5119,7 @@ if (!gameOver && isItemActive()) {
 
     // Last Move replay button
     if (replaySnapshots.length > 1) {
+      _registerBtn(LAST_MOVE_BTN.x, LAST_MOVE_BTN.y, LAST_MOVE_BTN.w, LAST_MOVE_BTN.h, 6);
       ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
       ctx.fillStyle = "#1a4a7a";
       ctx.beginPath();
@@ -5100,7 +5148,10 @@ if (gameOver && !replayMode) {
   ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
   const L = _gameOverBtns();
   const fillBtn = (r, color, label) => {
+    _registerBtn(r.x, r.y, r.w, r.h, 8);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#fff"; ctx.font = "44px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2);
   };
@@ -5152,6 +5203,7 @@ if (replayMode && !_miniReplayActive) {
   ];
   ctx.font = "32px Canterbury";
   for (const btn of btns) {
+    _registerBtn(bx, by, bW, bH, 8);
     ctx.fillStyle = btn.enabled ? btn.color : "#222";
     ctx.beginPath(); ctx.roundRect(bx, by, bW, bH, 8); ctx.fill();
     ctx.fillStyle = btn.enabled ? "#fff" : "#555";
@@ -5619,6 +5671,51 @@ let _achUnlocked = {};
 try { _achUnlocked = JSON.parse(localStorage.getItem('tk_achievements') || '{}') || {}; } catch (e) { _achUnlocked = {}; }
 let achievementsOpen = false;
 
+// --- Main menu (Play / Achievements / Leaderboard), shown after the start screen ---
+let mainMenuOpen = false;
+function _mmBtnRects() {
+  const cx = canvas.width / 2, w = Math.min(canvas.width * 0.62, 440), h = 92, gap = 32;
+  const x = cx - w / 2, y0 = canvas.height * 0.40;
+  return {
+    play:         { x, y: y0, w, h },
+    achievements: { x, y: y0 + (h + gap), w, h },
+    leaderboard:  { x, y: y0 + 2 * (h + gap), w, h },
+  };
+}
+function drawMainMenu() {
+  drawScrollingGround(0.22); // slowly-scrolling gameplay ground behind the menu
+  const cx = canvas.width / 2, titleY = canvas.height * 0.22;
+  const logo = spriteImages['logo'];
+  if (logo && logo.complete && logo.naturalWidth > 0) {
+    const lw = Math.min(canvas.width * 0.62, 440), lh = lw * (logo.naturalHeight / logo.naturalWidth);
+    ctx.drawImage(logo, cx - lw / 2, titleY - lh / 2, lw, lh);
+  } else {
+    ctx.fillStyle = "#c8a060"; ctx.font = "76px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Taken Kings", cx, titleY);
+  }
+  const R = _mmBtnRects();
+  const drawBtn = (r, color, label) => {
+    _registerBtn(r.x, r.y, r.w, r.h, 12);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "50px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
+  };
+  drawBtn(R.play, "#2a6e3f", "▶ Play");
+  drawBtn(R.achievements, "#b8912e", "Achievements");
+  drawBtn(R.leaderboard, "#1a5a6e", "Leaderboard");
+  ctx.textBaseline = "alphabetic";
+}
+function handleMainMenuClick(cx, cy) {
+  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const R = _mmBtnRects();
+  if (inR(R.play)) { playSfx('button'); mainMenuOpen = false; _startMenuDecel(); startIdleAnim(); draw(); return; } // scroll eases to a stop; ground becomes gameplay background
+  if (inR(R.achievements)) { playSfx('button'); achievementsOpen = true; _achSelected = 0; _achClearConfirm = false; startMenuBg(); draw(); return; }
+  if (inR(R.leaderboard)) { playSfx('button'); _lbOpen(); return; }
+}
+
 // --- Leaderboard (Phase 2): read-only boards from Supabase (client reads; writes are server-only) ---
 const SUPABASE_URL = 'https://froggegesqnoznvenoyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo'; // publishable/client-safe
@@ -5648,6 +5745,7 @@ function _lbFetch(key) {
 function _lbOpen() {
   leaderboardOpen = true; _lbTab = LB_BOARDS[0].key;
   if (_lbState[_lbTab] !== 'ready') _lbFetch(_lbTab);
+  startMenuBg(); // keep the ground scrolling behind the leaderboard
   draw();
 }
 // High-score boards: value is a plain integer (Kings taken). Speed boards: value is ms -> m:ss.
@@ -5801,8 +5899,7 @@ function _achCellRect(i) {
 }
 
 function drawAchievementsScreen() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawScrollingGround(0.5); // scrolling ground background (scrim keeps the grid + text legible)
 
   // Header
   ctx.fillStyle = "#c8a060"; ctx.font = "56px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -5816,10 +5913,11 @@ function drawAchievementsScreen() {
     const r = _achCellRect(i);
     const ach = ACHIEVEMENTS[i];
     const unlocked = ach && _achUnlocked[ach.id];
-    // base cell
-    if (!ach)            ctx.fillStyle = ((i % 8 + Math.floor(i / 8)) % 2) ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)"; // empty slot
-    else if (unlocked)   ctx.fillStyle = "#2a8f4f"; // accomplished — filled in
-    else                 ctx.fillStyle = "#3a3a55"; // available but locked
+    // base cell — chessboard shading: light/dark alternates by (col + row) parity
+    const dark = (i % 8 + Math.floor(i / 8)) % 2;
+    if (!ach)            ctx.fillStyle = dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)"; // empty slot
+    else if (unlocked)   ctx.fillStyle = dark ? "#247a43" : "#2f9a56"; // accomplished — filled in
+    else                 ctx.fillStyle = dark ? "#32324a" : "#424260"; // available but locked
     ctx.beginPath(); ctx.roundRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 6); ctx.fill();
     // check mark on unlocked cells
     if (unlocked) {
@@ -5857,7 +5955,10 @@ function drawAchievementsScreen() {
 
   // Back + Clear buttons
   const drawBtn = (r, fill, label) => {
+    _registerBtn(r.x, r.y, r.w, r.h, 8);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
     ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
@@ -5902,19 +6003,23 @@ function handleAchievementsClick(cx, cy) {
 }
 
 function drawLeaderboardScreen() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawScrollingGround(0.5); // scrolling ground background (scrim keeps the rows + text legible)
 
   // Header
-  ctx.fillStyle = "#c8a060"; ctx.font = "56px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.85)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  ctx.fillStyle = "#e6b96e"; ctx.font = "56px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText("Leaderboard", canvas.width / 2, BOARD_Y - 40);
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
   // Tabs (2×2, one per board)
   const tabs = _lbTabRects();
   for (const r of tabs) {
     const active = _lbTab === r.key;
+    _registerBtn(r.x, r.y, r.w, r.h, 8);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = active ? "#2a6e3f" : "#33334d";
     ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = active ? "#7fe0a0" : "rgba(255,255,255,0.15)"; ctx.lineWidth = active ? 3 : 2;
     ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
     ctx.fillStyle = active ? "#fff" : "#9a9ab0"; ctx.font = "33px Canterbury";
@@ -5940,30 +6045,38 @@ function drawLeaderboardScreen() {
     ctx.fillText("No scores yet — be the first!", canvas.width / 2, LB_LIST_TOP + 120);
   } else {
     // column captions
-    ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = "32px Canterbury"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,0.85)"; ctx.shadowBlur = 4; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = "32px Canterbury"; ctx.textBaseline = "middle";
     ctx.textAlign = "left";  ctx.fillText("Player", MARGIN + 92, LB_LIST_TOP - 26);
     ctx.textAlign = "right"; ctx.fillText(board.metric, MARGIN + BOARD_PX - 24, LB_LIST_TOP - 26);
-    const rankColors = ["#f0c040", "#c8c8d0", "#c8884a"];
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    const rankColors = ["#ffd24d", "#dcdce6", "#e09a58"];
     for (let i = 0; i < Math.min(rows.length, LB_MAX_ROWS); i++) {
       const row = rows[i], y = LB_LIST_TOP + i * LB_ROW_H, midY = y + (LB_ROW_H - 6) / 2;
-      ctx.fillStyle = (i % 2) ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.08)";
+      // Solid, dark row strip so text reads clearly over the scrolling ground.
+      ctx.fillStyle = (i % 2) ? "rgba(14,14,32,0.66)" : "rgba(26,26,50,0.72)";
       ctx.beginPath(); ctx.roundRect(MARGIN, y, BOARD_PX, LB_ROW_H - 6, 6); ctx.fill();
-      ctx.fillStyle = i < 3 ? rankColors[i] : "rgba(255,255,255,0.5)";
+      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 1;
+      ctx.fillStyle = i < 3 ? rankColors[i] : "rgba(255,255,255,0.75)";
       ctx.font = "34px Canterbury"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
       ctx.fillText(`${i + 1}.`, MARGIN + 20, midY);
-      // Name on top, date/time beneath (muted, small).
-      ctx.fillStyle = "#fff"; ctx.font = "32px Canterbury";
+      // Name on top, date/time beneath.
+      ctx.fillStyle = "#fff"; ctx.font = "33px Canterbury";
       ctx.fillText(String(row.name || "—").slice(0, 20), MARGIN + 92, midY - 9);
-      ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "20px Canterbury";
+      ctx.fillStyle = "rgba(255,255,255,0.72)"; ctx.font = "23px Canterbury";
       ctx.fillText(_lbFormatDate(row.created_at), MARGIN + 92, midY + 15);
-      ctx.fillStyle = "#7fe0a0"; ctx.font = "34px Canterbury"; ctx.textAlign = "right";
+      ctx.fillStyle = "#8dedb0"; ctx.font = "36px Canterbury"; ctx.textAlign = "right";
       ctx.fillText(_lbFormatValue(_lbTab, row.value), MARGIN + BOARD_PX - 24, midY);
+      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     }
   }
 
   // Buttons
   const drawBtn = (r, fill, label) => {
+    _registerBtn(r.x, r.y, r.w, r.h, 8);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
     ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
     ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
@@ -6005,9 +6118,16 @@ function drawAchievementToast() {
 
 function draw() {
   if (_instant) return; // headless re-sim: no rendering
-  if (!spritesLoaded || !_continued) { _drawSplash(); return; }
+  _uiButtons = [];      // rebuilt each frame as buttons draw; used for press hit-testing
+  _drawScene();
+  _drawPressedOverlay(); // darken whatever button is currently held down
+}
+function _drawScene() {
+  if (!spritesLoaded) { _drawSplash(); return; }
+  if (!_continued) { drawStartScreen(); return; }
   if (achievementsOpen) { drawAchievementsScreen(); return; }
   if (leaderboardOpen) { drawLeaderboardScreen(); return; }
+  if (mainMenuOpen) { drawMainMenu(); return; }
   if (gamePhase === 'playing' && !replayMode) checkAchievements();
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
@@ -6076,6 +6196,40 @@ function canvasCoords(e) {
   return [(e.clientX - rect.left) * canvas.width / rect.width,
           (e.clientY - rect.top) * canvas.height / rect.height];
 }
+
+// --- Button press feedback ----------------------------------------------------
+// Every button registers its rect while drawing (_registerBtn). On pointerdown we find the
+// button under the point and mark it pressed; draw() then darkens it (a "tapped" look) until
+// pointerup/cancel. This is central, so no per-button rendering changes are needed.
+let _uiButtons = [];        // rects registered during the current draw()
+let _pressedRect = null;    // the button currently held down (a {x,y,w,h,r})
+function _registerBtn(x, y, w, h, r) { _uiButtons.push({ x, y, w, h, r: r == null ? 8 : r }); }
+function _btnAt(cx, cy) {
+  // last match wins → topmost (buttons drawn later, e.g. dialogs, sit on top)
+  let hit = null;
+  for (const b of _uiButtons) if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) hit = b;
+  return hit;
+}
+function _drawPressedOverlay() {
+  const b = _pressedRect;
+  if (!b) return;
+  ctx.save();
+  ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, b.r); ctx.clip();
+  ctx.fillStyle = "rgba(0,0,0,0.28)"; ctx.fillRect(b.x, b.y, b.w, b.h);     // darken the whole button
+  ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fillRect(b.x, b.y, b.w, 8);       // inner top shadow → "pressed in"
+  ctx.restore();
+}
+function _setPressed(cx, cy) {
+  const b = _btnAt(cx, cy);
+  if (b === _pressedRect) return;
+  _pressedRect = b;
+  if (_pressedRect) draw();
+}
+function _clearPressed() { if (_pressedRect) { _pressedRect = null; draw(); } }
+canvas.addEventListener("pointerdown", (e) => { const [cx, cy] = canvasCoords(e); _setPressed(cx, cy); });
+canvas.addEventListener("pointerup", _clearPressed);
+canvas.addEventListener("pointercancel", _clearPressed);
+canvas.addEventListener("pointerleave", _clearPressed);
 
 function trashBounds() {
   const invY = INV_PANEL_TOP + 50;
@@ -6801,6 +6955,7 @@ canvas.addEventListener("click", (e) => {
   if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
+  if (mainMenuOpen) { handleMainMenuClick(cx, cy); return; }
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
@@ -6858,28 +7013,14 @@ canvas.addEventListener("click", (e) => {
         cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { playSfx('button'); _beginSetup(classicSetup); draw(); return; }
     if (cx >= SETUP_ROLL_BTN.x && cx <= SETUP_ROLL_BTN.x + SETUP_ROLL_BTN.w &&
         cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); _beginSetup(rollSetup); draw(); return; }
+    if (cx >= UNTIMED_BTN.x && cx <= UNTIMED_BTN.x + UNTIMED_BTN.w &&
+        cy >= UNTIMED_BTN.y && cy <= UNTIMED_BTN.y + UNTIMED_BTN.h) { playSfx('button'); timedMode = false; draw(); return; }
+    if (cx >= TIMED_BTN.x && cx <= TIMED_BTN.x + TIMED_BTN.w &&
+        cy >= TIMED_BTN.y && cy <= TIMED_BTN.y + TIMED_BTN.h) { playSfx('button'); timedMode = true; timedModeSecs = 15; draw(); return; }
     if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
         cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
-    if (cx >= ACH_MENU_BTN.x && cx <= ACH_MENU_BTN.x + ACH_MENU_BTN.w &&
-        cy >= ACH_MENU_BTN.y && cy <= ACH_MENU_BTN.y + ACH_MENU_BTN.h) { playSfx('button'); achievementsOpen = true; _achSelected = 0; _achClearConfirm = false; draw(); return; }
-    if (cx >= LB_MENU_BTN.x && cx <= LB_MENU_BTN.x + LB_MENU_BTN.w &&
-        cy >= LB_MENU_BTN.y && cy <= LB_MENU_BTN.y + LB_MENU_BTN.h) { playSfx('button'); _lbOpen(); return; }
-    // Timed mode toggle
-    {
-      const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;
-      const tmCX = MARGIN + BOARD_PX / 2;
-      const offX = tmCX + 12, onX = tmCX + 12 + chipW + chipGap;
-      if (cx >= offX && cx <= offX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { playSfx('button'); timedMode = false; draw(); return; }
-      if (cx >= onX && cx <= onX + chipW && cy >= tmY - chipH / 2 && cy <= tmY + chipH / 2) { playSfx('button'); timedMode = true; draw(); return; }
-      if (timedMode) {
-        const psY = tmY + 62, pW = chipW, pGap = chipGap;
-        let px = tmCX + 12;
-        for (let i = 0; i < TIMED_PRESETS.length; i++) {
-          if (cx >= px && cx <= px + pW && cy >= psY - 22 && cy <= psY + 22) { playSfx('button'); timedModeSecs = TIMED_PRESETS[i]; draw(); return; }
-          px += pW + pGap;
-        }
-      }
-    }
+    if (cx >= SETUP_BACK_BTN.x && cx <= SETUP_BACK_BTN.x + SETUP_BACK_BTN.w &&
+        cy >= SETUP_BACK_BTN.y && cy <= SETUP_BACK_BTN.y + SETUP_BACK_BTN.h) { playSfx('button'); mainMenuOpen = true; startMenuBg(); draw(); return; }
     return;
   }
   if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
