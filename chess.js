@@ -1,4 +1,4 @@
-﻿const VERSION = "606";
+﻿const VERSION = "609";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -410,10 +410,46 @@ function _continueBtnRect() {
   return { x: (W2 - w) / 2, y: H2 * 0.38 + 172, w, h }; // below the "Loading Complete" label
 }
 
-// Pressing Continue on the loading screen: unlock audio + proceed into the game.
+// --- Start-screen video: a looping attract clip shown once loading completes; tapping it
+// unlocks audio and enters the menu (the tap passes through to the canvas click handler,
+// which calls _doContinue). Falls back to the on-canvas "Continue" button if the video fails.
+let _startVideo = null;
+function _createStartVideo() {
+  if (_startVideo) return;
+  try {
+    const wrap = document.getElementById('game-wrap');
+    if (!wrap || typeof wrap.appendChild !== 'function') return;
+    const v = document.createElement('video');
+    if (!v || typeof v.play !== 'function') return; // headless stub — bail
+    v.src = 'start_screen_2_1080.mp4';
+    v.loop = true; v.muted = true; v.defaultMuted = true; v.autoplay = false;
+    v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('preload', 'auto');
+    v.style.cssText = 'position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; z-index:5; pointer-events:none; background:#1a1a2e; display:none;';
+    v.addEventListener('error', () => { v.style.display = 'none'; }); // fall back to the Continue button
+    wrap.appendChild(v);
+    _startVideo = v;
+    v.load(); // begin buffering during sprite load so it's ready the instant loading completes
+  } catch (e) {}
+}
+function _showStartScreen() {
+  if (_continued) return;
+  if (!_startVideo) _createStartVideo();
+  if (!_startVideo) return;
+  _startVideo.style.display = 'block';
+  try { _startVideo.currentTime = 0; } catch (e) {}
+  const p = _startVideo.play(); if (p && p.catch) p.catch(() => {});
+}
+function _hideStartScreen() {
+  if (!_startVideo) return;
+  try { _startVideo.pause(); } catch (e) {}
+  _startVideo.style.display = 'none';
+}
+
+// Tapping the start screen (Continue): unlock audio + proceed into the menu.
 function _doContinue() {
   if (_continued || !spritesLoaded) return;
   _continued = true;
+  _hideStartScreen();
   _sfxUnlockCtx();
   playSfx('button');
   startIdleAnim();
@@ -476,7 +512,8 @@ function loadSprites() {
       spritesLoaded = true;
       _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
-      draw(); // shows the Continue button; idle anim + game start on Continue
+      _showStartScreen(); // attract-loop video over the canvas; tap enters the menu
+      draw(); // draws the Continue-button fallback beneath (covered by the video if it plays)
     }
   };
   for (const [key, src, needsBg] of spriteList) {
@@ -7289,6 +7326,7 @@ initBoard();
 // Start splash immediately so the canvas is never blank while assets load
 _loadTotal = 16; // matches spriteList length in loadSprites
 _drawSplash();
+_createStartVideo(); // begin buffering the attract video during sprite load
 (function _loadFont(retriesLeft) {
   document.fonts.load("42px Canterbury")
     .then(() => loadSprites())
