@@ -1,4 +1,4 @@
-﻿const VERSION = "593";
+﻿const VERSION = "596";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -990,6 +990,7 @@ function _voidDeathTick() {
 
 const EXPLOSION_MS = 450;
 function startExplosion(cx, cy) {
+  if (!replayMode) _replayAnimBuffer.push({ type: 'explosion', cx, cy }); // so the blast replays during Last Move
   playSfx('boom1'); playSfx('boom2'); // explosion: two spell layers at once
   explosionAnim = { cx, cy, startMs: performance.now() };
   requestAnimationFrame(_explosionTick);
@@ -1073,6 +1074,8 @@ function startWaveAnim(squares, shoveParams, onDone) {
       shoveParams: {...shoveParams},
     });
   }
+  // A Water Warrior's wave douses any fire on the squares it sweeps across.
+  for (const si of squares) fireSquares.delete(si);
   const sp = shoveParams;
   // squareToK: board-index → position in the wave sweep (used to time visual releases)
   const squareToK = new Map();
@@ -1149,6 +1152,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
   }
 
   _waterShoveActive = false;
+  if (_instant) { if (onDone) onDone(); return; } // headless re-sim: shove state already applied, skip the animation
   waveAnim = { squares, shoveParams, drawAt, lastHead: -1, startMs: performance.now(), dur: 500, onDone };
   requestAnimationFrame(_waveTick);
 }
@@ -1520,9 +1524,10 @@ function _playReplayTransition(snapIdx, onDone) {
   const events = _replayTransitions[snapIdx] || [];
   let ei = 0;
   const playNext = () => {
-    // Fire all consecutive fly events (fire-and-forget, no waiting)
-    while (ei < events.length && events[ei].type === 'fly') {
+    // Fire all consecutive fly / explosion events (fire-and-forget, no waiting)
+    while (ei < events.length && (events[ei].type === 'fly' || events[ei].type === 'explosion')) {
       const ev = events[ei++];
+      if (ev.type === 'explosion') { startExplosion(ev.cx, ev.cy); continue; }
       _replaySfx(ev);
       startFlyAnim(ev.piece, ev.side, ev.sx, ev.sy, ev.tx, ev.ty, null);
     }
@@ -2111,8 +2116,9 @@ function slidingMoves(moves, x, y, dirs, s) {
       if (sides[idx(nx, ny)] === N) break; // only W King can recruit neutrals; all others treat them as impassable
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break;
-      // Enemy fire: non-White sliders can land here but can't slide through
-      if (fireSquares.has(ni) && fireSquares.get(ni) !== s) { moves.push(ni); break; }
+      // Enemy fire: normal sliders can land here but can't slide through. A Fire Warrior
+      // ignores fire entirely and slides through it (handled by the normal checks below).
+      if (fireSquares.has(ni) && fireSquares.get(ni) !== s && !(elements[idx(x, y)] & ELEM_FIRE)) { moves.push(ni); break; }
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
       if (piece(nx, ny) !== NONE) break;
@@ -2279,15 +2285,16 @@ function pseudoMoves(x, y) {
 
 function applyFireTrail(fromI, toI, p, s) {
   _piecesMovedSinceFire = false; // reset; fire must see another piece move before it expires
-  fireSquares.set(fromI, s);
-  fireSquares.set(toI, s); // destination also burns — enemies that capture here are killed
+  const _lay = (i) => { if (specialSpaces[i]?.type !== 'river') fireSquares.set(i, s); }; // rivers can't be set on fire
+  _lay(fromI);
+  _lay(toI); // destination also burns — enemies that capture here are killed
   // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
   if (p === KNIGHT || p === CHECKERS || p === CHECKERS_KING) return;
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
   let cx = fx + dx, cy = fy + dy;
-  while (cx !== tx || cy !== ty) { fireSquares.set(idx(cx, cy), s); cx += dx; cy += dy; }
+  while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
 }
 
 // Remove all fire owned by side s (fireSquares maps square -> the side that laid it,
@@ -2381,6 +2388,7 @@ function applyWaterWave(fromI, toI, p) {
 function checkFireDeath(i) {
   if (!fireSquares.has(i)) return false;
   if (board[i] === NONE || fireSquares.get(i) === sides[i]) return false; // own-faction fire is harmless
+  if (elements[i] & (ELEM_FIRE | ELEM_WATER)) return false; // Fire & Water Warriors are immune to fire (own or enemy)
   const p = board[i], s = sides[i];
   if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
@@ -2623,6 +2631,10 @@ function makeMove(fromI, toI, visual = false) {
   if (!visual && s === W && itemSpaces[toI] !== ITEM_NONE && canItemAffectPiece(itemSpaces[toI], toI)) {
     addToInventory(itemSpaces[toI]);
     itemSpaces[toI] = ITEM_NONE;
+  } else if (!visual && s !== W && itemSpaces[toI] === ITEM_BOMB) {
+    // Black/Neutral auto-detonates a field bomb on landing — model the blast so minimax
+    // sees the loss (the moved piece dies) and avoids stepping on bombs.
+    _simDetonate(toI);
   }
 }
 
@@ -2912,11 +2924,13 @@ function fieldAdvance(playerTriggered = false) {
     if (y < 7) f.i = idx(x, y + 1);
   }
 
-  // Shift fire squares down one row, drop any that fall off row 7
+  // Shift fire squares down one row; drop any that fall off row 7 or land on a river (rivers can't burn)
   const newFireSquares = new Map();
   for (const [fi, fs] of fireSquares) {
     const [fx, fy] = xy(fi);
-    if (fy < 7) newFireSquares.set(idx(fx, fy + 1), fs);
+    if (fy >= 7) continue;
+    const di = idx(fx, fy + 1);
+    if (specialSpaces[di]?.type !== 'river') newFireSquares.set(di, fs);
   }
   fireSquares = newFireSquares;
 
@@ -3826,11 +3840,39 @@ function detonateBomb(centerI, _alreadyDetonated) {
       board[i] = NONE; sides[i] = 0; health[i] = 1;
     }
     if (specialSpaces[i]?.type === 'block') specialSpaces[i] = null;
-    if (i === merchantIdx) respawnMerchant();
+    if (i === merchantIdx) { merchantIdx = -1; merchantPendingRespawn = true; } // bomb'd Merchant returns on the next wave (like a void death)
     itemSpaces[i] = ITEM_NONE;
   }
   for (const bi of chainBombs) {
     setTimeout(() => detonateBomb(bi, detonated), 350);
+  }
+}
+
+// Silent bomb blast for AI lookahead (minimax). Mirrors detonateBomb's material/score effects
+// with no animation, sound, achievement, timer, or merchant/block side effects — so it only
+// touches state covered by saveState/restoreState and is safe inside withState. Chains iteratively.
+function _simDetonate(centerI) {
+  const detonated = new Set();
+  const stack = [centerI];
+  while (stack.length) {
+    const ci = stack.pop();
+    if (detonated.has(ci)) continue;
+    detonated.add(ci);
+    const [gx, gy] = xy(ci);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = gx + dx, ny = gy + dy;
+      if (!inB(nx, ny)) continue;
+      const i = idx(nx, ny);
+      if (itemSpaces[i] === ITEM_BOMB && !detonated.has(i)) stack.push(i);
+      if (board[i] !== NONE) {
+        const _bp = board[i], _bs = sides[i];
+        if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) score++;
+        if (_bs === B) gold += GOLD_VALUE[_bp] ?? 0;
+        clearSquare(i);
+      }
+      if (i === merchantIdx) merchantIdx = -1; // (merchantPendingRespawn isn't in saveState — leave it)
+      itemSpaces[i] = ITEM_NONE;
+    }
   }
 }
 
