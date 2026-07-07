@@ -1,4 +1,4 @@
-﻿const VERSION = "626";
+﻿const VERSION = "627";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6863,7 +6863,7 @@ function handleBoardClick(cx, cy) {
       // Engage merchant: bounce attacker, open shop, then end turn
       if (clicked === merchantIdx) {
         const fromI = selected;
-        const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI], attackStat = statuses[fromI], attackAtk = attacks[fromI], attackSpd = speeds[fromI];
+        const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI], attackStat = statuses[fromI], attackAtk = attacks[fromI], attackSpd = speeds[fromI], attackEff = [...effectOrders[fromI]];
         // Always bounce to the square directly adjacent to the merchant on the attacker's side.
         const [_mfx, _mfy] = xy(fromI), [_mtx, _mty] = xy(clicked);
         const _mdx = Math.sign(_mtx - _mfx), _mdy = Math.sign(_mty - _mfy);
@@ -6875,7 +6875,7 @@ function handleBoardClick(cx, cy) {
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, fromI, attackPiece, W, attackHlth, () => {
           // Move piece to bounce square only after animation finishes to avoid mid-anim flash.
           if (bounceI !== fromI) {
-            board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem; statuses[bounceI] = attackStat; attacks[bounceI] = attackAtk; speeds[bounceI] = attackSpd;
+            board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem; statuses[bounceI] = attackStat; attacks[bounceI] = attackAtk; speeds[bounceI] = attackSpd; effectOrders[bounceI] = attackEff;
             clearSquare(fromI);
           }
           // Pre-register speed so endWhiteTurn shows second move after shop closes
