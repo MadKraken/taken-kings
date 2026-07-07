@@ -100,7 +100,15 @@ Serious validation requires the game to be deterministic + replayable:
     ('hs_untimed','hs_15s')` because `create table if not exists` never updated the stale
     original CHECK. A `DeployTest` test row exists on hs_untimed (delete via dashboard:
     `delete from public.scores where name='DeployTest';`).
-  - **3d:** client submission UI (name entry at game over → POST to the Edge Function).
+  - **3d (done, v591-592):** client submission at game over. `_gameOverBtns()` adds a
+    "Submit to Leaderboard" button above Start Over / Replay when `_lbEligible()` (not auto-play,
+    score ≥ 1, has inputs, mode is untimed or 15s). `_lbSubmit()` prompts for a name (native
+    `prompt()`, remembered in localStorage `tk_lb_name`), POSTs `{version, name, run:{seed,
+    classic, timed, secs, inputs}}` to `…/functions/v1/bright-task`, and shows submitting/done/
+    error state (version-mismatch → "Refresh the page, then submit."). On success it invalidates
+    the cached board so the next open refetches. **Verified in-browser:** button renders/gates
+    correctly (auto-play, score 0, 30s timer all hide it); payload correct; done/error states.
+    Real end-to-end works once this version is deployed (endpoint is version-locked; proven live).
 
 RLS model: clients may **read** the boards; **no client writes** — inserts happen
 only through the validating Edge Function (service_role bypasses RLS).

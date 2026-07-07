@@ -1,4 +1,4 @@
-﻿const VERSION = "590";
+﻿const VERSION = "592";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -833,7 +833,7 @@ function randInt(n) { return Math.floor(_rng() * n); }
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
-function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; setupFn(); }
+function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; setupFn(); }
 
 // --- Headless re-simulation (Phase 3): replay a recorded run's input log against a
 // seed-reproduced world and return the authoritative result. Runs synchronously in
@@ -4960,20 +4960,25 @@ if (gameOver && !replayMode) {
   ctx.font = "82px Canterbury";
   ctx.fillStyle = "#ffffff";
   ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
-  const btnW = 280, btnH = 70, btnGap = 24;
-  const totalW = btnW * 2 + btnGap;
-  const soY = boardCY + 120;
-  const soX = boardCX - totalW / 2;
-  const repX = soX + btnW + btnGap;
-  ctx.font = "44px Canterbury";
-  ctx.fillStyle = "#2a6e3f";
-  ctx.beginPath(); ctx.roundRect(soX, soY, btnW, btnH, 8); ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.fillText("Start Over", soX + btnW / 2, soY + btnH / 2);
-  ctx.fillStyle = replaySnapshots.length > 0 ? "#1a4a8a" : "#333";
-  ctx.beginPath(); ctx.roundRect(repX, soY, btnW, btnH, 8); ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.fillText("Replay", repX + btnW / 2, soY + btnH / 2);
+  const L = _gameOverBtns();
+  const fillBtn = (r, color, label) => {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "44px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2);
+  };
+  // Submit-to-leaderboard button (only for eligible runs)
+  if (L.eligible) {
+    const st = _lbSubmitState;
+    const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : st === 'submitting' ? "#444" : "#b8912e";
+    const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
+    fillBtn(L.submit, col, label);
+    if (_lbSubmitMsg) {
+      ctx.font = "30px Canterbury"; ctx.fillStyle = st === 'error' ? "#e0a0a0" : "#cfe8cf"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(_lbSubmitMsg, boardCX, L.submit.y + L.submit.h + 26);
+    }
+  }
+  fillBtn(L.startOver, "#2a6e3f", "Start Over");
+  fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
   ctx.textBaseline = "alphabetic";
 }
 }
@@ -5498,6 +5503,57 @@ function _lbFormatValue(key, v) {
   const totalS = v / 1000, m = Math.floor(totalS / 60), s = Math.floor(totalS % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+
+// --- Phase 3d: submit a finished run to the leaderboard (validated server-side) ---
+const LB_SUBMIT_URL = SUPABASE_URL + '/functions/v1/bright-task';
+let _lbSubmitState = 'idle'; // 'idle' | 'submitting' | 'done' | 'error'
+let _lbSubmitMsg = '';       // status line under the button
+
+// A run is submittable only if it's a genuine, reproducible human run on an eligible mode.
+// Auto-play consumes RNG the input log can't reproduce (server would reject it), so it's barred.
+function _lbEligible() {
+  return !_autoPlayUsedThisRun && score >= 1 && _replayInputs.length > 0 && (!timedMode || timedModeSecs === 15);
+}
+
+function _lbSubmit() {
+  if (_lbSubmitState === 'submitting' || _lbSubmitState === 'done') return;
+  let prev = ''; try { prev = localStorage.getItem('tk_lb_name') || ''; } catch (e) {}
+  const name = (prompt('Enter your name for the leaderboard (max 20 chars):', prev) || '').trim().slice(0, 20);
+  if (!name) return; // cancelled / empty
+  try { localStorage.setItem('tk_lb_name', name); } catch (e) {}
+  _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; draw();
+  const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, inputs: _replayInputs } };
+  fetch(LB_SUBMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    .then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
+    .then(({ ok, j }) => {
+      if (ok && j.ok && j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = `Added to the ${_lbBoard(j.board) ? _lbBoard(j.board).tab : j.board} board!`; if (_lbData[j.board] !== undefined) _lbState[j.board] = 'idle'; }
+      else if (ok && j.ok && !j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = 'Score too low to rank.'; }
+      else {
+        _lbSubmitState = 'error';
+        const err = (j && j.error) ? String(j.error) : '';
+        _lbSubmitMsg = /version mismatch/.test(err) ? 'Refresh the page, then submit.' : (err ? err.slice(0, 40) : 'Submit failed.');
+      }
+      draw();
+    })
+    .catch(() => { _lbSubmitState = 'error'; _lbSubmitMsg = 'Network error.'; draw(); });
+}
+
+// Shared game-over button geometry (draw + click). A "Submit" button appears above the
+// Start Over / Replay row when the run is leaderboard-eligible.
+function _gameOverBtns() {
+  const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+  const btnW = 280, btnH = 70, btnGap = 24;
+  const eligible = _lbEligible();
+  const subW = btnW * 2 + btnGap;
+  const rowY = eligible ? boardCY + 214 : boardCY + 120;
+  const soX = boardCX - subW / 2, repX = soX + btnW + btnGap;
+  return {
+    eligible,
+    submit: { x: boardCX - subW / 2, y: boardCY + 120, w: subW, h: btnH },
+    startOver: { x: soX, y: rowY, w: btnW, h: btnH },
+    replay: { x: repX, y: rowY, w: btnW, h: btnH },
+  };
+}
 let _achSelected = 0;        // highlighted grid cell
 let _achClearConfirm = false; // "Are you sure?" dialog for Clear Achievements
 let _achToast = null;        // { name, startMs } — brief in-game unlock banner
@@ -5958,16 +6014,11 @@ function handleReplayClick(cx, cy) {
 }
 
 function handleGameOverClick(cx, cy) {
-  const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
-  const btnW = 280, btnH = 70, btnGap = 24;
-  const soY = boardCY + 120;
-  const soX = boardCX - (btnW * 2 + btnGap) / 2;
-  const repX = soX + btnW + btnGap;
-  if (cx >= soX && cx <= soX + btnW && cy >= soY && cy <= soY + btnH) {
-    playSfx('button'); initBoard(); draw();
-  } else if (cx >= repX && cx <= repX + btnW && cy >= soY && cy <= soY + btnH) {
-    playSfx('button'); enterReplay();
-  }
+  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const L = _gameOverBtns();
+  if (L.eligible && inR(L.submit)) { playSfx('button'); _lbSubmit(); return; }
+  if (inR(L.startOver)) { playSfx('button'); initBoard(); draw(); return; }
+  if (inR(L.replay)) { playSfx('button'); enterReplay(); return; }
 }
 
 function handleItemCancelOrTrash(cx, cy) {
