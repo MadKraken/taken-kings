@@ -1,4 +1,4 @@
-﻿const VERSION = "586";
+﻿const VERSION = "587";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1061,6 +1061,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
       type: 'wave',
       board: [...board], sides: [...sides], health: [...health],
       elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
+      effectOrders: effectOrders.map(a => [...a]),
       specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
       itemSpaces: [...itemSpaces],
       inventory: [...inventory],
@@ -1310,6 +1311,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       score, gold, leapCount, shiftCountdown, merchantIdx,
       playerDead: {...playerDead}, enemyDead: {...enemyDead},
       elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
+      effectOrders: effectOrders.map(a => [...a]),
       fireSquares: [...fireSquares],
       nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
       chestSpaces: [...chestSpaces],
@@ -1543,6 +1545,7 @@ function _playReplayTransition(snapIdx, onDone) {
     if (ev.statuses) statuses.splice(0, 64, ...ev.statuses); else statuses.fill(0);
     if (ev.attacks) attacks.splice(0, 64, ...ev.attacks); else attacks.fill(1);
     if (ev.speeds) speeds.splice(0, 64, ...ev.speeds); else speeds.fill(1);
+    if (ev.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = ev.effectOrders[i] ? [...ev.effectOrders[i]] : []; // badges follow the piece mid-transition (older buffers lack this -> keep current)
     fireSquares = ev.fireSquares ? new Map(ev.fireSquares) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));

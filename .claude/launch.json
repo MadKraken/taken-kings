@@ -4,8 +4,8 @@
     {
       "name": "chess",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "3000"],
-      "port": 3000
+      "runtimeArgs": ["-c", "import os,http.server,socketserver;socketserver.TCPServer.allow_reuse_address=True;p=int(os.environ.get('PORT','3000'));socketserver.TCPServer(('',p),http.server.SimpleHTTPRequestHandler).serve_forever()"],
+      "autoPort": true
     }
   ]
 }
