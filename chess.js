@@ -1,4 +1,4 @@
-﻿const VERSION = "605";
+﻿const VERSION = "606";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5581,6 +5581,14 @@ function _lbFormatValue(key, v) {
   const totalS = v / 1000, m = Math.floor(totalS / 60), s = Math.floor(totalS % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+// Compact local date+time for a leaderboard row's created_at, e.g. "7/7/26 4:53 PM".
+function _lbFormatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  let h = d.getHours(); const ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12;
+  return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)} ${h}:${String(d.getMinutes()).padStart(2, '0')} ${ap}`;
+}
 
 // --- Phase 3d: submit a finished run to the leaderboard (validated server-side) ---
 const LB_SUBMIT_URL = SUPABASE_URL + '/functions/v1/bright-task';
@@ -5868,9 +5876,12 @@ function drawLeaderboardScreen() {
       ctx.fillStyle = i < 3 ? rankColors[i] : "rgba(255,255,255,0.5)";
       ctx.font = "34px Canterbury"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
       ctx.fillText(`${i + 1}.`, MARGIN + 20, midY);
-      ctx.fillStyle = "#fff";
-      ctx.fillText(String(row.name || "—").slice(0, 20), MARGIN + 92, midY);
-      ctx.fillStyle = "#7fe0a0"; ctx.textAlign = "right";
+      // Name on top, date/time beneath (muted, small).
+      ctx.fillStyle = "#fff"; ctx.font = "32px Canterbury";
+      ctx.fillText(String(row.name || "—").slice(0, 20), MARGIN + 92, midY - 9);
+      ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "20px Canterbury";
+      ctx.fillText(_lbFormatDate(row.created_at), MARGIN + 92, midY + 15);
+      ctx.fillStyle = "#7fe0a0"; ctx.font = "34px Canterbury"; ctx.textAlign = "right";
       ctx.fillText(_lbFormatValue(_lbTab, row.value), MARGIN + BOARD_PX - 24, midY);
     }
   }
