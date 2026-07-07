@@ -1,4 +1,4 @@
-﻿const VERSION = "609";
+﻿const VERSION = "611";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -446,14 +446,52 @@ function _hideStartScreen() {
 }
 
 // Tapping the start screen (Continue): unlock audio + proceed into the menu.
-function _doContinue() {
+// White-circle "iris" transition from the tap point: grow to swallow the screen, then
+// shrink away to reveal the menu. Rendered on the canvas (the start-screen frame is snapshotted
+// off the video first, since the video is an HTML overlay above the canvas).
+let _menuTransition = null;
+const _MENU_GROW_MS = 240, _MENU_FADE_MS = 320;
+function _menuTransitionTick() {
+  if (!_menuTransition) return;
+  const t = _menuTransition, el = performance.now() - t.startMs;
+  if (el < _MENU_GROW_MS) {
+    ctx.drawImage(t.snap, 0, 0);                        // the frozen start-screen frame
+    const r = t.maxR * easeOut(el / _MENU_GROW_MS);     // grow the white circle to fill the screen
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.fill();
+    requestAnimationFrame(_menuTransitionTick);
+  } else if (el < _MENU_GROW_MS + _MENU_FADE_MS) {
+    draw();                                             // the menu underneath
+    const p = (el - _MENU_GROW_MS) / _MENU_FADE_MS;
+    ctx.save();
+    ctx.globalAlpha = 1 - easeOut(p);                   // fade the full-screen white out to the menu
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    requestAnimationFrame(_menuTransitionTick);
+  } else {
+    _menuTransition = null;
+    startIdleAnim();                                    // resume the menu's idle bob
+    draw();
+  }
+}
+
+function _doContinue(tapX, tapY) {
   if (_continued || !spritesLoaded) return;
   _continued = true;
-  _hideStartScreen();
   _sfxUnlockCtx();
   playSfx('button');
-  startIdleAnim();
-  draw();
+  // Freeze the current start-screen frame onto an offscreen canvas, then hide the video so
+  // the whole transition renders on the game canvas.
+  const snap = document.createElement('canvas');
+  snap.width = canvas.width; snap.height = canvas.height;
+  const sctx = snap.getContext('2d');
+  sctx.fillStyle = '#1a1a2e'; sctx.fillRect(0, 0, snap.width, snap.height);
+  try { if (_startVideo && _startVideo.readyState >= 2) sctx.drawImage(_startVideo, 0, 0, snap.width, snap.height); } catch (e) {}
+  _hideStartScreen();
+  const x = (tapX != null && !isNaN(tapX)) ? tapX : canvas.width / 2;
+  const y = (tapY != null && !isNaN(tapY)) ? tapY : canvas.height / 2;
+  const maxR = Math.hypot(Math.max(x, canvas.width - x), Math.max(y, canvas.height - y)); // reach the farthest corner
+  _menuTransition = { x, y, maxR, snap, startMs: performance.now() };
+  requestAnimationFrame(_menuTransitionTick);
 }
 
 function loadSprites() {
@@ -6760,7 +6798,7 @@ function handleBoardClick(cx, cy) {
 canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
-  if (spritesLoaded && !_continued) { _doContinue(); return; } // Continue button on the loading screen
+  if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
   if (replayMode) { handleReplayClick(cx, cy); return; }
