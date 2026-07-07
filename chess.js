@@ -1,4 +1,4 @@
-﻿const VERSION = "623";
+﻿const VERSION = "624";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6121,6 +6121,16 @@ function draw() {
   _uiButtons = [];      // rebuilt each frame as buttons draw; used for press hit-testing
   _drawScene();
   _drawPressedOverlay(); // darken whatever button is currently held down
+  _drawVersionLabel();   // "v<n>" in the lower-left corner, on every screen
+}
+function _drawVersionLabel() {
+  ctx.save();
+  ctx.font = "22px monospace";
+  ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+  ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 3; ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 1;
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.fillText("v" + VERSION, 8, canvas.height - 6);
+  ctx.restore();
 }
 function _drawScene() {
   if (!spritesLoaded) { _drawSplash(); return; }
@@ -6183,12 +6193,6 @@ function _drawScene() {
     ctx.drawImage(logoEl, MARGIN, (LOGO_H - lh) / 2, lw, lh);
   }
   drawAchievementToast();
-  ctx.font = "22px monospace";
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "bottom";
-  ctx.fillText(VERSION, 8, canvas.height - 6);
-
 }
 
 function canvasCoords(e) {
