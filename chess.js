@@ -1,4 +1,4 @@
-﻿const VERSION = "625";
+﻿const VERSION = "626";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -960,7 +960,10 @@ let _instant = false; // headless re-sim: skip animations/audio/rendering/timers
 // not the setup screen, not headless re-sim). The server replays these against a
 // seed-reproduced world; everything else (AI moves, spawns, auto-advances, neutrals,
 // merchant) is derived.
-function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) _replayInputs.push(a); }
+// `r` (RNG state at log time) is a diagnostic breadcrumb: the validator ignores it, but if a
+// run ever re-simulates to a different score, comparing each input's recorded r against the
+// re-sim's r pinpoints the exact input where live and replay diverged.
+function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) { a.r = _rngState; _replayInputs.push(a); } }
 // Log an item use (inventory or board-space). `slot` = inventory._activeSlot, or -1 when
 // the item came from a board square (fromSpace) — the server derives the item variant from
 // inventory[slot] / the board-space item, and re-rolls any mystery/wild via the seeded RNG.
@@ -970,6 +973,14 @@ function _logItemUse(slot, fromSpace, tg) {
   if (tg === null && !fromSpace) return;
   _logInput({ t: 'it', s: (slot === undefined ? -1 : slot), tg: tg });
 }
+// Run generation token: bumped on every board reset. Async turn-flow callbacks (AI thinking
+// timeout, animation onDone chains, turn timer, bomb chains, sky drops) capture the generation
+// when scheduled and abort if a new run started in the meantime. Without this, restarting
+// during a pending callback lets the OLD game's callback fire into the NEW game — consuming
+// seeded RNG / mutating state that the input log can't reproduce, so the server's re-simulated
+// score diverges from what the player saw (the "mobile high-score mismatch" bug: mobile players
+// chain games in one session, so stale callbacks from the previous game were common).
+let _runGen = 0;
 function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; }
 function _rng() {
   // mulberry32 — fast, well-distributed 32-bit PRNG
@@ -987,7 +998,7 @@ function randInt(n) { return Math.floor(_rng() * n); }
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
-function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; setupFn(); }
+function _beginSetup(setupFn) { _runGen++; _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; setupFn(); }
 
 // --- Headless re-simulation (Phase 3): replay a recorded run's input log against a
 // seed-reproduced world and return the authoritative result. Runs synchronously in
@@ -1315,12 +1326,13 @@ function startWaveAnim(squares, shoveParams, onDone) {
 
   _waterShoveActive = false;
   if (_instant) { if (onDone) onDone(); return; } // headless re-sim: shove state already applied, skip the animation
-  waveAnim = { squares, shoveParams, drawAt, lastHead: -1, startMs: performance.now(), dur: 500, onDone };
+  waveAnim = { squares, shoveParams, drawAt, lastHead: -1, startMs: performance.now(), dur: 500, onDone, gen: _runGen };
   requestAnimationFrame(_waveTick);
 }
 
 function _waveTick() {
   if (!waveAnim) return;
+  if (waveAnim.gen !== _runGen) { waveAnim = null; return; } // stale wave from a previous run — drop it
   const t = Math.min(1, (performance.now() - waveAnim.startMs) / waveAnim.dur);
   const head = Math.floor(t * waveAnim.squares.length);
   // Release visual overrides as the wave front passes each square
@@ -1490,12 +1502,13 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
     _pendingShopFlies = [];
   }
   const animDur = _miniReplayActive ? ANIM_MS * 2 : ANIM_MS;
-  anim = { pieces, boardDy, startMs: performance.now(), dur: animDur, onDone, exitRow: exitRow || null };
+  anim = { pieces, boardDy, startMs: performance.now(), dur: animDur, onDone, exitRow: exitRow || null, gen: _runGen };
   requestAnimationFrame(_animTick);
 }
 
 function _animTick() {
   if (!anim) return;
+  if (anim.gen !== _runGen) { anim = null; return; } // stale animation from a previous run — drop it (and its onDone chain)
   draw();
   if ((performance.now() - anim.startMs) < anim.dur) {
     requestAnimationFrame(_animTick);
@@ -1988,6 +2001,8 @@ function shuffle(arr) {
 }
 
 function initBoard() {
+  _runGen++;             // invalidate any pending async callbacks from the previous run
+  anim = null; waveAnim = null; aiThinking = false;
   board.fill(NONE); sides.fill(0);
   spawnCount = 1;
   leapCount = 0;
@@ -2153,7 +2168,9 @@ function startWhiteTurnTimer() {
   };
   _timerRafId = requestAnimationFrame(tick);
   // setTimeout fires when time is up; retries if blocked by animation/shop
+  const _gen = _runGen; // a stale timer must never time out a NEW run's turn
   const onExpire = () => {
+    if (_gen !== _runGen) return;
     if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
     if (anim || isItemActive() || shopMode || replayMode) {
       _timerTimeoutId = setTimeout(onExpire, 100);
@@ -2261,7 +2278,9 @@ function neutralPlay(onDone) {
   for (let i = 0; i < 64; i++) if (sides[i] === N) neutrals.push(i);
   if (neutrals.length === 0) { onDone(); return; }
   shuffle(neutrals);
+  const _gen = _runGen;
   const doNext = (ni) => {
+    if (_gen !== _runGen) return; // stale chain from a previous run
     if (ni >= neutrals.length) { onDone(); return; }
     const i = neutrals[ni];
     if (sides[i] !== N) { doNext(ni + 1); return; }
@@ -3589,7 +3608,9 @@ function showHint() {
   _autoPlayUsedThisRun = true; // hint consumes RNG the input log can't reproduce -> run not leaderboard-eligible
   aiThinking = true;
   draw();
+  const _gen = _runGen;
   setTimeout(() => {
+    if (_gen !== _runGen) return;
     hintMove = playerBestMove().move;
     aiThinking = false;
     if (hintMove === "leap") {
@@ -3625,7 +3646,10 @@ function aiPlay() {
   _blackKingsInCheckmate.clear();
   aiThinking = true;
   draw();
+  const _gen = _runGen; // abort if a new run starts while "thinking"
   setTimeout(() => {
+    if (_gen !== _runGen) return;                              // stale — a new run owns the board now
+    if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
     const move = aiBestMove();
     if (move) {
       // If a checkmated King is the one making the forced move, follow it to its new index
@@ -3993,7 +4017,8 @@ function _doSkyDropPhase(onDone) {
     if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
     // Land all drops deterministically before onDone (which snapshots the turn start), so the
     // snapshot never misses an item that's still mid-animation — otherwise a later Rewinder loses it.
-    setTimeout(() => { _resolveAllSkyDrops(); onDone(); }, 420);
+    const _gen = _runGen;
+    setTimeout(() => { if (_gen !== _runGen) return; _resolveAllSkyDrops(); onDone(); }, 420);
   } else {
     onDone();
   }
@@ -4029,8 +4054,9 @@ function detonateBomb(centerI, _alreadyDetonated) {
     if (i === merchantIdx) { merchantIdx = -1; merchantPendingRespawn = true; } // bomb'd Merchant returns on the next wave (like a void death)
     itemSpaces[i] = ITEM_NONE;
   }
+  const _gen = _runGen;
   for (const bi of chainBombs) {
-    setTimeout(() => detonateBomb(bi, detonated), 350);
+    setTimeout(() => { if (_gen !== _runGen) return; detonateBomb(bi, detonated); }, 350);
   }
 }
 
@@ -7368,7 +7394,8 @@ function _aiWhiteStep() {
 function autoWhitePlay() {
   if (!autoPlay || gameOver || turn !== W || aiThinking || anim || _autoScheduled || replayMode) return;
   _autoScheduled = true;
-  setTimeout(() => { _autoScheduled = false; _aiWhiteStep(); }, 450);
+  const _gen = _runGen;
+  setTimeout(() => { _autoScheduled = false; if (_gen !== _runGen) return; _aiWhiteStep(); }, 450);
 }
 
 // Complete an already-active interactive UI mode using canvas coords
