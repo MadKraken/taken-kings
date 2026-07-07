@@ -1,4 +1,4 @@
-﻿const VERSION = "599";
+﻿const VERSION = "600";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1847,6 +1847,7 @@ function initBoard() {
   _resetTurnCounters();
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
+  if (_lbNameInput) { _lbNameInput.onblur = null; _lbNameInput.onkeydown = null; _lbNameInput.style.display = 'none'; } // hide the name field on Start Over
   _blackKingsInCheckmate.clear();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -5031,8 +5032,8 @@ if (gameOver && !replayMode) {
   // Submit-to-leaderboard button (only for eligible runs)
   if (L.eligible) {
     const st = _lbSubmitState;
-    const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : st === 'submitting' ? "#444" : "#b8912e";
-    const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
+    const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : (st === 'submitting' || st === 'naming') ? "#444" : "#b8912e";
+    const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'naming' ? "Naming…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
     fillBtn(L.submit, col, label);
     if (_lbSubmitMsg) {
       ctx.font = "30px Canterbury"; ctx.fillStyle = st === 'error' ? "#e0a0a0" : "#cfe8cf"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -5588,11 +5589,49 @@ function _lbEligible() {
   return !_autoPlayUsedThisRun && score >= 1 && _replayInputs.length > 0 && (!timedMode || timedModeSecs === 15);
 }
 
+// On-screen name entry via a real HTML <input> overlaid on the canvas. Works everywhere —
+// preview panes and mobile/app webviews block window.prompt(), and mobile needs a focusable
+// input to raise the keyboard. cb(name) on Enter/OK, cb(null) on Escape/cancel.
+let _lbNameInput = null;
+function _lbShowNameEntry(prefill, cb) {
+  const wrap = (typeof document !== 'undefined' && (document.getElementById('game-wrap') || document.body)) || null;
+  if (!wrap) { // no DOM (headless) — fall back to prompt if available, else cancel
+    let v = null; try { v = prompt('Enter your name (max 20):', prefill || ''); } catch (e) {}
+    cb(v ? v.trim().slice(0, 20) : null); return;
+  }
+  if (!_lbNameInput) {
+    _lbNameInput = document.createElement('input');
+    _lbNameInput.type = 'text'; _lbNameInput.maxLength = 20;
+    _lbNameInput.setAttribute('placeholder', 'Enter your name');
+    _lbNameInput.setAttribute('autocomplete', 'off'); _lbNameInput.setAttribute('autocapitalize', 'off');
+    _lbNameInput.style.cssText = 'position:absolute; left:50%; top:44%; transform:translate(-50%,-50%); z-index:20; box-sizing:border-box; width:66%; max-width:360px; padding:12px 14px; font-size:22px; font-family:sans-serif; text-align:center; color:#fff; background:#12122a; border:2px solid #b8912e; border-radius:8px; outline:none;';
+    wrap.appendChild(_lbNameInput);
+  }
+  const inp = _lbNameInput;
+  inp.value = prefill || '';
+  inp.style.display = 'block';
+  let done = false;
+  const finish = (val) => { if (done) return; done = true; inp.style.display = 'none'; inp.onkeydown = null; inp.onblur = null; cb(val); };
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); finish((inp.value || '').trim().slice(0, 20)); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+  };
+  // Tapping away cancels (delayed so an Enter/OK path isn't clobbered).
+  inp.onblur = () => setTimeout(() => { if (!done) finish(null); }, 120);
+  setTimeout(() => { inp.focus(); try { inp.select(); } catch (e) {} }, 0);
+}
+
 function _lbSubmit() {
-  if (_lbSubmitState === 'submitting' || _lbSubmitState === 'done') return;
+  if (_lbSubmitState === 'submitting' || _lbSubmitState === 'done' || _lbSubmitState === 'naming') return;
   let prev = ''; try { prev = localStorage.getItem('tk_lb_name') || ''; } catch (e) {}
-  const name = (prompt('Enter your name for the leaderboard (max 20 chars):', prev) || '').trim().slice(0, 20);
-  if (!name) return; // cancelled / empty
+  _lbSubmitState = 'naming'; _lbSubmitMsg = 'Enter a name, then press Enter'; draw();
+  _lbShowNameEntry(prev, (name) => {
+    if (!name) { _lbSubmitState = 'idle'; _lbSubmitMsg = ''; draw(); return; } // cancelled / empty
+    _lbDoSubmit(name);
+  });
+}
+
+function _lbDoSubmit(name) {
   try { localStorage.setItem('tk_lb_name', name); } catch (e) {}
   _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; draw();
   const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, inputs: _replayInputs } };
