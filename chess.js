@@ -1,4 +1,4 @@
-﻿const VERSION = "624";
+﻿const VERSION = "625";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1795,6 +1795,9 @@ function generateWave(count) {
     if ((piece === CHECKERS || piece === CHECKERS_KING) && !isDarkSquare(cols[i], 0)) piece = PAWN;
     wave.push({x: cols[i], piece});
   }
+  // Pre-roll each piece's spawn effects now so the preview row can show them; they're applied
+  // (not re-rolled) when the wave lands. count == the waveCount the spawn would roll under.
+  for (const w of wave) w.eff = _rollEffectSet(count);
   return wave;
 }
 
@@ -1842,38 +1845,46 @@ function generateRowBonuses(wave, waveCount = spawnCount + 1) {
       let neutralPiece = _randomSetupPiece();
       // Checkers pieces must spawn on dark squares (neutrals enter at row 0)
       if ((neutralPiece === CHECKERS || neutralPiece === CHECKERS_KING) && !isDarkSquare(x, 0)) neutralPiece = PAWN;
-      bonuses.push({ type: 'neutral', col: x, piece: neutralPiece });
+      bonuses.push({ type: 'neutral', col: x, piece: neutralPiece, eff: _rollEffectSet(waveCount) });
     }
   }
   return bonuses;
 }
 
-function _rollSpawnEffects(i, waveCount = spawnCount) {
-  // Per-roll effect chance ramps with wave: 1/16 (6.25%) at wave 1 → 1/2 (50%)
-  // at wave 30, then holds. Each success grants one distinct effect (max 3),
-  // drawn uniformly from the pool.
-  // Pool: Attack+1, Health+1, Speed+1, Bloodthirsty, Fire, Water, Earth, Air.
+// Roll a set of spawn effects (does NOT touch the board). Effects are pre-rolled at wave
+// generation so the preview row can show them, then applied (not re-rolled) at spawn.
+// Per-roll chance ramps with wave: 6.25% at wave 1 → 50% at wave 30, then holds. Up to 3
+// distinct effects. Pool: Attack+1, Health+1, Speed+1, Bloodthirsty, Fire, Water, Earth, Air.
+function _rollEffectSet(waveCount = spawnCount) {
   const t = Math.max(0, Math.min(1, (waveCount - 1) / 29));
   const p = 0.0625 + (0.5 - 0.0625) * t;
-  let pool = [
-    'atk', 'hlth', 'spd',
-    'bt', 'fire', 'water', 'earth', 'air'
-  ];
+  let pool = ['atk', 'hlth', 'spd', 'bt', 'fire', 'water', 'earth', 'air'];
+  const eff = { effects: [], element: 0, status: 0, atk: 1, hlth: 1, spd: 1 };
   let count = 0;
   while (count < 3 && _rng() < p && pool.length > 0) {
     const pick = pool[randInt(pool.length)];
     pool = pool.filter(x => x !== pick);
-    if (pick === 'atk')   { attacks[i] = 2;                        _grantEffect(i, 'atk'); }
-    else if (pick === 'hlth')  { health[i] = 2;                   _grantEffect(i, 'hlt'); }
-    else if (pick === 'spd')   { speeds[i] = 2;                   _grantEffect(i, 'spd'); }
-    else if (pick === 'bt')    { statuses[i] |= STATUS_BLOODTHIRSTY; _grantEffect(i, 'bt'); }
-    else if (pick === 'fire')  { elements[i] |= ELEM_FIRE;        _grantEffect(i, 'fire'); }
-    else if (pick === 'water') { elements[i] |= ELEM_WATER;       _grantEffect(i, 'water'); }
-    else if (pick === 'earth') { elements[i] |= ELEM_EARTH;       _grantEffect(i, 'earth'); }
-    else if (pick === 'air')   { elements[i] |= ELEM_AIR;         _grantEffect(i, 'air'); }
+    if (pick === 'atk')        { eff.atk = 2;  eff.effects.push('atk'); }
+    else if (pick === 'hlth')  { eff.hlth = 2; eff.effects.push('hlt'); }
+    else if (pick === 'spd')   { eff.spd = 2;  eff.effects.push('spd'); }
+    else if (pick === 'bt')    { eff.status |= STATUS_BLOODTHIRSTY; eff.effects.push('bt'); }
+    else if (pick === 'fire')  { eff.element |= ELEM_FIRE;  eff.effects.push('fire'); }
+    else if (pick === 'water') { eff.element |= ELEM_WATER; eff.effects.push('water'); }
+    else if (pick === 'earth') { eff.element |= ELEM_EARTH; eff.effects.push('earth'); }
+    else if (pick === 'air')   { eff.element |= ELEM_AIR;   eff.effects.push('air'); }
     count++;
   }
+  return eff;
 }
+// Apply a pre-rolled effect set to board square i (consumes no RNG).
+function _applyEffectSet(i, eff) {
+  if (!eff) return;
+  attacks[i] = eff.atk; health[i] = eff.hlth; speeds[i] = eff.spd;
+  elements[i] |= eff.element; statuses[i] |= eff.status;
+  for (const e of eff.effects) _grantEffect(i, e);
+}
+// Roll + apply in one step, for direct placements that have no preview (opening board).
+function _rollSpawnEffects(i, waveCount = spawnCount) { _applyEffectSet(i, _rollEffectSet(waveCount)); }
 
 function applyRiverFlow(onDone) {
   const animPieces = [];
@@ -1924,7 +1935,7 @@ function applyRiverFlow(onDone) {
 function placeWave(row, wave) {
   for (const w of wave) {
     set(w.x, row, w.piece, B);
-    _rollSpawnEffects(idx(w.x, row));
+    _applyEffectSet(idx(w.x, row), w.eff);
   }
 }
 
@@ -3124,11 +3135,11 @@ function fieldAdvance(playerTriggered = false) {
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
+      set(w.x, 0, w.piece, B); _applyEffectSet(idx(w.x, 0), w.eff);
     }
     for (const b of nextBonuses) {
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   } else if (merchantEntersThisWave) {
     // Merchant slides in from fog preview: place pieces at their previewed positions
@@ -3139,12 +3150,12 @@ function fieldAdvance(playerTriggered = false) {
     for (const w of nextWave) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
+      set(w.x, 0, w.piece, B); _applyEffectSet(idx(w.x, 0), w.eff);
     }
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   } else {
     // Normal advance: wave works around merchant's current position
@@ -3152,12 +3163,12 @@ function fieldAdvance(playerTriggered = false) {
       if (specialSpaces[idx(w.x, 0)]?.type === 'block') continue;
       if (idx(w.x, 0) === merchantIdx) continue;
       if (chestSpaces.has(idx(w.x, 0))) continue;
-      set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0));
+      set(w.x, 0, w.piece, B); _applyEffectSet(idx(w.x, 0), w.eff);
     }
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
+      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   }
 
@@ -3302,10 +3313,10 @@ function simulateLeap(scoring = true) {
   }
   _commitSquares(nsq);
   spawnCount++;
-  for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _rollSpawnEffects(idx(w.x, 0)); }
+  for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _applyEffectSet(idx(w.x, 0), w.eff); }
   for (const b of nextBonuses) {
     if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
-    if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _rollSpawnEffects(idx(b.col, 0)); }
+    if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
   }
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
@@ -4352,6 +4363,7 @@ for (let x = 0; x < 8; x++) {
 const prevPad = 6;
 for (const w of nextWave) {
   _drawPieceSprite(ctx, B, w.piece, MARGIN + w.x * TILE + prevPad, MARGIN - TILE + prevPad, TILE - prevPad * 2, TILE - prevPad * 2, false, true);
+  if (w.eff && w.eff.effects.length) _drawPieceEffectIcons(ctx, MARGIN + w.x * TILE, MARGIN - TILE, w.eff.effects);
 }
 for (const b of nextBonuses) {
   const bpx = MARGIN + b.col * TILE, bpy = MARGIN - TILE;
@@ -4406,6 +4418,7 @@ for (const b of nextBonuses) {
   } else if (b.type === 'neutral') {
     {
       _drawPieceSprite(ctx, N, b.piece, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2, false, true);
+      if (b.eff && b.eff.effects.length) _drawPieceEffectIcons(ctx, bpx, bpy, b.eff.effects);
     }
   }
 }
