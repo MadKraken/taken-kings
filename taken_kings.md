@@ -45,8 +45,25 @@ Serious validation requires the game to be deterministic + replayable:
   publishable key in the `apikey` header. States: idle/loading/ready/error + empty.
   `SUPABASE_URL` / `SUPABASE_ANON_KEY` consts. Only 2 boards for now (achievements board
   deferred). **Submit side pending Phase 3** (writes go through the validating Edge Function).
-- **Phase 3:** headless engine + Edge Function validator (re-sim, insert only if valid),
-  then wire score submission from the client.
+- **Phase 3 (in progress):** headless engine + Edge Function validator (re-sim, insert only
+  if valid), then wire score submission from the client.
+  - **3a (core done, v582):** `_instant` headless mode — `startAnim` fires its `onDone`
+    synchronously, `draw`/`playSfx`/turn-timer no-op, and `_replayRun()` monkey-patches
+    `setTimeout`→inline / `requestAnimationFrame`→noop so a whole run executes synchronously
+    in one call stack, reusing the exact live logic. Driver `_replayRun({seed,classic,timed,secs,
+    inputs})` → `initBoard()` + `_seedRng(seed)` + setup fn + walk the input log via
+    `_applyReplayInput` (mirrors the live click paths). **Verified in-browser:** a live
+    (animated) run re-simulates to the identical score + game-over — including derived
+    automatic field advances not in the log; deterministic across repeats; a tampered seed
+    diverges (anti-cheat foundation). Key insight that makes this safe: game *state* only
+    mutates in synchronous logic + `setTimeout` callbacks, never in the cosmetic rAF loops.
+    - Input types done: `m`, `ta`, `fa`, `p`. **TODO:** `it` (item use), `buy`/`sell` (shop),
+      `rw` (rewinder — needs sim+RNG rewind to the prior turn-start).
+  - **3b:** headless harness (Node/Deno loads chess.js with stubbed canvas/DOM/audio globals,
+    exposes `_replayRun`).
+  - **3c:** Edge Function — receives a run, calls `_replayRun`, inserts via service_role
+    (bypasses RLS) only if the recomputed value is legit and `_autoPlayUsedThisRun` is false.
+  - **3d:** client submission UI (name entry at game over → POST to the Edge Function).
 
 RLS model: clients may **read** the boards; **no client writes** — inserts happen
 only through the validating Edge Function (service_role bypasses RLS).

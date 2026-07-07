@@ -1,4 +1,4 @@
-﻿const VERSION = "581";
+﻿const VERSION = "583";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -85,6 +85,7 @@ function _sfxUnlockCtx() {
 }
 
 function playSfx(name) {
+  if (_instant) return; // headless re-sim: no audio
   if (_sfxMuted || !_sfxUnlocked || !_sfxCtx) return;
   const bufs = _sfxBuffers[name];
   if (!bufs || !bufs.length) return;
@@ -800,10 +801,12 @@ let _rngState = 1;   // mulberry32 state
 let _runSeed = 0;    // the seed this run was started from (recorded with the run)
 let _replayInputs = []; // ordered log of the run's player inputs (for re-simulation)
 let _autoPlayUsedThisRun = false; // auto-play engaged this run -> run is not leaderboard-eligible
+let _instant = false; // headless re-sim: skip animations/audio/rendering/timers, run the turn flow synchronously
 // Log one player action into the run's input log. Only during real play (not replay,
-// not the setup screen). The server replays these against a seed-reproduced world;
-// everything else (AI moves, spawns, auto-advances, neutrals, merchant) is derived.
-function _logInput(a) { if (gamePhase === 'playing' && !replayMode) _replayInputs.push(a); }
+// not the setup screen, not headless re-sim). The server replays these against a
+// seed-reproduced world; everything else (AI moves, spawns, auto-advances, neutrals,
+// merchant) is derived.
+function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) _replayInputs.push(a); }
 // Log an item use (inventory or board-space). `slot` = inventory._activeSlot, or -1 when
 // the item came from a board square (fromSpace) — the server derives the item variant from
 // inventory[slot] / the board-space item, and re-rolls any mystery/wild via the seeded RNG.
@@ -831,6 +834,50 @@ function randInt(n) { return Math.floor(_rng() * n); }
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
 function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; setupFn(); }
+
+// --- Headless re-simulation (Phase 3): replay a recorded run's input log against a
+// seed-reproduced world and return the authoritative result. Runs synchronously in
+// `_instant` mode (animations skipped, setTimeout run inline, no rendering/audio/timers),
+// reusing the exact live game logic so the validator matches the client bit-for-bit.
+function _sqCenter(i) { return [MARGIN + (i % 8) * TILE + TILE / 2, BOARD_Y + MARGIN + Math.floor(i / 8) * TILE + TILE / 2]; }
+
+// Apply one logged input, mirroring the live click paths.
+function _applyReplayInput(a) {
+  switch (a.t) {
+    case 'm': { const [fx, fy] = _sqCenter(a.f); handleBoardClick(fx, fy); const [tx, ty] = _sqCenter(a.to); handleBoardClick(tx, ty); break; }
+    case 'ta': teamAdvance(); break;
+    case 'fa': fieldAdvance(true); break;
+    case 'p':
+      if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); }
+      else if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); }
+      break;
+    // TODO(Phase 3, next): 'it' (item use), 'buy'/'sell' (shop), 'rw' (rewinder).
+    default: break;
+  }
+}
+
+// run = { seed, classic, timed, secs, inputs:[...] } -> { score, gameOver }
+function _replayRun(run) {
+  const _savedTimeout = window.setTimeout, _savedRAF = window.requestAnimationFrame;
+  const _prevInstant = _instant, _prevTimed = timedMode, _prevSecs = timedModeSecs;
+  try {
+    window.setTimeout = (fn) => { if (typeof fn === 'function') fn(); return 0; }; // run deferred turn-flow steps inline
+    window.requestAnimationFrame = () => 0;                                        // skip all cosmetic frames
+    _instant = true;
+    initBoard();                                        // full state reset
+    timedMode = !!run.timed; if (run.secs) timedModeSecs = run.secs;
+    _seedRng(run.seed >>> 0);
+    (run.classic ? classicSetup : rollSetup)();         // reproduce the exact starting board from the seed
+    gamePhase = 'playing'; gameOver = false; aiThinking = false; shopMode = false; replayMode = false;
+    _resetTurnState(); _resetTurnCounters();
+    startGame(); turn = W;
+    for (const a of run.inputs) { if (gameOver) break; _applyReplayInput(a); }
+    return { score, gameOver };
+  } finally {
+    _instant = _prevInstant; timedMode = _prevTimed; timedModeSecs = _prevSecs;
+    window.setTimeout = _savedTimeout; window.requestAnimationFrame = _savedRAF;
+  }
+}
 
 function graveSlotPos(isPlayer, pieceType) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
@@ -1213,6 +1260,7 @@ function drawShopTile(gctx, tx, ty, tileSize) {
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 
 function startAnim(pieces, boardDy, onDone, exitRow) {
+  if (_instant) { if (onDone) onDone(); return; } // headless re-sim: skip the animation, run its completion now
   if (!replayMode) {
     _replayAnimBuffer.push({
       type: 'anim',
@@ -1872,7 +1920,7 @@ function startGame() {
 }
 
 function startWhiteTurnTimer() {
-  if (!timedMode || gameOver || replayMode) return;
+  if (!timedMode || gameOver || replayMode || _instant) return;
   stopWhiteTurnTimer();
   _timerDisplay = timedModeSecs;
   _timerEnd = Date.now() + timedModeSecs * 1000;
@@ -3237,7 +3285,7 @@ function aiBestMove() {
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => (board[to] === KING || board[to] === CHECKERS_KING) && sides[to] === W);
   const kingIdx = board.findIndex((p, i) => (p === KING || p === CHECKERS_KING) && sides[i] === W);
-  console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
+  if (!_instant) console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
@@ -5648,6 +5696,7 @@ function drawAchievementToast() {
 }
 
 function draw() {
+  if (_instant) return; // headless re-sim: no rendering
   if (!spritesLoaded || !_continued) { _drawSplash(); return; }
   if (achievementsOpen) { drawAchievementsScreen(); return; }
   if (leaderboardOpen) { drawLeaderboardScreen(); return; }
@@ -6200,7 +6249,7 @@ function handleInventoryClick(cx, cy) {
         _turnStartSnapIndices.pop(); // discard current turn start
         const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
         const targetSnap = replaySnapshots[targetIdx];
-        console.log('[Rewinder] targetIdx:', targetIdx, 'of', replaySnapshots.length,
+        if (!_instant) console.log('[Rewinder] targetIdx:', targetIdx, 'of', replaySnapshots.length,
           '| turn indices:', JSON.stringify(_turnStartSnapIndices),
           '| snap.turn:', targetSnap.turn,
           '| snap.playerDead:', JSON.stringify(targetSnap.playerDead),
