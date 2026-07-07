@@ -1,4 +1,4 @@
-﻿const VERSION = "583";
+﻿const VERSION = "586";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -840,9 +840,39 @@ function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _aut
 // `_instant` mode (animations skipped, setTimeout run inline, no rendering/audio/timers),
 // reusing the exact live game logic so the validator matches the client bit-for-bit.
 function _sqCenter(i) { return [MARGIN + (i % 8) * TILE + TILE / 2, BOARD_Y + MARGIN + Math.floor(i / 8) * TILE + TILE / 2]; }
+function _invSlotCenter(s) {
+  const c = s % INV_COLS, r = Math.floor(s / INV_COLS), invY = INV_PANEL_TOP + 50;
+  return [INV_X + INV_PAD + c * (INV_SLOT + INV_PAD) + INV_SLOT / 2, invY + INV_PAD + r * (INV_SLOT + INV_PAD) + INV_SLOT / 2];
+}
+// Dispatch a target click to whichever item mode is currently active (mirrors the live
+// canvas-click dispatch). i<0 sends an off-board coordinate to cancel the mode.
+function _clickActiveItem(i) {
+  const [cx, cy] = i >= 0 ? _sqCenter(i) : [-1000, -1000];
+  if (piecePromoterMode) return handlePiecePromoterClick(cx, cy);
+  if (shieldMode)        return handleShieldClick(cx, cy);
+  if (bombMode)          return handleBombClick(cx, cy);
+  if (clonerMode)        return handleClonerClick(cx, cy);
+  if (teleporterMode)    return handleTeleporterClick(cx, cy);
+  if (elementizerMode)   return handleElementizerClick(cx, cy);
+  if (vampireFangMode)   return handleVampireFangClick(cx, cy);
+  if (swordMode)         return handleSwordClick(cx, cy);
+  if (speedMode)         return handleSpeedClick(cx, cy);
+}
+// Buy-button center for shop offer index i (mirrors handleShopClick's card geometry).
+function _shopBuyCenter(i) {
+  const dlgW = 820, dlgH = 500, dlgX = (canvas.width - 820) / 2, dlgY = (canvas.height - 500) / 2;
+  const cardW = 220, cardGap = 20, cardH = 300;
+  const cardsStartX = dlgX + (dlgW - 3 * cardW - 2 * cardGap) / 2, cardsY = dlgY + 120;
+  const cardX = cardsStartX + i * (cardW + cardGap);
+  const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
+  return [btnX + btnW / 2, btnY + btnH / 2];
+}
 
 // Apply one logged input, mirroring the live click paths.
 function _applyReplayInput(a) {
+  // The shop is a modal that suspends the turn flow; the player closes it (not a logged
+  // input) before their next non-shop action — do the same so the turn resumes/ends.
+  if (shopMode && a.t !== 'buy' && a.t !== 'sell') closeShop();
   switch (a.t) {
     case 'm': { const [fx, fy] = _sqCenter(a.f); handleBoardClick(fx, fy); const [tx, ty] = _sqCenter(a.to); handleBoardClick(tx, ty); break; }
     case 'ta': teamAdvance(); break;
@@ -851,7 +881,15 @@ function _applyReplayInput(a) {
       if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); }
       else if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); }
       break;
-    // TODO(Phase 3, next): 'it' (item use), 'buy'/'sell' (shop), 'rw' (rewinder).
+    case 'buy': { const [bx, by] = _shopBuyCenter(a.i); handleShopClick(bx, by); break; }
+    case 'sell': { sellConfirmSlot = a.s; const g = _sellConfirmGeom(); handleSellConfirmClick(g.yesX + g.btnW / 2, g.btnY + g.btnH / 2); break; }
+    case 'it': {
+      if (a.s >= 0) { const [sx, sy] = _invSlotCenter(a.s); handleInventoryClick(sx, sy); } // enter the item's mode
+      if (a.tg) for (const t of a.tg) _clickActiveItem(t);  // apply to each target square
+      else _clickActiveItem(-1);                            // board-space cancel
+      break;
+    }
+    case 'rw': { const rs = inventory.indexOf(ITEM_REWINDER); if (rs >= 0) { const [sx, sy] = _invSlotCenter(rs); handleInventoryClick(sx, sy); } break; }
     default: break;
   }
 }
@@ -872,6 +910,7 @@ function _replayRun(run) {
     _resetTurnState(); _resetTurnCounters();
     startGame(); turn = W;
     for (const a of run.inputs) { if (gameOver) break; _applyReplayInput(a); }
+    if (shopMode && !gameOver) closeShop(); // finalize a run that ended with the shop open
     return { score, gameOver };
   } finally {
     _instant = _prevInstant; timedMode = _prevTimed; timedModeSecs = _prevSecs;
@@ -3018,6 +3057,7 @@ function saveState() {
     chestSpaces: new Set(chestSpaces),
     itemSpaces: [...itemSpaces],
     merchantIdx, merchantQueued, merchantQueuedCol,
+    rngState: _rngState, // minimax lookahead must NOT perturb the real RNG stream
   };
 }
 
@@ -3035,6 +3075,7 @@ function restoreState(st) {
   if (st.itemSpaces) itemSpaces.splice(0, 64, ...st.itemSpaces);
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
+  if (st.rngState !== undefined) _rngState = st.rngState; // roll back RNG consumed during lookahead
 }
 
 function withState(fn) { const st = saveState(); try { return fn(); } finally { restoreState(st); } }

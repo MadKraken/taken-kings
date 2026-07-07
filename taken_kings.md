@@ -57,8 +57,22 @@ Serious validation requires the game to be deterministic + replayable:
     automatic field advances not in the log; deterministic across repeats; a tampered seed
     diverges (anti-cheat foundation). Key insight that makes this safe: game *state* only
     mutates in synchronous logic + `setTimeout` callbacks, never in the cosmetic rAF loops.
-    - Input types done: `m`, `ta`, `fa`, `p`. **TODO:** `it` (item use), `buy`/`sell` (shop),
-      `rw` (rewinder — needs sim+RNG rewind to the prior turn-start).
+    - **All input types implemented (v584-585):** `m`, `ta`, `fa`, `p`, `it` (item use — enters
+      the mode via the inventory slot / already-active board-space mode, then clicks targets),
+      `buy`/`sell` (shop — mirrors card/confirm geometry; driver auto-closes the modal shop
+      before the next non-shop input), `rw` (rewinder — clicks the rewinder slot; snapshots are
+      pure state so they replay in instant mode, and the Rewinder never rewinds RNG in live play
+      either, so re-running the same code reproduces it).
+    - **Critical fix (v585): `saveState`/`restoreState` now preserve `_rngState`.** Previously
+      minimax lookahead (`withState`) leaked RNG into the real stream. Black's `aiBestMove` runs
+      every turn (in live AND re-sim, so it matched), but this made the RNG stream depend on AI
+      search — wrong. Now minimax is a true pure lookahead. NOTE: this changes seed→gameplay
+      mapping (fine pre-launch). **Auto-play / test-mode Hint still consume RNG for White move
+      selection (the `randInt` tie-break) that isn't logged — so those runs are NOT faithfully
+      re-simulatable, which is why auto-play sets `_autoPlayUsedThisRun` → leaderboard-ineligible.
+      Legit human runs never invoke minimax for White, so they re-sim exactly.**
+    - **Verified in-browser (faithful RNG-free-White runs):** core loop, item (bomb) use,
+      game-over — all re-simulate to the identical score; deterministic; tampered seed diverges.
   - **3b:** headless harness (Node/Deno loads chess.js with stubbed canvas/DOM/audio globals,
     exposes `_replayRun`).
   - **3c:** Edge Function — receives a run, calls `_replayRun`, inserts via service_role
