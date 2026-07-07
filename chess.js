@@ -1,4 +1,4 @@
-﻿const VERSION = "573";
+﻿const VERSION = "574";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -799,6 +799,11 @@ function _applyStatEffect(item, i) {
 let _rngState = 1;   // mulberry32 state
 let _runSeed = 0;    // the seed this run was started from (recorded with the run)
 let _replayInputs = []; // ordered log of the run's player inputs (for re-simulation)
+let _autoPlayUsedThisRun = false; // auto-play engaged this run -> run is not leaderboard-eligible
+// Log one player action into the run's input log. Only during real play (not replay,
+// not the setup screen). The server replays these against a seed-reproduced world;
+// everything else (AI moves, spawns, auto-advances, neutrals, merchant) is derived.
+function _logInput(a) { if (gamePhase === 'playing' && !replayMode) _replayInputs.push(a); }
 function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; }
 function _rng() {
   // mulberry32 — fast, well-distributed 32-bit PRNG
@@ -816,7 +821,7 @@ function randInt(n) { return Math.floor(_rng() * n); }
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
-function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; setupFn(); }
+function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; setupFn(); }
 
 function graveSlotPos(isPlayer, pieceType) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
@@ -2595,6 +2600,7 @@ function canTeamLeap() {
 
 function teamAdvance() {
   if (gameOver || turn !== W || aiThinking || anim) return;
+  _logInput({ t: 'ta' });
   _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
   _clearFireOfSide(B);   // Team Advance counts as a White move — enemy fire clears (Field Advance never does)
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
@@ -2716,6 +2722,7 @@ function _placeChestBonus(col) {
 
 function fieldAdvance(playerTriggered = false) {
   if (!canPitchShift() || anim) return;
+  if (playerTriggered) _logInput({ t: 'fa' });
   // Flawless-survival streak: count consecutive advances during which no Black King
   // was taken and no White Warrior was lost (the interval since the previous advance).
   if (score === _lastAdvanceScore && !_whiteLostSinceAdvance) _flawlessAdvances++;
@@ -5735,6 +5742,7 @@ function handleShopClick(cx, cy) {
     const cardX = cardsStartX + i * (cardW + cardGap);
     const btnX = cardX + 14, btnY = cardsY + cardH - 54, btnW = cardW - 28, btnH = 44;
     if (cx >= btnX && cx <= btnX + btnW && cy >= btnY && cy <= btnY + btnH && gold >= price && !merchantSold[i]) {
+      _logInput({ t: 'buy', i });
       gold -= price;
       playSfx('buy'); playSfx('pickup');
       const _mSlot = findInventorySlot();
@@ -5774,7 +5782,7 @@ function handleSellConfirmClick(cx, cy) {
   const hit = (bx) => cx >= bx && cx <= bx + g.btnW && cy >= g.btnY && cy <= g.btnY + g.btnH;
   if (hit(g.yesX)) {
     const item = inventory[sellConfirmSlot];
-    if (item !== ITEM_NONE) { gold += sellValue(item); removeFromInventory(sellConfirmSlot); playSfx('sell'); _turnSells++; }
+    if (item !== ITEM_NONE) { _logInput({ t: 'sell', s: sellConfirmSlot }); gold += sellValue(item); removeFromInventory(sellConfirmSlot); playSfx('sell'); _turnSells++; }
     sellConfirmSlot = -1; draw(); // stay in sell mode with the shop still open
     return;
   }
@@ -6051,6 +6059,7 @@ function handleBoardClick(cx, cy) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
   } else {
     if (validMoves.includes(clicked)) {
+      _logInput({ t: 'm', f: selected, to: clicked }); // any board move/attack/recruit begins here
       const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
       const pFromCX = MARGIN + pfx * TILE, pFromCY = BOARD_Y + MARGIN + pfy * TILE;
       const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
@@ -6233,8 +6242,8 @@ function handleBoardClick(cx, cy) {
       });
       return;
     } else if (clicked === selected) {
-      if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); return; }
-      if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); return; }
+      if (_speedIdx >= 0) { _logInput({ t: 'p' }); _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); return; }
+      if (_bloodthirstyIdx >= 0) { _logInput({ t: 'p' }); _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); return; }
       if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
       if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
@@ -6295,6 +6304,7 @@ canvas.addEventListener("click", (e) => {
       cy >= AUTO_BTN.y && cy <= AUTO_BTN.y + AUTO_BTN.h) {
     playSfx('button');
     autoPlay = !autoPlay; draw();
+    if (autoPlay) _autoPlayUsedThisRun = true; // auto-assisted run -> not leaderboard-eligible
     if (autoPlay && turn === W && !aiThinking && !anim) autoWhitePlay();
     return;
   }

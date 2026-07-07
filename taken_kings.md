@@ -6,6 +6,29 @@ Runs in any modern browser; deployed via GitHub Pages.
 
 ---
 
+## Online leaderboard (in progress)
+
+Backend: **Supabase** (project `froggegesqnoznvenoyt`).
+- Project URL: `https://froggegesqnoznvenoyt.supabase.co`
+- Publishable (client-safe) key: `sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo`
+- The `sb_secret_...` key is server-only (Edge Function) — never in the client/repo.
+
+Design decisions: **three boards** (high score / fastest-to-25 / achievements) +
+**serious anti-cheat** (server re-simulates each run before ranking).
+
+Serious validation requires the game to be deterministic + replayable:
+- **Phase 1a (done, v573):** seeded mulberry32 PRNG (`_rng`/`_seedRng`/`_freshSeed`);
+  seed recorded per run in `_runSeed`, set at the setup trigger (`_beginSetup`) so a
+  validator can reproduce a run via `_seedRng(recordedSeed)` + the same setup fn.
+- **Phase 1b (next):** input log (`_replayInputs`) — semantic actions per run.
+- **Phase 2:** Supabase tables + boards UI (read/submit via fetch).
+- **Phase 3:** headless engine + Edge Function validator (re-sim, insert only if valid).
+
+RLS model: clients may **read** the boards; **no client writes** — inserts happen
+only through the validating Edge Function (service_role bypasses RLS).
+
+---
+
 ## Codebase layout
 
 - **`chess.js`** — the entire game (~6000+ lines): rendering, input, AI (minimax),
