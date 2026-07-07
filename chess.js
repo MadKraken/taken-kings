@@ -1,4 +1,4 @@
-﻿const VERSION = "604";
+﻿const VERSION = "605";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5029,19 +5029,13 @@ if (gameOver && !replayMode) {
     ctx.fillStyle = "#fff"; ctx.font = "44px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2);
   };
-  // Submit-to-leaderboard button (only for eligible runs)
-  if (L.eligible) {
+  // Submit-to-leaderboard button (only for eligible runs). During naming the HTML input
+  // covers this rect (its "Your name" placeholder is the label), so draw nothing then.
+  if (L.eligible && _lbSubmitState !== 'naming') {
     const st = _lbSubmitState;
-    if (st === 'naming') {
-      // The HTML input covers the right of the row; draw its label on the left.
-      const f = _lbNameFieldRect();
-      ctx.fillStyle = "#e8dcc0"; ctx.font = "36px Canterbury"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText("Your name:", f.labelRight, f.midY);
-    } else {
-      const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : st === 'submitting' ? "#444" : "#b8912e";
-      const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
-      fillBtn(L.submit, col, label);
-    }
+    const col = st === 'done' ? "#2a8f4f" : st === 'error' ? "#8a2a2a" : st === 'submitting' ? "#444" : "#b8912e";
+    const label = st === 'done' ? "✓ Submitted" : st === 'submitting' ? "Submitting…" : st === 'error' ? "Retry Submit" : "Submit to Leaderboard";
+    fillBtn(L.submit, col, label);
   }
   fillBtn(L.startOver, "#2a6e3f", "Start Over");
   fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
@@ -5618,8 +5612,8 @@ function _lbShowNameEntry(prefill, cb) {
     wrap.appendChild(_lbNameInput);
   }
   const inp = _lbNameInput;
-  // Position the input over the right portion of the submit row (label sits to its left).
-  const b = _lbNameFieldRect();
+  // Position the input over the full Submit-button rect (its placeholder reads "Your name").
+  const b = _gameOverBtns().submit;
   const scale = (canvas.getBoundingClientRect().width || canvas.width) / canvas.width;
   inp.style.left = (b.x * scale) + 'px';
   inp.style.top = (b.y * scale) + 'px';
@@ -5688,13 +5682,6 @@ function _gameOverBtns() {
     startOver: { x: soX, y: rowY, w: btnW, h: btnH },
     replay: { x: repX, y: rowY, w: btnW, h: btnH },
   };
-}
-
-// During naming, the submit row splits into a "Your name:" label (left) + input field (right).
-function _lbNameFieldRect() {
-  const b = _gameOverBtns().submit;
-  const labelW = Math.round(b.w * 0.34);
-  return { x: b.x + labelW, y: b.y, w: b.w - labelW, h: b.h, labelRight: b.x + labelW - 14, midY: b.y + b.h / 2 };
 }
 let _achSelected = 0;        // highlighted grid cell
 let _achClearConfirm = false; // "Are you sure?" dialog for Clear Achievements
