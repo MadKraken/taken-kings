@@ -1,4 +1,4 @@
-﻿const VERSION = "575";
+﻿const VERSION = "579";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3921,6 +3921,24 @@ function _achClearDlgRects() {
   };
 }
 
+// --- Leaderboard screen geometry ---
+const LB_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y + 70, w: 300, h: 60 }; // setup menu, below Achievements
+const LB_TAB_H = 60, LB_TAB_GAP = 16, LB_TAB_ROWGAP = 12, LB_TABS_Y = BOARD_Y + MARGIN;
+// 2×2 grid of tab buttons, one per board (order matches LB_BOARDS).
+function _lbTabRects() {
+  const w = (BOARD_PX - LB_TAB_GAP) / 2;
+  return LB_BOARDS.map((b, i) => {
+    const col = i % 2, row = Math.floor(i / 2);
+    return { key: b.key, x: MARGIN + col * (w + LB_TAB_GAP), y: LB_TABS_Y + row * (LB_TAB_H + LB_TAB_ROWGAP), w, h: LB_TAB_H };
+  });
+}
+const LB_TABS_BOTTOM = LB_TABS_Y + LB_TAB_H * 2 + LB_TAB_ROWGAP; // two rows
+const LB_SUBTITLE_Y = LB_TABS_BOTTOM + 44;
+const LB_LIST_TOP = LB_TABS_BOTTOM + 118; // gap below the tab buttons + subtitle
+const LB_ROW_H = 56, LB_MAX_ROWS = 15;
+const LB_BACK_BTN    = { x: MARGIN + BOARD_PX / 2 - 230, y: ACH_LABEL_Y + 150, w: 220, h: 64 };
+const LB_REFRESH_BTN = { x: MARGIN + BOARD_PX / 2 + 10,  y: ACH_LABEL_Y + 150, w: 220, h: 64 };
+
 // --- Draw ---
 
 function drawBackground(_fieldAnim, _animT) {
@@ -4756,6 +4774,17 @@ if (!gameOver && isItemActive()) {
     ctx.fillText("Achievements", b.x + b.w / 2, b.y + b.h / 2);
     ctx.textBaseline = "alphabetic";
   }
+  // Leaderboard button
+  {
+    const b = LB_MENU_BTN;
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
+    ctx.fillStyle = "#1a5a6e";
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Leaderboard", b.x + b.w / 2, b.y + b.h / 2);
+    ctx.textBaseline = "alphabetic";
+  }
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
   if (!replayMode || _miniReplayActive) {
@@ -5343,6 +5372,46 @@ const ACH_GRID_CELLS = 64; // 8×8
 let _achUnlocked = {};
 try { _achUnlocked = JSON.parse(localStorage.getItem('tk_achievements') || '{}') || {}; } catch (e) { _achUnlocked = {}; }
 let achievementsOpen = false;
+
+// --- Leaderboard (Phase 2): read-only boards from Supabase (client reads; writes are server-only) ---
+const SUPABASE_URL = 'https://froggegesqnoznvenoyt.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo'; // publishable/client-safe
+// Four boards. `key` is the DB `board` value; `speed` boards rank by LOWEST value (time).
+const LB_BOARDS = [
+  { key: 'hs_classic', tab: 'Classic',   title: 'High Score — Classic Setup', metric: 'Kings', speed: false },
+  { key: 'hs_rolled',  tab: 'Rolled',    title: 'High Score — Rolled Setup',  metric: 'Kings', speed: false },
+  { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer',     metric: 'Kings', speed: false },
+  { key: 'speedrun',   tab: 'Fastest 25', title: 'Fastest to 25 Kings',       metric: 'Time',  speed: true  },
+];
+const _lbBoard = (key) => LB_BOARDS.find(b => b.key === key);
+let leaderboardOpen = false;
+let _lbTab = LB_BOARDS[0].key;
+const _lbData = {};   // key -> null (unloaded) | array of rows
+const _lbState = {};  // key -> 'idle' | 'loading' | 'ready' | 'error'
+for (const b of LB_BOARDS) { _lbData[b.key] = null; _lbState[b.key] = 'idle'; }
+
+function _lbFetch(key) {
+  if (_lbState[key] === 'loading') return;
+  _lbState[key] = 'loading';
+  if (leaderboardOpen) draw();
+  const asc = !!_lbBoard(key).speed; // speed boards rank by LOWEST value (time)
+  const url = `${SUPABASE_URL}/rest/v1/scores?board=eq.${key}&select=name,value,created_at&order=value.${asc ? 'asc' : 'desc'}&limit=${LB_MAX_ROWS}`;
+  fetch(url, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY }, cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(rows => { _lbData[key] = rows; _lbState[key] = 'ready'; if (leaderboardOpen) draw(); })
+    .catch(() => { _lbState[key] = 'error'; if (leaderboardOpen) draw(); });
+}
+function _lbOpen() {
+  leaderboardOpen = true; _lbTab = LB_BOARDS[0].key;
+  if (_lbState[_lbTab] !== 'ready') _lbFetch(_lbTab);
+  draw();
+}
+// High-score boards: value is a plain integer (Kings taken). Speed boards: value is ms -> m:ss.
+function _lbFormatValue(key, v) {
+  if (!_lbBoard(key).speed) return String(v);
+  const totalS = v / 1000, m = Math.floor(totalS / 60), s = Math.floor(totalS % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 let _achSelected = 0;        // highlighted grid cell
 let _achClearConfirm = false; // "Are you sure?" dialog for Clear Achievements
 let _achToast = null;        // { name, startMs } — brief in-game unlock banner
@@ -5478,6 +5547,92 @@ function handleAchievementsClick(cx, cy) {
   }
 }
 
+function drawLeaderboardScreen() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Header
+  ctx.fillStyle = "#c8a060"; ctx.font = "56px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Leaderboard", canvas.width / 2, BOARD_Y - 40);
+
+  // Tabs (2×2, one per board)
+  const tabs = _lbTabRects();
+  for (const r of tabs) {
+    const active = _lbTab === r.key;
+    ctx.fillStyle = active ? "#2a6e3f" : "#33334d";
+    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = active ? "#7fe0a0" : "rgba(255,255,255,0.15)"; ctx.lineWidth = active ? 3 : 2;
+    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
+    ctx.fillStyle = active ? "#fff" : "#9a9ab0"; ctx.font = "36px Canterbury";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(_lbBoard(r.key).tab, r.x + r.w / 2, r.y + r.h / 2 + 2);
+  }
+
+  // Subtitle: full name of the selected board
+  const board = _lbBoard(_lbTab);
+  ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = "36px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(board.title, canvas.width / 2, LB_SUBTITLE_Y);
+
+  // List / status
+  const state = _lbState[_lbTab], rows = _lbData[_lbTab];
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (state === 'loading' || state === 'idle') {
+    ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "34px Canterbury";
+    ctx.fillText("Loading…", canvas.width / 2, LB_LIST_TOP + 120);
+  } else if (state === 'error') {
+    ctx.fillStyle = "#e08080"; ctx.font = "34px Canterbury";
+    ctx.fillText("Couldn't load scores.", canvas.width / 2, LB_LIST_TOP + 100);
+    ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "28px Canterbury";
+    ctx.fillText("Check your connection, then tap Refresh.", canvas.width / 2, LB_LIST_TOP + 150);
+  } else if (!rows || rows.length === 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "34px Canterbury";
+    ctx.fillText("No scores yet — be the first!", canvas.width / 2, LB_LIST_TOP + 120);
+  } else {
+    // column captions
+    ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = "32px Canterbury"; ctx.textBaseline = "middle";
+    ctx.textAlign = "left";  ctx.fillText("Player", MARGIN + 92, LB_LIST_TOP - 26);
+    ctx.textAlign = "right"; ctx.fillText(board.metric, MARGIN + BOARD_PX - 24, LB_LIST_TOP - 26);
+    const rankColors = ["#f0c040", "#c8c8d0", "#c8884a"];
+    for (let i = 0; i < Math.min(rows.length, LB_MAX_ROWS); i++) {
+      const row = rows[i], y = LB_LIST_TOP + i * LB_ROW_H, midY = y + (LB_ROW_H - 6) / 2;
+      ctx.fillStyle = (i % 2) ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.08)";
+      ctx.beginPath(); ctx.roundRect(MARGIN, y, BOARD_PX, LB_ROW_H - 6, 6); ctx.fill();
+      ctx.fillStyle = i < 3 ? rankColors[i] : "rgba(255,255,255,0.5)";
+      ctx.font = "34px Canterbury"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(`${i + 1}.`, MARGIN + 20, midY);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(String(row.name || "—").slice(0, 20), MARGIN + 92, midY);
+      ctx.fillStyle = "#7fe0a0"; ctx.textAlign = "right";
+      ctx.fillText(_lbFormatValue(_lbTab, row.value), MARGIN + BOARD_PX - 24, midY);
+    }
+  }
+
+  // Buttons
+  const drawBtn = (r, fill, label) => {
+    ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
+  };
+  drawBtn(LB_BACK_BTN, "#4a3a7a", "‹ Back");
+  drawBtn(LB_REFRESH_BTN, "#2a5a7a", "Refresh");
+  ctx.textBaseline = "alphabetic";
+}
+
+function handleLeaderboardClick(cx, cy) {
+  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  if (inR(LB_BACK_BTN)) { playSfx('button'); leaderboardOpen = false; draw(); return; }
+  if (inR(LB_REFRESH_BTN)) { playSfx('button'); _lbState[_lbTab] = 'idle'; _lbFetch(_lbTab); return; }
+  const tabs = _lbTabRects();
+  for (const r of tabs) {
+    if (inR(r)) {
+      if (_lbTab !== r.key) { _lbTab = r.key; playSfx('draw'); if (_lbState[r.key] !== 'ready') _lbFetch(r.key); else draw(); }
+      return;
+    }
+  }
+}
+
 // Brief banner when an achievement unlocks mid-game (fades after ~3.5s).
 function drawAchievementToast() {
   if (!_achToast) return;
@@ -5498,6 +5653,7 @@ function drawAchievementToast() {
 function draw() {
   if (!spritesLoaded || !_continued) { _drawSplash(); return; }
   if (achievementsOpen) { drawAchievementsScreen(); return; }
+  if (leaderboardOpen) { drawLeaderboardScreen(); return; }
   if (gamePhase === 'playing' && !replayMode) checkAchievements();
   const _animT = anim ? easeOut(Math.min(1, (performance.now() - anim.startMs) / anim.dur)) : 1;
   const _animToSet = (() => {
@@ -6290,6 +6446,7 @@ canvas.addEventListener("click", (e) => {
   const [cx, cy] = canvasCoords(e);
   if (spritesLoaded && !_continued) { _doContinue(); return; } // Continue button on the loading screen
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
+  if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
@@ -6351,6 +6508,8 @@ canvas.addEventListener("click", (e) => {
         cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
     if (cx >= ACH_MENU_BTN.x && cx <= ACH_MENU_BTN.x + ACH_MENU_BTN.w &&
         cy >= ACH_MENU_BTN.y && cy <= ACH_MENU_BTN.y + ACH_MENU_BTN.h) { playSfx('button'); achievementsOpen = true; _achSelected = 0; _achClearConfirm = false; draw(); return; }
+    if (cx >= LB_MENU_BTN.x && cx <= LB_MENU_BTN.x + LB_MENU_BTN.w &&
+        cy >= LB_MENU_BTN.y && cy <= LB_MENU_BTN.y + LB_MENU_BTN.h) { playSfx('button'); _lbOpen(); return; }
     // Timed mode toggle
     {
       const tmY = COUNTDOWN_Y, chipH = 44, chipW = 86, chipGap = 10;

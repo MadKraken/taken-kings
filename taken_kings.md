@@ -38,8 +38,15 @@ Serious validation requires the game to be deterministic + replayable:
     re-roll via the seeded RNG, so only slot+targets are logged.
   - `{t:'rw'}` — Rewinder. Validator must rewind its own sim **and RNG state** to the prior
     turn-start and drop that turn's inputs (needs per-turn-start RNG snapshots — Phase 3 work).
-- **Phase 2:** Supabase tables + boards UI (read/submit via fetch).
-- **Phase 3:** headless engine + Edge Function validator (re-sim, insert only if valid).
+- **Phase 2 (read side done, v576):** in-game Leaderboard screen. Setup-menu button
+  (`LB_MENU_BTN`, below Achievements) → `drawLeaderboardScreen()` with two tabs —
+  **High Score** (value desc) and **Fastest to 25** (value asc, shown m:ss). Reads live
+  via PostgREST: `GET {URL}/rest/v1/scores?board=eq.<b>&order=value.<dir>&limit=15`,
+  publishable key in the `apikey` header. States: idle/loading/ready/error + empty.
+  `SUPABASE_URL` / `SUPABASE_ANON_KEY` consts. Only 2 boards for now (achievements board
+  deferred). **Submit side pending Phase 3** (writes go through the validating Edge Function).
+- **Phase 3:** headless engine + Edge Function validator (re-sim, insert only if valid),
+  then wire score submission from the client.
 
 RLS model: clients may **read** the boards; **no client writes** — inserts happen
 only through the validating Edge Function (service_role bypasses RLS).
