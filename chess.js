@@ -1,4 +1,4 @@
-﻿const VERSION = "598";
+﻿const VERSION = "599";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -890,6 +890,14 @@ function _applyReplayInput(a) {
       break;
     }
     case 'rw': { const rs = inventory.indexOf(ITEM_REWINDER); if (rs >= 0) { const [sx, sy] = _invSlotCenter(rs); handleInventoryClick(sx, sy); } break; }
+    case 'to': // turn timer expired — mirror the onExpire body
+      _timedOutThisRun = true; selected = -1; validMoves = []; endWhiteTurn(); break;
+    case 'rwa': _rewinderOfferAccept(); break;  // accepted the Rewinder save offer
+    case 'rwd': _rewinderOfferDecline(); break; // declined — game over stands
+    case 'ic': cancelItemMode(); break;         // Cancel button (no-op unless a mode is active)
+    case 'tr': // Trash button / drag-to-trash — destroy the item, clear any active mode
+      if (a.s >= 0) inventory._activeSlot = a.s;
+      trashActiveItem(); break;
     default: break;
   }
 }
@@ -1986,6 +1994,7 @@ function startWhiteTurnTimer() {
       return;
     }
     stopWhiteTurnTimer();
+    _logInput({ t: 'to' }); // timeout ends the turn — a real state change the validator must replay
     _timedOutThisRun = true; // a turn ran out of time (for the no-timeout achievement)
     selected = -1; validMoves = [];
     endWhiteTurn();
@@ -3411,6 +3420,7 @@ function playerBestMove(depth = HINT_DEPTH, forcedAdvance = false) {
 
 function showHint() {
   if (gameOver || turn !== W || aiThinking) return;
+  _autoPlayUsedThisRun = true; // hint consumes RNG the input log can't reproduce -> run not leaderboard-eligible
   aiThinking = true;
   draw();
   setTimeout(() => {
@@ -5175,6 +5185,35 @@ ctx.fillText("NO",  noX  + btnW / 2, btnY + btnH / 2);
 ctx.textBaseline = "alphabetic";
 }
 
+// Accept the Rewinder save offer: burn the Rewinder, restore the current turn's start.
+// Shared by the click handler and the replay driver (the choice is a logged input).
+function _rewinderOfferAccept() {
+  _rewinderSaveOffer = false;
+  if (!_instant) console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
+  if (_turnStartSnapIndices.length < 1) { gameOver = true; stopWindLoop(0); playSfx('over1'); playSfx('over2'); draw(); return; }
+  const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
+  if (!_instant) console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
+  const targetSnap = replaySnapshots[targetIdx];
+  replaySnapshots.splice(targetIdx + 1);
+  _replayTransitions.splice(targetIdx + 1);
+  applyReplaySnapshot(targetSnap);
+  const rSlot = inventory.indexOf(ITEM_REWINDER);
+  if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
+  turn = W; aiThinking = false; selected = -1; validMoves = [];
+  _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
+  shopMode = false; gameOver = false; gameMsg = "";
+  draw();
+}
+
+// Decline the offer: accept the game over.
+function _rewinderOfferDecline() {
+  _rewinderSaveOffer = false;
+  gameOver = true;
+  stopWindLoop(0); // silence ambient wind on Game Over
+  playSfx('over1'); playSfx('over2'); // Game Over
+  draw();
+}
+
 function handleRewinderSaveOfferClick(cx, cy) {
 if (!_rewinderSaveOffer) return;
 const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
@@ -5185,31 +5224,13 @@ const yesX = boardCX - gap / 2 - btnW;
 const noX  = boardCX + gap / 2;
 if (cy >= btnY && cy <= btnY + btnH) {
   if (cx >= yesX && cx <= yesX + btnW) {
-    // Use Rewinder
     playSfx('button');
-    _rewinderSaveOffer = false;
-    console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
-    if (_turnStartSnapIndices.length < 1) { gameOver = true; stopWindLoop(0); playSfx('over1'); playSfx('over2'); draw(); return; }
-    const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
-    console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
-    const targetSnap = replaySnapshots[targetIdx];
-    replaySnapshots.splice(targetIdx + 1);
-    _replayTransitions.splice(targetIdx + 1);
-    applyReplaySnapshot(targetSnap);
-    const rSlot = inventory.indexOf(ITEM_REWINDER);
-    if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
-    turn = W; aiThinking = false; selected = -1; validMoves = [];
-    _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
-    shopMode = false; gameOver = false; gameMsg = "";
-    draw();
+    _logInput({ t: 'rwa' }); // accepted the Rewinder save — the run continues from the rewound turn
+    _rewinderOfferAccept();
   } else if (cx >= noX && cx <= noX + btnW) {
-    // Accept game over
     playSfx('button');
-    _rewinderSaveOffer = false;
-    gameOver = true;
-    stopWindLoop(0); // silence ambient wind on Game Over
-    playSfx('over1'); playSfx('over2'); // Game Over
-    draw();
+    _logInput({ t: 'rwd' }); // declined — game over stands
+    _rewinderOfferDecline();
   }
 }
 }
@@ -5983,6 +6004,7 @@ canvas.addEventListener("mouseup", (e) => {
 
   const tb = trashBounds();
   if (cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h) {
+    _logInput({ t: 'tr', s: slot }); // drag-to-trash destroys the item — validator must replay it
     removeFromInventory(slot);
     dragConsumed = true;
     draw();
@@ -6082,10 +6104,13 @@ function handleItemCancelOrTrash(cx, cy) {
   const halfW = BOARD_PX / 2 - BTN_GAP / 2;
   const btnH = 80;
   if (cx >= MARGIN && cx <= MARGIN + halfW && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-    playSfx('button'); cancelItemMode(); return true;
+    // Logged for the validator: a board-space item mode was entered as a side effect of a
+    // logged move, so the re-sim must cancel it too (harmless no-op for inventory modes).
+    playSfx('button'); _logInput({ t: 'ic' }); cancelItemMode(); return true;
   }
   if (cx >= MARGIN + BOARD_PX / 2 + BTN_GAP / 2 && cx <= MARGIN + BOARD_PX && cy >= BTN_Y && cy <= BTN_Y + btnH) {
-    playSfx('button'); trashActiveItem(); return true;
+    // Trash destroys the item — a real inventory change the validator must replay.
+    playSfx('button'); _logInput({ t: 'tr', s: inventory._activeSlot !== undefined ? inventory._activeSlot : -1 }); trashActiveItem(); return true;
   }
   return false;
 }
@@ -6191,13 +6216,14 @@ function handleBombClick(cx, cy) {
   const i = cellIdxFromCoords(cx, cy);
   bombMode = false; bombHoverIdx = -1;
   _logItemUse(_s, _fs, i >= 0 ? [i] : null);
+  // Only consume the bomb when actually detonated — an off-board click cancels harmlessly
+  // (was: consumed even on cancel, silently eating the bomb + desyncing the input log).
+  if (i < 0) { if (inventory._activeSlot !== undefined) delete inventory._activeSlot; draw(); return; }
   if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
   _bombSource = 'inv'; // Bomb used from inventory
-  if (i >= 0) {
-    detonateBomb(i);
-    recordPosition();
-    if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); } else { draw(); }
-  } else { draw(); }
+  detonateBomb(i);
+  recordPosition();
+  if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); } else { draw(); }
 }
 
 function handleClonerClick(cx, cy) {

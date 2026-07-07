@@ -36,8 +36,22 @@ Serious validation requires the game to be deterministic + replayable:
     logged (validator never enters the mode); board-space cancels are. Item *variant*
     (which element / promotion) comes from `inventory[s]` / the board item; mystery/wild
     re-roll via the seeded RNG, so only slot+targets are logged.
-  - `{t:'rw'}` — Rewinder. Validator must rewind its own sim **and RNG state** to the prior
-    turn-start and drop that turn's inputs (needs per-turn-start RNG snapshots — Phase 3 work).
+  - `{t:'rw'}` — Rewinder used from inventory (driver clicks the slot; snapshots are pure
+    state and RNG flows forward identically, so no RNG rewind is needed).
+  - **Audit additions (v599)** — unlogged state changes found & fixed:
+    - `{t:'to'}` — the 15s turn timer expired and ended the turn (was unlogged — would have
+      desynced every timed run with a single timeout).
+    - `{t:'rwa'}` / `{t:'rwd'}` — Rewinder save-offer accepted / declined (shared helpers
+      `_rewinderOfferAccept/Decline` used by both the click handler and the replay driver).
+    - `{t:'tr', s}` — item trashed (Trash button or drag-to-trash); `s` = inventory slot,
+      `-1` for a board-space item's mode.
+    - `{t:'ic'}` — Cancel button pressed while an item mode was active (needed for
+      board-space modes, which the re-sim enters as a side effect of a logged move).
+    - Bomb cancel bug fixed: an off-board click while aiming a bomb no longer consumes it.
+    - Hint (`showHint`, test-mode only) now flags the run leaderboard-ineligible (its
+      minimax tie-break consumes RNG the log can't reproduce).
+    - Edge Function: 256 KB byte cap on the run payload (needs redeploy; count cap alone
+      couldn't stop oversized junk fields from bloating the jsonb column).
 - **Phase 2 (read side done, v576):** in-game Leaderboard screen. Setup-menu button
   (`LB_MENU_BTN`, below Achievements) → `drawLeaderboardScreen()` with two tabs —
   **High Score** (value desc) and **Fastest to 25** (value asc, shown m:ss). Reads live

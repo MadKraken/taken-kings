@@ -153,6 +153,9 @@ export async function handler(req: Request): Promise<Response> {
     return json({ ok: false, error: "bad run" }, 400);
   }
   if (run.inputs.length > 5000) return json({ ok: false, error: "run too long" }, 400);
+  // Byte cap too — the whole run is stored as jsonb, and the input-count cap alone
+  // wouldn't stop oversized junk fields from bloating the table.
+  if (JSON.stringify(run).length > 262144) return json({ ok: false, error: "run too large" }, 400);
 
   const board = boardFor(run);
   if (!board) return json({ ok: false, error: "run mode not eligible" }, 400);
