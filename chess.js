@@ -1,4 +1,4 @@
-﻿const VERSION = "572";
+﻿const VERSION = "573";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -791,7 +791,32 @@ function _applyStatEffect(item, i) {
   playSfx('spell'); // item grants a piece an effect
 }
 
-function randInt(n) { return Math.floor(Math.random() * n); }
+// ─── Seeded RNG (deterministic gameplay for replay validation) ────────────────
+// All GAMEPLAY randomness flows through _rng() (via randInt/shuffle and a few
+// direct call sites), seeded once per run. Given the same seed + input log, a run
+// reproduces bit-for-bit — the basis for server-side score validation.
+// (Purely cosmetic randomness — e.g. SFX variant pick — stays on Math.random.)
+let _rngState = 1;   // mulberry32 state
+let _runSeed = 0;    // the seed this run was started from (recorded with the run)
+let _replayInputs = []; // ordered log of the run's player inputs (for re-simulation)
+function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; }
+function _rng() {
+  // mulberry32 — fast, well-distributed 32-bit PRNG
+  _rngState = (_rngState + 0x6D2B79F5) | 0;
+  let t = _rngState;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function _freshSeed() { return (Math.floor(Math.random() * 0x100000000)) >>> 0; } // unpredictable per-run seed
+_seedRng(_freshSeed()); // seed at load so anything before a setup still has a stream
+
+function randInt(n) { return Math.floor(_rng() * n); }
+
+// Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
+// deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
+// setup fn to reproduce the identical starting board.
+function _beginSetup(setupFn) { _seedRng(_freshSeed()); _replayInputs = []; setupFn(); }
 
 function graveSlotPos(isPlayer, pieceType) {
   const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
@@ -1517,7 +1542,7 @@ function generateRowBonuses(wave, waveCount = spawnCount + 1) {
   const t = Math.max(0, Math.min(1, (waveCount - 1) / 39)); // 0 at wave 1 → 1 at wave 40+
   // River-row chance ramps with depth: 1/32 (~3.1%) at wave 1 → 1/5 (20%) at wave 40+.
   const pRiver = (1 / 32) + (0.2 - 1 / 32) * t;
-  if (Math.random() < pRiver) {
+  if (_rng() < pRiver) {
     const dx = randInt(2) === 0 ? -1 : 1;
     for (let x = 0; x < 8; x++) bonuses.push({ type: 'river', col: x, dx });
     return bonuses; // river replaces all other bonuses for this row
@@ -1532,8 +1557,8 @@ function generateRowBonuses(wave, waveCount = spawnCount + 1) {
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (wTotal <= 0) continue;           // late-game non-obstacle row: nothing left to spawn
-    if (Math.random() >= pBonus) continue;
-    let r = Math.random() * wTotal, type;
+    if (_rng() >= pBonus) continue;
+    let r = _rng() * wTotal, type;
     if ((r -= wVoid) < 0) type = 'void';
     else if ((r -= wBlock) < 0) type = 'block';
     else if ((r -= wChest) < 0) type = 'chest';
@@ -1564,7 +1589,7 @@ function _rollSpawnEffects(i, waveCount = spawnCount) {
     'bt', 'fire', 'water', 'earth', 'air'
   ];
   let count = 0;
-  while (count < 3 && Math.random() < p && pool.length > 0) {
+  while (count < 3 && _rng() < p && pool.length > 0) {
     const pick = pool[randInt(pool.length)];
     pool = pool.filter(x => x !== pick);
     if (pick === 'atk')   { attacks[i] = 2;                        _grantEffect(i, 'atk'); }
@@ -1720,7 +1745,7 @@ function initBoard() {
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
-  rollSetup();
+  _beginSetup(rollSetup);
 }
 
 function _randomSetupPiece() {
@@ -1752,7 +1777,7 @@ function _randomEnemyPiece(waveCount = spawnCount) {
     [CHECKERS_KING, 1],
   ];
   const total = w.reduce((s, [, wt]) => s + wt, 0);
-  let r = Math.random() * total;
+  let r = _rng() * total;
   for (const [piece, wt] of w) { if ((r -= wt) < 0) return piece; }
   return PAWN;
 }
@@ -6278,9 +6303,9 @@ canvas.addEventListener("click", (e) => {
       cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { playSfx('button'); showHint(); return; }
   if (gamePhase === 'setup') {
     if (cx >= CLASSIC_BTN.x && cx <= CLASSIC_BTN.x + CLASSIC_BTN.w &&
-        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { playSfx('button'); classicSetup(); draw(); return; }
+        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { playSfx('button'); _beginSetup(classicSetup); draw(); return; }
     if (cx >= SETUP_ROLL_BTN.x && cx <= SETUP_ROLL_BTN.x + SETUP_ROLL_BTN.w &&
-        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); rollSetup(); draw(); return; }
+        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); _beginSetup(rollSetup); draw(); return; }
     if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
         cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
     if (cx >= ACH_MENU_BTN.x && cx <= ACH_MENU_BTN.x + ACH_MENU_BTN.w &&
