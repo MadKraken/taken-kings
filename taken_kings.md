@@ -109,6 +109,12 @@ Serious validation requires the game to be deterministic + replayable:
     the cached board so the next open refetches. **Verified in-browser:** button renders/gates
     correctly (auto-play, score 0, 30s timer all hide it); payload correct; done/error states.
     Real end-to-end works once this version is deployed (endpoint is version-locked; proven live).
+    **Verified live end-to-end (v592):** real in-game submit → row on the Untimed board.
+  - **Dedup (v593):** unique index `scores_board_seed_uniq (board, seed)` — each run (unique
+    random seed) appears at most once per board. Edge Function maps the 409 conflict to
+    `{ok:true, ranked:true, duplicate:true}`; client shows "Already on the board!". Board
+    column header relabeled "Kings" → "Taken Kings". **Requires: run the unique-index SQL +
+    redeploy the Edge Function.**
 
 RLS model: clients may **read** the boards; **no client writes** — inserts happen
 only through the validating Edge Function (service_role bypasses RLS).

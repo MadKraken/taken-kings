@@ -19,8 +19,13 @@ create table if not exists public.scores (
   created_at timestamptz not null default now()
 );
 
--- Fast "top N for a board" queries (asc covers speedrun; desc covers the others via reverse scan).
+-- Fast "top N for a board" queries (desc via reverse scan).
 create index if not exists scores_board_value_idx on public.scores (board, value);
+
+-- Dedup: each run (unique random seed) may appear at most once per board. A resubmission
+-- of the same run hits this and the Edge Function reports it as a duplicate rather than
+-- adding a second identical row.
+create unique index if not exists scores_board_seed_uniq on public.scores (board, seed);
 
 alter table public.scores enable row level security;
 

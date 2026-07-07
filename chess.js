@@ -1,4 +1,4 @@
-﻿const VERSION = "592";
+﻿const VERSION = "593";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5471,8 +5471,8 @@ const SUPABASE_URL = 'https://froggegesqnoznvenoyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo'; // publishable/client-safe
 // Two high-score boards. `key` is the DB `board` value. Both read either setup (Classic + Rolled).
 const LB_BOARDS = [
-  { key: 'hs_untimed', tab: 'Untimed',   title: 'High Score — Untimed',   metric: 'Kings', speed: false },
-  { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer', metric: 'Kings', speed: false },
+  { key: 'hs_untimed', tab: 'Untimed',   title: 'High Score — Untimed',   metric: 'Taken Kings', speed: false },
+  { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer', metric: 'Taken Kings', speed: false },
 ];
 const _lbBoard = (key) => LB_BOARDS.find(b => b.key === key);
 let leaderboardOpen = false;
@@ -5526,7 +5526,12 @@ function _lbSubmit() {
   fetch(LB_SUBMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
     .then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
     .then(({ ok, j }) => {
-      if (ok && j.ok && j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = `Added to the ${_lbBoard(j.board) ? _lbBoard(j.board).tab : j.board} board!`; if (_lbData[j.board] !== undefined) _lbState[j.board] = 'idle'; }
+      if (ok && j.ok && j.ranked) {
+        _lbSubmitState = 'done';
+        const bd = _lbBoard(j.board) ? _lbBoard(j.board).tab : j.board;
+        _lbSubmitMsg = j.duplicate ? 'Already on the board!' : `Added to the ${bd} board!`;
+        if (_lbData[j.board] !== undefined) _lbState[j.board] = 'idle';
+      }
       else if (ok && j.ok && !j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = 'Score too low to rank.'; }
       else {
         _lbSubmitState = 'error';

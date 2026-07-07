@@ -182,6 +182,9 @@ export async function handler(req: Request): Promise<Response> {
     },
     body: JSON.stringify({ board, name, value, seed: run.seed, run }),
   });
+  // Unique (board, seed) → a resubmission of the same run conflicts. Report it as a
+  // duplicate rather than an error (idempotent: the score is already on the board).
+  if (insert.status === 409) return json({ ok: true, ranked: true, duplicate: true, board, value });
   if (!insert.ok) {
     return json({ ok: false, error: `insert failed (${insert.status}): ${(await insert.text()).slice(0, 200)}` }, 500);
   }
