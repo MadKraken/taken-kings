@@ -1,4 +1,4 @@
-﻿const VERSION = "596";
+﻿const VERSION = "597";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3328,7 +3328,13 @@ function _recomputeDesperateKings() {
   if (allLegalMovesForSide(B).length === 0) {
     for (let i = 0; i < 64; i++) if (isBK(i)) _blackKingsInCheckmate.add(i);
   } else {
-    for (let i = 0; i < 64; i++) if (isBK(i) && _isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i);
+    for (let i = 0; i < 64; i++) {
+      if (!isBK(i)) continue;
+      // A Checkers King has no "check" state, so it's Desperate simply when it has no legal
+      // moves of its own; a regular King is Desperate when individually checkmated.
+      if (board[i] === CHECKERS_KING) { const [kx, ky] = xy(i); if (legalMoves(kx, ky).length === 0) _blackKingsInCheckmate.add(i); }
+      else if (_isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i);
+    }
   }
 }
 
