@@ -1,4 +1,4 @@
-﻿const VERSION = "597";
+﻿const VERSION = "598";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3344,6 +3344,10 @@ function aiBestMove() {
   _recomputeDesperateKings();
   if (moves.length === 0) {
     moves = allPseudoMovesForSide(B);
+    // Desperate (no legal move): if any of these forced moves lands on a White piece,
+    // restrict to those so Black at least takes a White piece down with it.
+    const captures = moves.filter(([, to]) => sides[to] === W);
+    if (captures.length > 0) moves = captures;
   }
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
