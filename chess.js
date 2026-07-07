@@ -1,4 +1,4 @@
-﻿const VERSION = "587";
+﻿const VERSION = "590";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4022,8 +4022,7 @@ function _lbTabRects() {
   return LB_BOARDS.map((b, i) => ({ key: b.key, x: MARGIN + i * (w + LB_TAB_GAP), y: LB_TABS_Y, w, h: LB_TAB_H }));
 }
 const LB_TABS_BOTTOM = LB_TABS_Y + LB_TAB_H; // single row
-const LB_SUBTITLE_Y = LB_TABS_BOTTOM + 44;
-const LB_LIST_TOP = LB_TABS_BOTTOM + 118; // gap below the tab buttons + subtitle
+const LB_LIST_TOP = LB_TABS_BOTTOM + 74; // gap below the tab buttons
 const LB_ROW_H = 56, LB_MAX_ROWS = 15;
 const LB_BACK_BTN    = { x: MARGIN + BOARD_PX / 2 - 230, y: ACH_LABEL_Y + 150, w: 220, h: 64 };
 const LB_REFRESH_BTN = { x: MARGIN + BOARD_PX / 2 + 10,  y: ACH_LABEL_Y + 150, w: 220, h: 64 };
@@ -4797,7 +4796,7 @@ if (!gameOver && isItemActive()) {
 } else if (!gameOver && gamePhase === 'setup') {
   // Classic | Roll | Go
   const _setupBtns = [
-    { btn: CLASSIC_BTN,    color: "#6e4a1a", label: "Classic" },
+    { btn: CLASSIC_BTN,    color: "#b8912e", label: "Classic" },
     { btn: SETUP_ROLL_BTN, color: "#4a3a7a", label: "🎲 Roll" },
     { btn: SETUP_GO_BTN,   color: "#2a6e3f", label: "▶ Go!" },
   ];
@@ -4856,7 +4855,7 @@ if (!gameOver && isItemActive()) {
   {
     const b = ACH_MENU_BTN;
     ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#6e5a1a";
+    ctx.fillStyle = "#b8912e";
     ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
     ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -5465,12 +5464,10 @@ let achievementsOpen = false;
 // --- Leaderboard (Phase 2): read-only boards from Supabase (client reads; writes are server-only) ---
 const SUPABASE_URL = 'https://froggegesqnoznvenoyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JFBcrijOlFo2S8EucZl4HA_4ej0DSpo'; // publishable/client-safe
-// Three boards. `key` is the DB `board` value; `speed` boards rank by LOWEST value (time).
-// hs_untimed / hs_15s each read both setups (Classic + Rolled); speedrun spans all modes.
+// Two high-score boards. `key` is the DB `board` value. Both read either setup (Classic + Rolled).
 const LB_BOARDS = [
   { key: 'hs_untimed', tab: 'Untimed',   title: 'High Score — Untimed',   metric: 'Kings', speed: false },
   { key: 'hs_15s',     tab: '15s Timer', title: 'High Score — 15s Timer', metric: 'Kings', speed: false },
-  { key: 'speedrun',   tab: 'Fastest 25', title: 'Fastest to 25 Kings',   metric: 'Time',  speed: true  },
 ];
 const _lbBoard = (key) => LB_BOARDS.find(b => b.key === key);
 let leaderboardOpen = false;
@@ -5657,11 +5654,7 @@ function drawLeaderboardScreen() {
     ctx.fillText(_lbBoard(r.key).tab, r.x + r.w / 2, r.y + r.h / 2 + 2);
   }
 
-  // Subtitle: full name of the selected board
   const board = _lbBoard(_lbTab);
-  ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = "36px Canterbury";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText(board.title, canvas.width / 2, LB_SUBTITLE_Y);
 
   // List / status
   const state = _lbState[_lbTab], rows = _lbData[_lbTab];

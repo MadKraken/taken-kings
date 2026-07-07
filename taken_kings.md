@@ -73,8 +73,16 @@ Serious validation requires the game to be deterministic + replayable:
       Legit human runs never invoke minimax for White, so they re-sim exactly.**
     - **Verified in-browser (faithful RNG-free-White runs):** core loop, item (bomb) use,
       game-over — all re-simulate to the identical score; deterministic; tampered seed diverges.
-  - **3b:** headless harness (Node/Deno loads chess.js with stubbed canvas/DOM/audio globals,
-    exposes `_replayRun`).
+  - **3b (done):** headless harness — `supabase/functions/validate/engine.ts` loads the real
+    chess.js under **Deno** with minimal browser stubs (canvas/ctx Proxy, document, window=
+    globalThis, Image, localStorage, requestAnimationFrame). Key trick: leaving `AudioContext`
+    undefined makes `_loadSfx()` bail (no audio/fetch), and a never-resolving `document.fonts.load`
+    skips `loadSprites()` — so nothing DOM/asset-related runs. chess.js is `(0,eval)`'d with an
+    appended shim exposing `_replayRun`/`VERSION` from its lexical scope. **Verified:** browser-
+    captured runs (incl. a bomb-item run, score 2) re-simulate under Deno to the identical
+    score + game-over (`run_test.ts`). Deno is installed locally (2.9.1, via winget).
+    NOTE: chess.js leaves a background timer running, so the test forces `Deno.exit()`; the
+    Edge Function returns a Response so this won't matter there.
   - **3c:** Edge Function — receives a run, calls `_replayRun`, inserts via service_role
     (bypasses RLS) only if the recomputed value is legit and `_autoPlayUsedThisRun` is false.
   - **3d:** client submission UI (name entry at game over → POST to the Edge Function).
