@@ -1,4 +1,4 @@
-﻿const VERSION = "637";
+﻿const VERSION = "638";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2375,7 +2375,12 @@ function airKnightMoves(x, y, s) {
   reachable.delete(idx(x, y)); // can't stay in place
   const moves = [];
   for (const ni of reachable) {
-    if (board[ni] === NONE) moves.push(ni); // Air: destination must be vacant
+    // Land on a vacant OR capturable-enemy square — the same rule a normal Knight uses; never on
+    // own/neutral pieces or void/block. (Previously required board[ni] === NONE, so an Air Knight
+    // couldn't capture anything — a strict downgrade that stopped it taking even an exposed King.)
+    if (sides[ni] === s || sides[ni] === N) continue;
+    if (isVoidSpace(ni) || isBlockSpace(ni)) continue;
+    moves.push(ni);
   }
   return moves;
 }
