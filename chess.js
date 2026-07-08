@@ -1,4 +1,4 @@
-﻿const VERSION = "645";
+﻿const VERSION = "646";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2055,7 +2055,6 @@ let sellConfirmSlot = -1;   // inventory slot pending sell confirmation; -1 = no
 // Sell value: half the item's buy price (min 1 for priced items).
 function sellValue(item) { const p = itemPrice(item); return p > 0 ? Math.max(1, Math.floor(p / 2)) : 0; }
 let _rewinderSaveOffer = false; // true when King dies but player has a Rewinder
-let _blackKingsInCheckmate = new Set(); // indices of Black Kings currently in checkmate; persists through White's full turn
 let testMode = false;
 let gamePhase = 'setup'; // 'setup' | 'playing'
 let _miniReplayActive = false;
@@ -2141,7 +2140,6 @@ function initBoard() {
   _rewinderSaveOffer = false;
   if (_lbNameInput) { _lbNameInput.onblur = null; _lbNameInput.onkeydown = null; _lbNameInput.style.display = 'none'; } // hide the name field on Start Over
   mainMenuOpen = false; // Start Over / new run lands on the setup screen (menu-bg scroll stops on its own)
-  _blackKingsInCheckmate.clear();
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
   _shadowSpaces = new Map(); _skyDropAnims = [];
@@ -2856,7 +2854,7 @@ function isAttacked(tx, ty, bySide) {
 function legalMoves(x, y) {
   // White has no check restriction — all pseudo-legal moves are legal.
   // For Black: only the King itself is restricted from moving into check.
-  // Non-King Black pieces move freely; checkmate is handled separately in _isSingleKingCheckmated.
+  // Non-King Black pieces move freely; only the Black King is check-filtered here.
   const s = side(x, y);
   if (s === W) return pseudoMoves(x, y);
   const movingPiece = board[idx(x, y)];
@@ -3731,52 +3729,16 @@ function allPseudoMovesForSide(s) {
 
 // Check if a specific Black King (by board index ki) is in checkmate:
 // it must be in check AND no Black move leaves it safe.
-function _isSingleKingCheckmated(ki) {
-  const [kx, ky] = xy(ki);
-  if (!isAttacked(kx, ky, B)) return false; // King is not in check
-  const blackMoves = allLegalMovesForSide(B);
-  for (const [from, to] of blackMoves) {
-    const safe = withState(() => {
-      board[to] = board[from]; sides[to] = sides[from]; board[from] = NONE; sides[from] = 0;
-      const newPos = (from === ki) ? to : ki;
-      const [nkx, nky] = xy(newPos);
-      return (board[newPos] === KING || board[newPos] === CHECKERS_KING) && sides[newPos] === B && !isAttacked(nkx, nky, B);
-    });
-    if (safe) return false;
-  }
-  return true;
-}
-
-// Recompute which Black Kings are Desperate (trapped) on the CURRENT board.
-// Rule: if Black truly has no legal moves, every Black King is Desperate; otherwise
-// a King is Desperate when it's checkmated individually. Called at the start of
-// Black's turn AND again when control returns to White — Black's forced fallback
-// move, wandering Neutrals, the merchant, or river flow may have changed the board,
-// and the glow must reflect the position the player actually sees.
-function _recomputeDesperateKings() {
-  _blackKingsInCheckmate.clear();
-  const isBK = i => (board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === B;
-  if (allLegalMovesForSide(B).length === 0) {
-    for (let i = 0; i < 64; i++) if (isBK(i)) _blackKingsInCheckmate.add(i);
-  } else {
-    for (let i = 0; i < 64; i++) {
-      if (!isBK(i)) continue;
-      // A Checkers King has no "check" state, so it's Desperate simply when it has no legal
-      // moves of its own; a regular King is Desperate when individually checkmated.
-      if (board[i] === CHECKERS_KING) { const [kx, ky] = xy(i); if (legalMoves(kx, ky).length === 0) _blackKingsInCheckmate.add(i); }
-      else if (_isSingleKingCheckmated(i)) _blackKingsInCheckmate.add(i);
-    }
-  }
-}
-
 function aiBestMove() {
   // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
   let moves = allLegalMovesForSide(B);
-  _recomputeDesperateKings();
   if (moves.length === 0) {
-    moves = allPseudoMovesForSide(B);
-    // Desperate (no legal move): if any of these forced moves lands on a White piece,
-    // restrict to those so Black at least takes a White piece down with it.
+    // No legal move: Kings FREEZE. Only non-King pieces may take a forced pseudo-legal move — a King
+    // may no longer move here (previously it could, even capturing a White piece while staying in
+    // danger). If nothing else can move either, Black passes (moves stays empty -> return null below).
+    moves = allPseudoMovesForSide(B).filter(([from]) => board[from] !== KING && board[from] !== CHECKERS_KING);
+    // Desperate: if any of these forced moves lands on a White piece, restrict to those so Black at
+    // least takes a White piece down with it.
     const captures = moves.filter(([, to]) => sides[to] === W);
     if (captures.length > 0) moves = captures;
   }
@@ -3878,7 +3840,6 @@ function isCheckmated(s) {
 
 function aiPlay() {
   if (gameOver || turn !== B) return;
-  _blackKingsInCheckmate.clear();
   aiThinking = true;
   draw();
   const _gen = _runGen; // abort if a new run starts while "thinking"
@@ -3887,8 +3848,6 @@ function aiPlay() {
     if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
     const move = _blackMainMove();
     if (move) {
-      // If a checkmated King is the one making the forced move, follow it to its new index
-      if (_blackKingsInCheckmate.has(move[0])) { _blackKingsInCheckmate.delete(move[0]); _blackKingsInCheckmate.add(move[1]); }
       lastActingSide = B;
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
       const mFromCX = MARGIN + mfx * TILE, mFromCY = BOARD_Y + MARGIN + mfy * TILE;
@@ -3903,7 +3862,6 @@ function aiPlay() {
               _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance to burn Black
               _doSkyDropPhase(() => {
                 turn = W;
-                _recomputeDesperateKings(); // board changed since Black's turn started (fallback move / neutrals / river)
                 aiThinking = false;
                 takeReplaySnapshot();
                 _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -3997,7 +3955,6 @@ function aiPlay() {
             if (board.some((pc, ii) => pc !== NONE && (sides[ii] === B || sides[ii] === N))) _clearFireOfSide(W);
             _doSkyDropPhase(() => {
               turn = W;
-              _recomputeDesperateKings(); // board changed since Black's turn started (fallback move / neutrals / river)
               aiThinking = false;
               takeReplaySnapshot();
               _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -4921,15 +4878,7 @@ for (let i = 0; i < 64; i++) {
   const _drawX = _waveOv ? _waveOv.cx : MARGIN + x * TILE;
   const _drawY = (_waveOv ? _waveOv.cy : MARGIN + y * TILE) + _pieceHopAt(i); // + per-piece hop during capture shake
   const _isActivePiece = (i === selected);
-  if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === B && !_animToSet.has(i) && _blackKingsInCheckmate.has(i)) {
-    ctx.save();
-    ctx.shadowColor = '#ff1111';
-    ctx.shadowBlur = 28;
-    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
-    ctx.restore();
-  } else {
-    _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
-  }
+  _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
   _drawPieceEffectIcons(ctx, _drawX, _drawY, effectOrders[i]);
 }
 
@@ -5074,14 +5023,7 @@ if (anim && anim.pieces) {
       const img = spriteImages["chest"];
       if (img && img.complete) ctx.drawImage(img, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     } else {
-      const _isCheckmatedBK = (ap.piece === KING || ap.piece === CHECKERS_KING) && ap.side === B && (_blackKingsInCheckmate.has(ap.fromIdx ?? -1) || _blackKingsInCheckmate.has(ap.toIdx ?? -1));
-      if (_isCheckmatedBK) {
-        ctx.save(); ctx.shadowColor = '#ff1111'; ctx.shadowBlur = 28;
-        _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
-        ctx.restore();
-      } else {
-        _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
-      }
+      _drawPieceSprite(ctx, ap.side, ap.piece, acx + apad, acy + apad, TILE - apad * 2, TILE - apad * 2);
     }
     _drawPieceEffectIcons(ctx, acx, acy, ap.toIdx >= 0 ? effectOrders[ap.toIdx] : []);
   }
@@ -5557,7 +5499,7 @@ function _rewinderOfferAccept() {
   const rSlot = inventory.indexOf(ITEM_REWINDER);
   if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
   turn = W; aiThinking = false; selected = -1; validMoves = [];
-  _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
+  _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
   shopMode = false; gameOver = false; gameMsg = "";
   draw();
 }
@@ -6967,7 +6909,7 @@ function handleInventoryClick(cx, cy) {
         const rSlot = inventory.indexOf(ITEM_REWINDER);
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
-        _resetTurnState(); _resetTurnCounters(); _recomputeDesperateKings(); // rewound to turn start — discard the aborted turn's counters, re-derive Desperate glows
+        _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
