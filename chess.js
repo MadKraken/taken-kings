@@ -1,4 +1,4 @@
-﻿const VERSION = "638";
+﻿const VERSION = "640";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2349,6 +2349,7 @@ function airSlidingMoves(moves, x, y, dirs, s) {
     while (inB(nx, ny)) {
       const ni = idx(nx, ny);
       if (isBlockSpace(ni)) break; // physical blocks still stop Air
+      if (isVoidSpace(ni)) { nx += dx; ny += dy; continue; } // fly OVER the void — can't land on it (matches normal sliders)
       const occ = sides[ni];
       if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
       if (occ === N) { nx += dx; ny += dy; continue; } // fly through neutrals
@@ -2484,11 +2485,20 @@ function pseudoMoves(x, y) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
     if (isAir) airSlidingMoves(moves, x, y, dirs, s); else slidingMoves(moves, x, y, dirs, s);
   } else if (p === KING) {
+    // Air King reaches TWO squares in every direction, flying over whatever's between (like the
+    // extended reach Air grants Knights and Pawns). A normal King is maxStep 1 — identical to before.
+    const maxStep = isAir ? 2 : 1;
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
-      const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
-        moves.push(idx(nx, ny));
+      for (let step = 1; step <= maxStep; step++) {
+        const nx = x + dx * step, ny = y + dy * step;
+        if (!inB(nx, ny)) break;
+        const ni = idx(nx, ny);
+        if (isBlockSpace(ni)) break;                              // physical blocks stop even Air
+        if (isVoidSpace(ni)) { if (isAir) continue; break; }       // Air flies over a void (can't land on it); a normal King just can't go there
+        if (side(nx, ny) !== s && !(s === B && sides[ni] === N))   // land: vacant / capturable enemy / (White only) neutral to recruit
+          moves.push(ni);
+        if (board[ni] !== NONE) { if (isAir) continue; break; }    // Air flies over the occupant to the far square; a normal King is blocked
       }
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
@@ -2820,8 +2830,16 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (p === KING && s === W) {
+    // A genuine castle: the King's first move, two squares horizontally along its home rank, with
+    // the matching corner Rook still present and unmoved. These home-rank + rook-present guards
+    // matter now that an Air King can also move two squares in any direction — without them a
+    // 2-square Air-King move (horizontal OR diagonal, both give |tx-fx|===2) would be misread as a
+    // castle and spawn a phantom rook / wipe a corner square.
+    const isCastleMove = !wkMoved && fx === 4 && fy === 7 && ty === 7 &&
+      ((tx === 6 && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W) ||
+       (tx === 2 && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W));
     wkMoved = true;
-    if (Math.abs(tx - fx) === 2) {
+    if (isCastleMove) {
       if (tx > fx) { set(5, fy, ROOK, s); set(7, fy, NONE, 0); }
       else { set(3, fy, ROOK, s); set(0, fy, NONE, 0); }
     }
@@ -6805,8 +6823,10 @@ function handleBoardClick(cx, cy) {
       const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
       const pFromCX = MARGIN + pfx * TILE, pFromCY = BOARD_Y + MARGIN + pfy * TILE;
       const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
-      const isCKS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 6 && !wkMoved;
-      const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && ptx === 2 && !wkMoved;
+      // Match makeMove's castle test exactly (incl. pty===7 + rook-present) so the rook slide only
+      // animates on a real castle — an Air King can now land on (6,7)/(2,7) as a plain 2-square move.
+      const isCKS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 6 && !wkMoved && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W;
+      const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 2 && !wkMoved && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W;
       const clickedDest = clicked;
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
