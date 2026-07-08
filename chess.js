@@ -1,4 +1,4 @@
-﻿const VERSION = "631";
+﻿const VERSION = "632";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -643,7 +643,6 @@ let validMoves = [];
 let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
 let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
-let _piecesMovedSinceFire = false; // true once any piece actually moves after fire was set; Field Advance alone doesn't count
 function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; }
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
@@ -2475,7 +2474,6 @@ function pseudoMoves(x, y) {
 // --- Elemental effect functions ---
 
 function applyFireTrail(fromI, toI, p, s) {
-  _piecesMovedSinceFire = false; // reset; fire must see another piece move before it expires
   const _lay = (i) => { if (specialSpaces[i]?.type !== 'river') fireSquares.set(i, s); }; // rivers can't be set on fire
   _lay(fromI);
   _lay(toI); // destination also burns — enemies that capture here are killed
@@ -2714,11 +2712,15 @@ function calcBouncePos(fromI, toI, p) {
 }
 
 function makeMove(fromI, toI, visual = false) {
-  _piecesMovedSinceFire = true;
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
   const captured = board[toI];
   const capSide = sides[toI];
+  // "Unless White moves again": a fresh White piece move expires White's own lingering fire.
+  // (A Field Advance isn't a piece move, so fire survives it — that's the persistence case.) Fire
+  // this move lays via applyFireTrail, which runs after the move, is unaffected. Gated to the turn's
+  // first move so Speed/Bloodthirsty extra moves and Checkers chains don't wipe fire laid this turn.
+  if (visual && s === W && _speedIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0) _clearFireOfSide(W);
 
   // Checkers / Checkers King jump: leaps 2 diagonally — remove the piece in the middle square (only if it's an enemy, not an Air slide)
   if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2 && Math.abs(ty - fy) === 2) {
@@ -3763,7 +3765,11 @@ function aiPlay() {
       neutralPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
-            _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance
+            // Black had no move. White's fire only expires once an enemy/neutral has had a turn to
+            // face it — with no Black or Neutral pieces on the board, nothing could be threatened, so
+            // it persists (it'll block the wave the player Field Advances in, and clears once that
+            // wave moves or White moves a piece again). If enemies/neutrals remain, clear as usual.
+            if (board.some((pc, ii) => pc !== NONE && (sides[ii] === B || sides[ii] === N))) _clearFireOfSide(W);
             _doSkyDropPhase(() => {
               turn = W;
               _recomputeDesperateKings(); // board changed since Black's turn started (fallback move / neutrals / river)
