@@ -1,4 +1,4 @@
-﻿const VERSION = "628";
+﻿const VERSION = "629";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -513,13 +513,7 @@ function drawStartScreen() {
     ctx.fillStyle = '#c8a060'; ctx.font = '76px Canterbury'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Taken Kings', cx, cy - 40);
   }
-  const r = _continueBtnRect();
-  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-  ctx.fillStyle = '#2a6e3f'; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
-  ctx.fillStyle = '#fff'; ctx.font = '48px Canterbury'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('Continue', r.x + r.w / 2, r.y + r.h / 2 + 2);
+  drawUIButton(_continueBtnRect(), { color: '#2a6e3f', label: 'Continue', radius: 12, font: '48px Canterbury', stroke: 'rgba(255,255,255,0.35)', dy: 2 });
   ctx.textBaseline = 'alphabetic';
 }
 
@@ -1233,16 +1227,7 @@ function startWaveAnim(squares, shoveParams, onDone) {
   if (!replayMode) {
     _replayAnimBuffer.push({
       type: 'wave',
-      board: [...board], sides: [...sides], health: [...health],
-      elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
-      effectOrders: effectOrders.map(a => [...a]),
-      specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
-      itemSpaces: [...itemSpaces],
-      inventory: [...inventory],
-      score, gold, leapCount, shiftCountdown, merchantIdx,
-      playerDead: {...playerDead}, enemyDead: {...enemyDead},
-      fireSquares: [...fireSquares.entries()],
-      nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
+      ..._snapReplayCommon(),
       squares: [...squares],
       shoveParams: {...shoveParams},
     });
@@ -1477,21 +1462,29 @@ function drawShopTile(gctx, tx, ty, tileSize) {
 
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 
+// Board-state fields shared by every _replayAnimBuffer entry (Last Move / Replay playback).
+// One source of truth so anim & wave snapshots can't drift apart field-by-field.
+function _snapReplayCommon() {
+  return {
+    board: [...board], sides: [...sides], health: [...health],
+    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
+    effectOrders: effectOrders.map(a => [...a]),
+    specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
+    itemSpaces: [...itemSpaces],
+    inventory: [...inventory],
+    score, gold, leapCount, shiftCountdown, merchantIdx,
+    playerDead: {...playerDead}, enemyDead: {...enemyDead},
+    fireSquares: [...fireSquares],
+    nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
+  };
+}
+
 function startAnim(pieces, boardDy, onDone, exitRow) {
   if (_instant) { if (onDone) onDone(); return; } // headless re-sim: skip the animation, run its completion now
   if (!replayMode) {
     _replayAnimBuffer.push({
       type: 'anim',
-      board: [...board], sides: [...sides], health: [...health],
-      specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
-      itemSpaces: [...itemSpaces],
-      inventory: [...inventory],
-      score, gold, leapCount, shiftCountdown, merchantIdx,
-      playerDead: {...playerDead}, enemyDead: {...enemyDead},
-      elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
-      effectOrders: effectOrders.map(a => [...a]),
-      fireSquares: [...fireSquares],
-      nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
+      ..._snapReplayCommon(),
       chestSpaces: [...chestSpaces],
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
@@ -2160,10 +2153,14 @@ function startWhiteTurnTimer() {
   stopWhiteTurnTimer();
   _timerDisplay = timedModeSecs;
   _timerEnd = Date.now() + timedModeSecs * 1000;
-  // rAF loop keeps the clock display updating every frame
+  // rAF loop keeps the clock display in sync — but only redraws when the displayed second
+  // actually changes (piece/idle animations drive their own draws), sparing a full-canvas
+  // repaint at 60fps for a value that ticks once per second.
+  let _lastShownSec = -1;
   const tick = () => {
     if (!_timerRafId) return;
-    if (!anim && flyAnims.length === 0) draw();
+    const secsLeft = Math.max(0, Math.ceil((_timerEnd - Date.now()) / 1000));
+    if (secsLeft !== _lastShownSec && !anim && flyAnims.length === 0) { _lastShownSec = secsLeft; draw(); }
     _timerRafId = requestAnimationFrame(tick);
   };
   _timerRafId = requestAnimationFrame(tick);
@@ -3424,7 +3421,7 @@ function _extraMoveBudget(toI, wasCapture) {
 // This models multi-move turns (Speed / Bloodthirsty) inside the search — for both sides.
 function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
   let best = minimax(depth - 1, alpha, beta, !moverIsMax); // option: end the turn now
-  const s = moverIsMax ? W : B, opp = moverIsMax ? B : W;
+  const s = moverIsMax ? W : B;
   if (extra <= 0 || board[pieceI] === NONE || sides[pieceI] !== s) return best;
   if (moverIsMax) { if (best >= beta) return best; alpha = Math.max(alpha, best); }
   else           { if (best <= alpha) return best; beta = Math.min(beta, best); }
@@ -3432,7 +3429,6 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
   for (const to of legalMoves(px, py)) {
     if (s === B && to === merchantIdx) continue;
     const val = withState(() => {
-      const wasCap = sides[to] === opp;
       makeMove(pieceI, to); _simFireDeath(to); recordPosition();
       return _turnContinuation(to, extra - 1, depth, alpha, beta, moverIsMax);
     });
@@ -3561,8 +3557,6 @@ function aiBestMove() {
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => (board[to] === KING || board[to] === CHECKERS_KING) && sides[to] === W);
-  const kingIdx = board.findIndex((p, i) => (p === KING || p === CHECKERS_KING) && sides[i] === W);
-  if (!_instant) console.log(`[aiBestMove] ${moves.length} moves | kingIdx=${kingIdx} | kingAttacks=${kingAttacks.length} | king-targeting moves:`, moves.filter(([,to]) => to === kingIdx).map(([f,t]) => `${f}->${t}`));
   if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
@@ -5079,16 +5073,9 @@ if (!gameOver && isItemActive()) {
   ctx.fillText("🗑  Discard", MARGIN + BOARD_PX / 2 + BTN_GAP / 2 + halfW / 2, BTN_Y + btnH / 2);
 } else if (!gameOver && gamePhase === 'setup') {
   // Rows: [Classic | Roll] / [Untimed | Timed] / [Go]. 15s is the only timed option.
-  const _drawSetupBtn = (btn, color, label, opts) => {
-    _registerBtn(btn.x, btn.y, btn.w, btn.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    if (opts && opts.border) { ctx.strokeStyle = opts.border; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6); ctx.stroke(); }
-    ctx.fillStyle = (opts && opts.textColor) || "#fff"; ctx.font = "42px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, btn.x + btn.w / 2, btn.y + btn.h / 2);
-  };
+  const _drawSetupBtn = (btn, color, label, opts) =>
+    drawUIButton(btn, { color, label, radius: 6, font: "42px Canterbury",
+      textColor: (opts && opts.textColor) || "#fff", stroke: (opts && opts.border) || null, strokeW: 3 });
   _drawSetupBtn(CLASSIC_BTN, "#b8912e", "Classic");
   _drawSetupBtn(SETUP_ROLL_BTN, "#4a3a7a", "🎲 Roll");
   _drawSetupBtn(UNTIMED_BTN, !timedMode ? "#1a5a8a" : "#33334d", "Untimed",
@@ -5097,46 +5084,22 @@ if (!gameOver && isItemActive()) {
     timedMode ? { border: "#6ab0e0" } : { textColor: "#9a9ab0" });
   _drawSetupBtn(SETUP_GO_BTN, "#2a6e3f", "▶ Go!");
   // Back to main menu
-  {
-    const b = SETUP_BACK_BTN;
-    _registerBtn(b.x, b.y, b.w, b.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#4a3a7a";
-    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "40px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("‹ Back", b.x + b.w / 2, b.y + b.h / 2);
-    ctx.textBaseline = "alphabetic";
-  }
+  drawUIButton(SETUP_BACK_BTN, { color: "#4a3a7a", label: "‹ Back", radius: 6, font: "40px Canterbury" });
+  ctx.textBaseline = "alphabetic";
 } else if (!gameOver && gamePhase === 'playing') {
   const shiftUrgent = shiftCountdown <= 3;
   if (!replayMode || _miniReplayActive) {
     // Team Leap
     const canLeap = canTeamLeap();
-    _registerBtn(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED;
-    ctx.beginPath();
-    ctx.roundRect(LEAP_BTN.x, LEAP_BTN.y, LEAP_BTN.w, LEAP_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = canLeap ? "#fff" : "#999";
-    ctx.font = "42px Canterbury";
-    ctx.fillText("Team Advance", LEAP_BTN.x + LEAP_BTN.w / 2, LEAP_BTN.y + LEAP_BTN.h / 2);
+    drawUIButton(LEAP_BTN, { color: canLeap ? LEAP_BTN_COLOR : LEAP_BTN_DISABLED, label: "Team Advance",
+      radius: 6, font: "42px Canterbury", textColor: canLeap ? "#fff" : "#999" });
 
     // Pitch Shift
     const canShift = canManualPitchShift();
     const shiftHighlight = hintMove === "leap";
-    _registerBtn(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED));
-    ctx.beginPath();
-    ctx.roundRect(PITCH_BTN.x, PITCH_BTN.y, PITCH_BTN.w, PITCH_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = canShift ? "#fff" : "#999";
-    ctx.font = "42px Canterbury";
-    ctx.fillText("Field Advance", PITCH_BTN.x + PITCH_BTN.w / 2, PITCH_BTN.y + PITCH_BTN.h / 2);
+    drawUIButton(PITCH_BTN, {
+      color: shiftHighlight ? "#e8a735" : (shiftUrgent ? "#8a1a1a" : (canShift ? "#1a5a8a" : LEAP_BTN_DISABLED)),
+      label: "Field Advance", radius: 6, font: "42px Canterbury", textColor: canShift ? "#fff" : "#999" });
   }
   // Auto-advance countdown — flush under inventory in replay, normal position otherwise
   const cdY = (replayMode && !_miniReplayActive) ? INV_PANEL_BOTTOM + 44 : COUNTDOWN_Y;
@@ -5150,38 +5113,14 @@ if (!gameOver && isItemActive()) {
 
   if (!replayMode || _miniReplayActive) {
     // Resign
-    _registerBtn(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = "#993333";
-    ctx.beginPath();
-    ctx.roundRect(RESIGN_BTN.x, RESIGN_BTN.y, RESIGN_BTN.w, RESIGN_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff";
-    ctx.fillText("Resign", RESIGN_BTN.x + RESIGN_BTN.w / 2, RESIGN_BTN.y + RESIGN_BTN.h / 2);
+    drawUIButton(RESIGN_BTN, { color: "#993333", label: "Resign", radius: 6, font: "42px Canterbury" });
 
     // Auto-play toggle button
-    _registerBtn(AUTO_BTN.x, AUTO_BTN.y, AUTO_BTN.w, AUTO_BTN.h, 6);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = autoPlay ? "#1a7a3a" : "#444466";
-    ctx.beginPath();
-    ctx.roundRect(AUTO_BTN.x, AUTO_BTN.y, AUTO_BTN.w, AUTO_BTN.h, 6);
-    ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff";
-    ctx.fillText(autoPlay ? "⏸ Auto" : "▶ Auto", AUTO_BTN.x + AUTO_BTN.w / 2, AUTO_BTN.y + AUTO_BTN.h / 2);
+    drawUIButton(AUTO_BTN, { color: autoPlay ? "#1a7a3a" : "#444466", label: autoPlay ? "⏸ Auto" : "▶ Auto", radius: 6, font: "42px Canterbury" });
 
     // Last Move replay button
     if (replaySnapshots.length > 1) {
-      _registerBtn(LAST_MOVE_BTN.x, LAST_MOVE_BTN.y, LAST_MOVE_BTN.w, LAST_MOVE_BTN.h, 6);
-      ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-      ctx.fillStyle = "#1a4a7a";
-      ctx.beginPath();
-      ctx.roundRect(LAST_MOVE_BTN.x, LAST_MOVE_BTN.y, LAST_MOVE_BTN.w, LAST_MOVE_BTN.h, 6);
-      ctx.fill();
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      ctx.fillStyle = "#fff";
-      ctx.fillText("⟳ Last Move", LAST_MOVE_BTN.x + LAST_MOVE_BTN.w / 2, LAST_MOVE_BTN.y + LAST_MOVE_BTN.h / 2);
+      drawUIButton(LAST_MOVE_BTN, { color: "#1a4a7a", label: "⟳ Last Move", radius: 6, font: "42px Canterbury" });
     }
   }
 }
@@ -5201,14 +5140,7 @@ if (gameOver && !replayMode) {
   ctx.fillStyle = "#ffffff";
   ctx.fillText(`Taken Kings: ${score}`, boardCX, boardCY + 60);
   const L = _gameOverBtns();
-  const fillBtn = (r, color, label) => {
-    _registerBtn(r.x, r.y, r.w, r.h, 8);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.fillStyle = "#fff"; ctx.font = "44px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2);
-  };
+  const fillBtn = (r, color, label) => drawUIButton(r, { color, label, font: "44px Canterbury" });
   // Submit-to-leaderboard button (only for eligible runs). During naming the HTML input
   // covers this rect (its "Your name" placeholder is the label), so draw nothing then.
   if (L.eligible && _lbSubmitState !== 'naming') {
@@ -5375,10 +5307,8 @@ ctx.textBaseline = "alphabetic";
 // Shared by the click handler and the replay driver (the choice is a logged input).
 function _rewinderOfferAccept() {
   _rewinderSaveOffer = false;
-  if (!_instant) console.log('[RewinderOffer] indices before:', JSON.stringify(_turnStartSnapIndices), '| snapshots.length:', replaySnapshots.length);
   if (_turnStartSnapIndices.length < 1) { gameOver = true; stopWindLoop(0); playSfx('over1'); playSfx('over2'); draw(); return; }
   const targetIdx = _turnStartSnapIndices.pop(); // last entry IS the turn to restore (no new entry was pushed after Black's fatal move)
-  if (!_instant) console.log('[RewinderOffer] targetIdx:', targetIdx, '| indices now:', JSON.stringify(_turnStartSnapIndices), '| targetSnap.turn:', replaySnapshots[targetIdx]?.turn);
   const targetSnap = replaySnapshots[targetIdx];
   replaySnapshots.splice(targetIdx + 1);
   _replayTransitions.splice(targetIdx + 1);
@@ -5748,22 +5678,15 @@ function drawMainMenu() {
     ctx.fillText("Taken Kings", cx, titleY);
   }
   const R = _mmBtnRects();
-  const drawBtn = (r, color, label) => {
-    _registerBtn(r.x, r.y, r.w, r.h, 12);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
-    ctx.fillStyle = "#fff"; ctx.font = "50px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
-  };
+  const drawBtn = (r, color, label) =>
+    drawUIButton(r, { color, label, radius: 12, font: "50px Canterbury", stroke: "rgba(255,255,255,0.3)", dy: 2 });
   drawBtn(R.play, "#2a6e3f", "▶ Play");
   drawBtn(R.achievements, "#b8912e", "Achievements");
   drawBtn(R.leaderboard, "#1a5a6e", "Leaderboard");
   ctx.textBaseline = "alphabetic";
 }
 function handleMainMenuClick(cx, cy) {
-  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const inR = (r) => _inRect(cx, cy, r);
   const R = _mmBtnRects();
   if (inR(R.play)) { playSfx('button'); mainMenuOpen = false; _startMenuDecel(); startIdleAnim(); draw(); return; } // scroll eases to a stop; ground becomes gameplay background
   if (inR(R.achievements)) { playSfx('button'); achievementsOpen = true; _achSelected = 0; _achClearConfirm = false; startMenuBg(); draw(); return; }
@@ -6009,13 +5932,7 @@ function drawAchievementsScreen() {
 
   // Back + Clear buttons
   const drawBtn = (r, fill, label) => {
-    _registerBtn(r.x, r.y, r.w, r.h, 8);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
-    ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
+    drawUIButton(r, { color: fill, label, stroke: "rgba(255,255,255,0.3)", dy: 2 });
     ctx.textBaseline = "alphabetic";
   };
   drawBtn(ACH_BACK_BTN, "#4a3a7a", "‹ Back");
@@ -6037,7 +5954,7 @@ function drawAchievementsScreen() {
 }
 
 function handleAchievementsClick(cx, cy) {
-  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const inR = (r) => _inRect(cx, cy, r);
   // Modal confirm takes priority
   if (_achClearConfirm) {
     const d = _achClearDlgRects();
@@ -6069,16 +5986,11 @@ function drawLeaderboardScreen() {
   const tabs = _lbTabRects();
   for (const r of tabs) {
     const active = _lbTab === r.key;
-    _registerBtn(r.x, r.y, r.w, r.h, 8);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = active ? "#2a6e3f" : "#33334d";
-    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = active ? "#7fe0a0" : "rgba(255,255,255,0.15)"; ctx.lineWidth = active ? 3 : 2;
-    ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
-    ctx.fillStyle = active ? "#fff" : "#9a9ab0"; ctx.font = "33px Canterbury";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(_lbBoard(r.key).tab, r.x + r.w / 2, r.y + r.h / 2 + 2);
+    drawUIButton(r, {
+      color: active ? "#2a6e3f" : "#33334d", label: _lbBoard(r.key).tab,
+      font: "33px Canterbury", textColor: active ? "#fff" : "#9a9ab0",
+      stroke: active ? "#7fe0a0" : "rgba(255,255,255,0.15)", strokeW: active ? 3 : 2, dy: 2,
+    });
   }
 
   const board = _lbBoard(_lbTab);
@@ -6126,22 +6038,14 @@ function drawLeaderboardScreen() {
   }
 
   // Buttons
-  const drawBtn = (r, fill, label) => {
-    _registerBtn(r.x, r.y, r.w, r.h, 8);
-    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.fill();
-    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 8); ctx.stroke();
-    ctx.fillStyle = "#fff"; ctx.font = "38px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 2);
-  };
+  const drawBtn = (r, fill, label) => drawUIButton(r, { color: fill, label, stroke: "rgba(255,255,255,0.3)", dy: 2 });
   drawBtn(LB_BACK_BTN, "#4a3a7a", "‹ Back");
   drawBtn(LB_REFRESH_BTN, "#2a5a7a", "Refresh");
   ctx.textBaseline = "alphabetic";
 }
 
 function handleLeaderboardClick(cx, cy) {
-  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const inR = (r) => _inRect(cx, cy, r);
   if (inR(LB_BACK_BTN)) { playSfx('button'); leaderboardOpen = false; draw(); return; }
   if (inR(LB_REFRESH_BTN)) { playSfx('button'); _lbState[_lbTab] = 'idle'; _lbFetch(_lbTab); return; }
   const tabs = _lbTabRects();
@@ -6288,6 +6192,24 @@ canvas.addEventListener("pointerdown", (e) => { const [cx, cy] = canvasCoords(e)
 canvas.addEventListener("pointerup", _clearPressed);
 canvas.addEventListener("pointercancel", _clearPressed);
 canvas.addEventListener("pointerleave", _clearPressed);
+
+// Canonical UI button: registers for press feedback, drops the standard shadow, fills a rounded
+// rect, optional stroke, centered Canterbury label. All screens' buttons route through here so
+// geometry, shadow, and press-darkening stay consistent (previously ~6 near-identical closures).
+function drawUIButton(r, { color, label, radius = 8, font = "38px Canterbury", textColor = "#fff", stroke = null, strokeW = 2, dy = 0 } = {}) {
+  _registerBtn(r.x, r.y, r.w, r.h, radius);
+  ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 14; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 5;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, radius); ctx.fill();
+  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = strokeW; ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, radius); ctx.stroke(); }
+  if (label) {
+    ctx.fillStyle = textColor; ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + dy);
+  }
+}
+// Point-in-rect hit test for {x,y,w,h} button rects (replaces per-handler inR closures).
+function _inRect(cx, cy, r) { return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h; }
 
 function trashBounds() {
   const invY = INV_PANEL_TOP + 50;
@@ -6442,7 +6364,7 @@ function handleReplayClick(cx, cy) {
 }
 
 function handleGameOverClick(cx, cy) {
-  const inR = (r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+  const inR = (r) => _inRect(cx, cy, r);
   const L = _gameOverBtns();
   if (L.eligible && inR(L.submit)) { playSfx('button'); _lbSubmit(); return; }
   if (inR(L.startOver)) { playSfx('button'); initBoard(); draw(); return; }
@@ -6769,11 +6691,6 @@ function handleInventoryClick(cx, cy) {
         _turnStartSnapIndices.pop(); // discard current turn start
         const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
         const targetSnap = replaySnapshots[targetIdx];
-        if (!_instant) console.log('[Rewinder] targetIdx:', targetIdx, 'of', replaySnapshots.length,
-          '| turn indices:', JSON.stringify(_turnStartSnapIndices),
-          '| snap.turn:', targetSnap.turn,
-          '| snap.playerDead:', JSON.stringify(targetSnap.playerDead),
-          '| snap.board (64):', JSON.stringify(targetSnap.board));
         replaySnapshots.splice(targetIdx + 1);
         _replayTransitions.splice(targetIdx + 1);
         applyReplaySnapshot(targetSnap);
@@ -7039,13 +6956,11 @@ canvas.addEventListener("click", (e) => {
   if (speedMode) { handleSpeedClick(cx, cy); return; }
   if (resignConfirm) { handleResignConfirmClick(cx, cy); return; }
   if (isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
-  if (!gameOver && cx >= RESIGN_BTN.x && cx <= RESIGN_BTN.x + RESIGN_BTN.w &&
-      cy >= RESIGN_BTN.y && cy <= RESIGN_BTN.y + RESIGN_BTN.h) { playSfx('button'); resignConfirm = true; draw(); return; }
+  if (!gameOver && _inRect(cx, cy, RESIGN_BTN)) { playSfx('button'); resignConfirm = true; draw(); return; }
   if (!gameOver && replaySnapshots.length > 1 &&
       turn === W && !aiThinking &&
       _speedIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0 && // mid-turn extra-move pending: replay would revert the first move
-      cx >= LAST_MOVE_BTN.x && cx <= LAST_MOVE_BTN.x + LAST_MOVE_BTN.w &&
-      cy >= LAST_MOVE_BTN.y && cy <= LAST_MOVE_BTN.y + LAST_MOVE_BTN.h) {
+      _inRect(cx, cy, LAST_MOVE_BTN)) {
     playSfx('button');
     selected = -1; validMoves = []; // clear any selection — the board is about to be spliced
     replayMode = true; _miniReplayActive = true;
@@ -7055,8 +6970,7 @@ canvas.addEventListener("click", (e) => {
     });
     return;
   }
-  if (!gameOver && cx >= AUTO_BTN.x && cx <= AUTO_BTN.x + AUTO_BTN.w &&
-      cy >= AUTO_BTN.y && cy <= AUTO_BTN.y + AUTO_BTN.h) {
+  if (!gameOver && _inRect(cx, cy, AUTO_BTN)) {
     playSfx('button');
     autoPlay = !autoPlay; draw();
     if (autoPlay) _autoPlayUsedThisRun = true; // auto-assisted run -> not leaderboard-eligible
@@ -7064,27 +6978,18 @@ canvas.addEventListener("click", (e) => {
     return;
   }
   if (handleInventoryClick(cx, cy)) return;
-  if (testMode && cx >= HINT_BTN.x && cx <= HINT_BTN.x + HINT_BTN.w &&
-      cy >= HINT_BTN.y && cy <= HINT_BTN.y + HINT_BTN.h) { playSfx('button'); showHint(); return; }
+  if (testMode && _inRect(cx, cy, HINT_BTN)) { playSfx('button'); showHint(); return; }
   if (gamePhase === 'setup') {
-    if (cx >= CLASSIC_BTN.x && cx <= CLASSIC_BTN.x + CLASSIC_BTN.w &&
-        cy >= CLASSIC_BTN.y && cy <= CLASSIC_BTN.y + CLASSIC_BTN.h) { playSfx('button'); _beginSetup(classicSetup); draw(); return; }
-    if (cx >= SETUP_ROLL_BTN.x && cx <= SETUP_ROLL_BTN.x + SETUP_ROLL_BTN.w &&
-        cy >= SETUP_ROLL_BTN.y && cy <= SETUP_ROLL_BTN.y + SETUP_ROLL_BTN.h) { playSfx('button'); _beginSetup(rollSetup); draw(); return; }
-    if (cx >= UNTIMED_BTN.x && cx <= UNTIMED_BTN.x + UNTIMED_BTN.w &&
-        cy >= UNTIMED_BTN.y && cy <= UNTIMED_BTN.y + UNTIMED_BTN.h) { playSfx('button'); timedMode = false; draw(); return; }
-    if (cx >= TIMED_BTN.x && cx <= TIMED_BTN.x + TIMED_BTN.w &&
-        cy >= TIMED_BTN.y && cy <= TIMED_BTN.y + TIMED_BTN.h) { playSfx('button'); timedMode = true; timedModeSecs = 15; draw(); return; }
-    if (cx >= SETUP_GO_BTN.x && cx <= SETUP_GO_BTN.x + SETUP_GO_BTN.w &&
-        cy >= SETUP_GO_BTN.y && cy <= SETUP_GO_BTN.y + SETUP_GO_BTN.h) { playSfx('button'); playConquestGif(); return; }
-    if (cx >= SETUP_BACK_BTN.x && cx <= SETUP_BACK_BTN.x + SETUP_BACK_BTN.w &&
-        cy >= SETUP_BACK_BTN.y && cy <= SETUP_BACK_BTN.y + SETUP_BACK_BTN.h) { playSfx('button'); mainMenuOpen = true; startMenuBg(); draw(); return; }
+    if (_inRect(cx, cy, CLASSIC_BTN))    { playSfx('button'); _beginSetup(classicSetup); draw(); return; }
+    if (_inRect(cx, cy, SETUP_ROLL_BTN)) { playSfx('button'); _beginSetup(rollSetup); draw(); return; }
+    if (_inRect(cx, cy, UNTIMED_BTN))    { playSfx('button'); timedMode = false; draw(); return; }
+    if (_inRect(cx, cy, TIMED_BTN))      { playSfx('button'); timedMode = true; timedModeSecs = 15; draw(); return; }
+    if (_inRect(cx, cy, SETUP_GO_BTN))   { playSfx('button'); playConquestGif(); return; }
+    if (_inRect(cx, cy, SETUP_BACK_BTN)) { playSfx('button'); mainMenuOpen = true; startMenuBg(); draw(); return; }
     return;
   }
-  if (cx >= LEAP_BTN.x && cx <= LEAP_BTN.x + LEAP_BTN.w &&
-      cy >= LEAP_BTN.y && cy <= LEAP_BTN.y + LEAP_BTN.h) { playSfx('button'); hintMove = null; teamAdvance(); return; }
-  if (cx >= PITCH_BTN.x && cx <= PITCH_BTN.x + PITCH_BTN.w &&
-      cy >= PITCH_BTN.y && cy <= PITCH_BTN.y + PITCH_BTN.h) { playSfx('button'); hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
+  if (_inRect(cx, cy, LEAP_BTN))  { playSfx('button'); hintMove = null; teamAdvance(); return; }
+  if (_inRect(cx, cy, PITCH_BTN)) { playSfx('button'); hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
   handleBoardClick(cx, cy);
 });
 
@@ -7348,7 +7253,7 @@ function _aiWhiteStep() {
   //    player deadlocks trying to move other pieces.
   if (selected >= 0 && (_speedIdx >= 0 || _bloodthirstyIdx >= 0 || _checkersChainIdx >= 0)) {
     const from = selected;
-    const cc = i => [MARGIN + (i % 8) * TILE + TILE / 2, BOARD_Y + MARGIN + Math.floor(i / 8) * TILE + TILE / 2];
+    const cc = _sqCenter;
     let bestTo = -1, bestVal = -Infinity;
     for (const to of validMoves) {
       const val = withState(() => {
@@ -7415,7 +7320,7 @@ function autoWhitePlay() {
 
 // Complete an already-active interactive UI mode using canvas coords
 function _aiCompleteActiveMode() {
-  const cc = (i) => [MARGIN + xy(i)[0] * TILE + TILE/2, BOARD_Y + MARGIN + xy(i)[1] * TILE + TILE/2];
+  const cc = _sqCenter;
 
   if (shopMode) { _aiHandleShop(); return; }
 
