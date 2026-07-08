@@ -1,4 +1,4 @@
-﻿const VERSION = "635";
+﻿const VERSION = "636";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6824,8 +6824,12 @@ function handleBoardClick(cx, cy) {
         // Pre-register the Speed extra move at the bounce square so a Fast King recruiting a Grey
         // can still go again (mirrors the shield-bounce / merchant-engage branches). Without this
         // the turn ended after the recruit — a Fast King's second move was silently lost.
+        // The else-reset matters: recruiting ON the extra move must clear the stale _speedIdx
+        // from move 1, or endWhiteTurn would offer a third move.
         if (sides[bounceI] === W && speeds[bounceI] > 1 && _speedMovesUsed < speeds[bounceI] - 1) {
           _speedMovesUsed++; _speedIdx = bounceI;
+        } else {
+          _speedIdx = -1; _speedMovesUsed = 0;
         }
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
         return;
@@ -6846,6 +6850,8 @@ function handleBoardClick(cx, cy) {
         const _sbFinalI = result.mode === 'earth-bonk' ? clicked : result.bounceI;
         if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
           _speedMovesUsed++; _speedIdx = _sbFinalI;
+        } else {
+          _speedIdx = -1; _speedMovesUsed = 0; // bounce ON the extra move: clear the stale move-1 registration (no third move)
         }
         recordPosition();
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
@@ -6873,6 +6879,8 @@ function handleBoardClick(cx, cy) {
           const _mSpI = bounceI !== fromI ? bounceI : fromI;
           if (speeds[_mSpI] > 1 && _speedMovesUsed < speeds[_mSpI] - 1) {
             _speedMovesUsed++; _speedIdx = _mSpI;
+          } else {
+            _speedIdx = -1; _speedMovesUsed = 0; // engaged ON the extra move: clear the stale move-1 registration (no third move)
           }
           openMerchantShop(endWhiteTurn);
         });
