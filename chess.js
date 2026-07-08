@@ -1,4 +1,4 @@
-﻿const VERSION = "634";
+﻿const VERSION = "635";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2179,8 +2179,8 @@ function startWhiteTurnTimer() {
   const onExpire = () => {
     if (_gen !== _runGen) return;
     if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
-    if (anim || isItemActive() || shopMode || replayMode) {
-      _timerTimeoutId = setTimeout(onExpire, 100);
+    if (anim || waveAnim || _skyDropAnims.length > 0 || isItemActive() || shopMode || replayMode) {
+      _timerTimeoutId = setTimeout(onExpire, 100); // never time out mid-pipeline — same idle rule as taps
       return;
     }
     stopWhiteTurnTimer();
@@ -2929,7 +2929,7 @@ function canTeamLeap() {
 }
 
 function teamAdvance() {
-  if (gameOver || turn !== W || aiThinking || anim) return;
+  if (gameOver || turn !== W || aiThinking || anim || waveAnim) return;
   _logInput({ t: 'ta' });
   _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
   _clearFireOfSide(B);   // Team Advance counts as a White move — enemy fire clears (Field Advance never does)
@@ -3051,7 +3051,7 @@ function _placeChestBonus(col) {
 }
 
 function fieldAdvance(playerTriggered = false) {
-  if (!canPitchShift() || anim) return;
+  if (!canPitchShift() || anim || waveAnim) return;
   if (playerTriggered) _logInput({ t: 'fa' });
   // Flawless-survival streak: count consecutive advances during which no Black King
   // was taken and no White Warrior was lost (the interval since the previous advance).
@@ -6268,7 +6268,7 @@ function trashBounds() {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (replayMode || gameOver || anim || turn !== W || aiThinking || shopMode || sellMode || sellConfirmSlot >= 0 || gamePhase !== 'playing') return;
+  if (replayMode || gameOver || _turnBusy() || shopMode || sellMode || sellConfirmSlot >= 0 || gamePhase !== 'playing') return;
   const [cx, cy] = canvasCoords(e);
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
@@ -6983,6 +6983,17 @@ function handleBoardClick(cx, cy) {
   draw();
 }
 
+// True while the turn pipeline is mid-flight: any animation, wave sweep, sky drops landing,
+// Black thinking/acting, or the conquest intro. Player input is accepted ONLY at full idle, so
+// a tap can never interleave with turn resolution. This is the structural fix for the
+// live-vs-server score mismatches: the headless re-simulation applies each logged input at
+// exactly this idle state, so live play must too — any handler reachable mid-pipeline (however
+// its own guards are written) is a determinism hole. One gate closes the whole class.
+function _turnBusy() {
+  return !!anim || !!waveAnim || _conquestGifActive ||
+    (gamePhase === 'playing' && !gameOver && (aiThinking || turn !== W || _skyDropAnims.length > 0));
+}
+
 canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
@@ -6993,7 +7004,7 @@ canvas.addEventListener("click", (e) => {
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
-  if (anim || _conquestGifActive) return;
+  if (_turnBusy()) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (sellConfirmSlot >= 0) { handleSellConfirmClick(cx, cy); return; }
   if (shopMode) {
