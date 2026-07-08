@@ -1,4 +1,4 @@
-﻿const VERSION = "642";
+﻿const VERSION = "643";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -697,6 +697,7 @@ function _turnBoundaryUpdate() {
   _recruitStreak = _turnRecruited ? _recruitStreak + 1 : 0;
   _bombStreak = _turnBombKills > 0 ? _bombStreak + 1 : 0;
   _resetTurnCounters();
+  _rngEpochBump(); // re-anchor the RNG to this turn's substream (before the Black/neutral/spawn rolls)
 }
 // Record a Black warrior taken by the acting White piece (called real-only from makeMove).
 function _trackWhiteTake(pieceMoved, fromI, capturedPiece) {
@@ -964,7 +965,7 @@ function _stateHash() {
   const mix = (v) => { h = (h ^ (v | 0)) | 0; h = Math.imul(h, 0x01000193); };
   for (let i = 0; i < 64; i++) { mix(board[i]); mix(sides[i]); mix(health[i]); mix(elements[i]); mix(statuses[i]); mix(attacks[i]); mix(speeds[i]); mix(itemSpaces[i]); }
   for (let i = 0; i < inventory.length; i++) mix(inventory[i]);
-  mix(score); mix(gold); mix(spawnCount); mix(leapCount); mix(shiftCountdown); mix(merchantIdx); mix(positionHistory.length);
+  mix(score); mix(gold); mix(spawnCount); mix(leapCount); mix(shiftCountdown); mix(merchantIdx); mix(positionHistory.length); mix(_rngEpoch);
   return h | 0;
 }
 function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) { a.r = _rngState; a.h = _stateHash(); _replayInputs.push(a); } }
@@ -985,7 +986,24 @@ function _logItemUse(slot, fromSpace, tg) {
 // score diverges from what the player saw (the "mobile high-score mismatch" bug: mobile players
 // chain games in one session, so stale callbacks from the previous game were common).
 let _runGen = 0;
-function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; }
+// Positional RNG: instead of one master stream advancing for the whole game (where a single stray
+// draw shifts every downstream spawn forever — the root of the live-vs-resim divergences), the
+// stream is RE-ANCHORED once per turn to hash(masterSeed, turnEpoch). Turn N's randomness is a pure
+// function of (seed, N), so a stray/extra draw can only corrupt the turn it happens in — the next
+// turn re-anchors clean. _rngEpoch is bumped exactly once per turn boundary (see _turnBoundaryUpdate),
+// which runs identically in live play and headless re-sim, so both reproduce the same substreams.
+let _rngEpoch = 0;
+function _mixSeed(seed, epoch) {
+  // splitmix32-style: fold seed + epoch into a fresh, well-distributed 32-bit state
+  let h = ((seed >>> 0) ^ Math.imul((epoch + 1) | 0, 0x9E3779B9)) | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  h = (h ^ (h >>> 15)) >>> 0;
+  return h || 1;
+}
+function _seedRng(seed) { _runSeed = seed >>> 0; _rngState = _runSeed || 1; _rngEpoch = 0; }
+// Advance to the next turn's substream. Called once per real White-turn boundary.
+function _rngEpochBump() { _rngEpoch = (_rngEpoch + 1) | 0; _rngState = _mixSeed(_runSeed, _rngEpoch); }
 function _rng() {
   // mulberry32 — fast, well-distributed 32-bit PRNG
   _rngState = (_rngState + 0x6D2B79F5) | 0;
@@ -998,6 +1016,16 @@ function _freshSeed() { return (Math.floor(Math.random() * 0x100000000)) >>> 0; 
 _seedRng(_freshSeed()); // seed at load so anything before a setup still has a stream
 
 function randInt(n) { return Math.floor(_rng() * n); }
+// Deterministic, STREAM-NEUTRAL pick among equal-valued options (AI tie-breaks). Derived from the
+// board + turn epoch (both identical in live and re-sim) — never advances the gameplay stream, so the
+// AI's move choice can't perturb spawns, and recomputing Black vs. replaying recorded Black moves stay
+// RNG-equivalent. Position-dependent (not _rngState-dependent) so a stray draw can't change the pick.
+function _detPick(n) {
+  if (n <= 1) return 0;
+  let h = (_rngEpoch + 1) | 0;
+  for (let i = 0; i < 64; i++) h = Math.imul(h ^ (board[i] | (sides[i] << 4)), 0x01000193);
+  return ((h ^ (h >>> 15)) >>> 0) % n;
+}
 
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
@@ -3415,7 +3443,7 @@ function saveState() {
     chestSpaces: new Set(chestSpaces),
     itemSpaces: [...itemSpaces],
     merchantIdx, merchantQueued, merchantQueuedCol,
-    rngState: _rngState, // minimax lookahead must NOT perturb the real RNG stream
+    rngState: _rngState, rngEpoch: _rngEpoch, // minimax lookahead must NOT perturb the real RNG stream/epoch
   };
 }
 
@@ -3434,6 +3462,7 @@ function restoreState(st) {
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
   if (st.rngState !== undefined) _rngState = st.rngState; // roll back RNG consumed during lookahead
+  if (st.rngEpoch !== undefined) _rngEpoch = st.rngEpoch;
 }
 
 function withState(fn) { const st = saveState(); try { return fn(); } finally { restoreState(st); } }
@@ -3692,13 +3721,13 @@ function aiBestMove() {
   if (moves.length === 0) return null;
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => (board[to] === KING || board[to] === CHECKERS_KING) && sides[to] === W);
-  if (kingAttacks.length > 0) return kingAttacks[randInt(kingAttacks.length)];
+  if (kingAttacks.length > 0) return kingAttacks[_detPick(kingAttacks.length)];
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
     if ((board[from] !== CHECKERS && board[from] !== CHECKERS_KING) || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
     return withState(() => { makeMove(from, to); return _checkersChainCanKillKing(to); });
   });
-  if (chainKingAttacks.length > 0) return chainKingAttacks[randInt(chainKingAttacks.length)];
+  if (chainKingAttacks.length > 0) return chainKingAttacks[_detPick(chainKingAttacks.length)];
   if (moves.length === 0) return null;
   let bestScore = Infinity;
   let bestMoves = [];
@@ -3715,7 +3744,7 @@ function aiBestMove() {
       bestMoves.push([from, to]);
     }
   }
-  return bestMoves[randInt(bestMoves.length)];
+  return bestMoves[_detPick(bestMoves.length)];
 }
 
 let hintMove = null; // {from, to} or "leap"
@@ -3744,7 +3773,7 @@ function playerBestMove(depth = HINT_DEPTH, forcedAdvance = false) {
       bestMoves.push([from, to]);
     }
   }
-  return { move: bestMoves.length > 0 ? bestMoves[randInt(bestMoves.length)] : null, score: bestScore };
+  return { move: bestMoves.length > 0 ? bestMoves[_detPick(bestMoves.length)] : null, score: bestScore };
 }
 
 function showHint() {
