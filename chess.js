@@ -1,4 +1,4 @@
-﻿const VERSION = "648";
+﻿const VERSION = "649";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2586,6 +2586,10 @@ function pseudoMoves(x, y) {
       if (ni === merchantIdx || isVoidSpace(ni) || isBlockSpace(ni)) break;
       if (piece(x, ny) !== NONE) break;
       moves.push(ni);
+      // Enemy fire stops the forward march: a pawn may step ONTO it (and burn on landing) but can't
+      // slide PAST it — same rule as normal sliders (slidingMoves). Fire Warriors and Air pawns are
+      // unaffected: they slide through / fly over fire (matching airSlidingMoves' fire handling).
+      if (fireSquares.has(ni) && fireSquares.get(ni) !== s && !(elements[idx(x, y)] & ELEM_FIRE) && !isAir) break;
     }
     // Diagonal captures — can reach up to capRange squares; stop on any occupied square
     for (const dx of [-1, 1]) {
