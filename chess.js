@@ -1,4 +1,4 @@
-﻿const VERSION = "633";
+﻿const VERSION = "634";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6821,6 +6821,12 @@ function handleBoardClick(cx, cy) {
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
         recordPosition();
+        // Pre-register the Speed extra move at the bounce square so a Fast King recruiting a Grey
+        // can still go again (mirrors the shield-bounce / merchant-engage branches). Without this
+        // the turn ended after the recruit — a Fast King's second move was silently lost.
+        if (sides[bounceI] === W && speeds[bounceI] > 1 && _speedMovesUsed < speeds[bounceI] - 1) {
+          _speedMovesUsed++; _speedIdx = bounceI;
+        }
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
         return;
       }
