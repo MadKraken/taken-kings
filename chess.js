@@ -1,4 +1,4 @@
-﻿const VERSION = "640";
+﻿const VERSION = "642";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1990,6 +1990,23 @@ function _appendCaptureGhosts(animArr) {
     animArr.push({ toIdx: c.boardIdx, fromCX: cx, fromCY: cy, toCX: cx, toCY: cy, piece: c.piece, side: c.side, hlth: c.hlth, atk: c.atk ?? 1, spd: c.spd ?? 1 });
   }
 }
+// Animate a move. If `legs` is a multi-square Air path (from _airMoveLegs), the mover (animPieces[0])
+// hops square-by-square through each waypoint — first hop, then second, in succession — while every
+// other entry (capture ghosts, castle rooks) is held stationary across all legs. Otherwise it's one
+// ordinary startAnim. onDone runs exactly once, after the final hop. In headless re-sim (_instant),
+// startAnim completes synchronously, so this collapses to the same result as a single call.
+function _startMoveAnim(animPieces, legs, onDone) {
+  if (!legs || legs.length < 2) { startAnim(animPieces, 0, onDone); return; }
+  const mover = animPieces[0], others = animPieces.slice(1);
+  const pts = [[mover.fromCX, mover.fromCY]]; // origin, then each waypoint (tile top-left, matching startAnim coords)
+  for (const li of legs) pts.push([MARGIN + (li % 8) * TILE, BOARD_Y + MARGIN + Math.floor(li / 8) * TILE]);
+  const runLeg = (k) => {
+    const m = { ...mover, fromCX: pts[k][0], fromCY: pts[k][1], toCX: pts[k + 1][0], toCY: pts[k + 1][1] };
+    startAnim([m, ...others], 0, () => { if (k + 2 < pts.length) runLeg(k + 1); else onDone(); });
+  };
+  runLeg(0);
+}
+
 // Fire off capture/item animations for all pending entries and clear the queue.
 function _drainCaptureAnims() {
   let _tookPiece = false;
@@ -2386,6 +2403,66 @@ function airKnightMoves(x, y, s) {
   return moves;
 }
 
+// Waypoints for an Air piece's EXTENDED (multi-hop) move — the intermediate square(s) it visibly
+// passes through, so a two-square move animates as two hops in succession rather than one long
+// slide. Returns [firstHop, …, destination] (last element === destination), or null for an ordinary
+// single-hop move (which animates normally). Caller has already confirmed the piece is Air.
+function _airMoveLegs(fx, fy, tx, ty, p) {
+  const dx = tx - fx, dy = ty - fy;
+  if (p === KNIGHT) {
+    const KN = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+    if (KN.some(([a, b]) => a === dx && b === dy)) return null; // a plain single L-hop
+    let mid = -1;
+    for (const [a, b] of KN) {                     // find a 1-hop square from which another L reaches the dest
+      const mx = fx + a, my = fy + b;
+      if (!inB(mx, my)) continue;
+      const ex = tx - mx, ey = ty - my;
+      if (KN.some(([c, d]) => c === ex && d === ey)) {
+        const mi = idx(mx, my);
+        if (mid < 0) mid = mi;
+        if (board[mi] === NONE) { mid = mi; break; } // prefer hopping through an empty square
+      }
+    }
+    return mid < 0 ? null : [mid, idx(tx, ty)];
+  }
+  if (p === KING) {                                // two king-steps in any combination (may bend)
+    if (Math.max(Math.abs(dx), Math.abs(dy)) <= 1) return null; // single step
+    const mid = _airKingIntermediate(fx, fy, tx, ty);
+    return mid < 0 ? null : [mid, idx(tx, ty)];
+  }
+  if (p === PAWN) {                                // straight line: one leg per unit of travel
+    const steps = Math.max(Math.abs(dx), Math.abs(dy));
+    if (steps <= 1) return null;
+    const sx = Math.sign(dx), sy = Math.sign(dy);
+    const legs = [];
+    for (let k = 1; k <= steps; k++) legs.push(idx(fx + sx * k, fy + sy * k));
+    return legs;
+  }
+  return null;
+}
+
+// A flyable intermediate king-square for an Air King's distance-2 move (fx,fy)→(tx,ty): a square one
+// king-step from BOTH ends that isn't a wall (voids and pieces are flown over). Prefers stepping
+// toward the destination (smoothest hop), then an empty square, then any. Returns its index, or -1 if
+// no path exists (every candidate out of bounds or a block). Shared by move-gen and the animation so
+// the two always agree on reachability.
+function _airKingIntermediate(fx, fy, tx, ty) {
+  const KSTEP = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]];
+  const sgx = Math.sign(tx - fx), sgy = Math.sign(ty - fy);
+  let pref = -1, empty = -1, any = -1;
+  for (const [a, b] of KSTEP) {
+    const mx = fx + a, my = fy + b;
+    if (!inB(mx, my)) continue;
+    if (Math.max(Math.abs(tx - mx), Math.abs(ty - my)) !== 1) continue; // dest must be one king-step away
+    const mi = idx(mx, my);
+    if (isBlockSpace(mi)) continue;                                     // a wall blocks this path
+    if (any < 0) any = mi;
+    if (a === sgx && b === sgy) pref = mi;                              // steps toward the destination
+    if (empty < 0 && board[mi] === NONE && !isVoidSpace(mi)) empty = mi;
+  }
+  return pref >= 0 ? pref : (empty >= 0 ? empty : any);
+}
+
 function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 function isBlockSpace(i) { return specialSpaces[i]?.type === 'block'; }
 function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlockSpace(i); }
@@ -2485,20 +2562,28 @@ function pseudoMoves(x, y) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
     if (isAir) airSlidingMoves(moves, x, y, dirs, s); else slidingMoves(moves, x, y, dirs, s);
   } else if (p === KING) {
-    // Air King reaches TWO squares in every direction, flying over whatever's between (like the
-    // extended reach Air grants Knights and Pawns). A normal King is maxStep 1 — identical to before.
-    const maxStep = isAir ? 2 : 1;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      for (let step = 1; step <= maxStep; step++) {
-        const nx = x + dx * step, ny = y + dy * step;
-        if (!inB(nx, ny)) break;
+    if (isAir) {
+      // Air King = TWO king-steps in ANY combination (not just a straight line): it reaches every
+      // square within Chebyshev distance 2, flying over whatever's between. Land on vacant / enemy /
+      // (White) neutral — never own/void/block. A distance-2 square needs at least one non-block
+      // king-step square to fly through (a wall stops that path; pieces and voids are flown over).
+      for (let ddy = -2; ddy <= 2; ddy++) for (let ddx = -2; ddx <= 2; ddx++) {
+        if (ddx === 0 && ddy === 0) continue;
+        const nx = x + ddx, ny = y + ddy;
+        if (!inB(nx, ny)) continue;
         const ni = idx(nx, ny);
-        if (isBlockSpace(ni)) break;                              // physical blocks stop even Air
-        if (isVoidSpace(ni)) { if (isAir) continue; break; }       // Air flies over a void (can't land on it); a normal King just can't go there
-        if (side(nx, ny) !== s && !(s === B && sides[ni] === N))   // land: vacant / capturable enemy / (White only) neutral to recruit
-          moves.push(ni);
-        if (board[ni] !== NONE) { if (isAir) continue; break; }    // Air flies over the occupant to the far square; a normal King is blocked
+        if (isVoidSpace(ni) || isBlockSpace(ni)) continue;              // can't land on a void or block
+        if (side(nx, ny) === s || (s === B && sides[ni] === N)) continue; // can't land on own / (Black) neutral
+        if (Math.max(Math.abs(ddx), Math.abs(ddy)) === 1) { moves.push(ni); continue; } // adjacent: one step
+        if (_airKingIntermediate(x, y, nx, ny) >= 0) moves.push(ni);    // distance 2: needs a flyable path
+      }
+    } else {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
+          moves.push(idx(nx, ny));
+        }
       }
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
@@ -3775,6 +3860,7 @@ function aiPlay() {
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
         const _aiWasCapture = sides[move[1]] === W
           || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2);
+        const _aiLegs = (_aiFromElems & ELEM_AIR) ? _airMoveLegs(mfx, mfy, mtx, mty, _aiFromPiece0) : null;
         makeMove(move[0], move[1], true);
         if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
         if (move[1] === merchantIdx) respawnMerchant();
@@ -3788,7 +3874,7 @@ function aiPlay() {
         }];
         _appendCaptureGhosts(_aiAnimPieces);
         playMoveSfx(_aiPiece0, move[1]);
-        startAnim(_aiAnimPieces, 0, () => {
+        _startMoveAnim(_aiAnimPieces, _aiLegs, () => {
           _drainCaptureAnims();
           checkFireDeath(move[1]);
           if (board[move[1]] !== NONE && itemSpaces[move[1]] !== ITEM_NONE) _applyItemAuto(itemSpaces[move[1]], move[1]);
@@ -6931,6 +7017,8 @@ function handleBoardClick(cx, cy) {
       const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
       const _wasCapture = sides[clicked] === B || _isCheckersJump;
+      // Extended Air move (Knight/Pawn/King second hop) → animate hop-by-hop. Computed pre-move.
+      const _airLegs = (_fromElems & ELEM_AIR) ? _airMoveLegs(pfx, pfy, ptx, pty, _fromPiece) : null;
       makeMove(selected, clicked, true);
       if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece, _fromSide);
       const wAnimPieces = [{
@@ -6995,7 +7083,7 @@ function handleBoardClick(cx, cy) {
         } else { draw(); }
       };
       playMoveSfx(board[clickedDest], clickedDest);
-      startAnim(wAnimPieces, 0, () => {
+      _startMoveAnim(wAnimPieces, _airLegs, () => {
         _drainCaptureAnims();
         checkWhiteKingAlive();
         if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
