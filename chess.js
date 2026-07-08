@@ -1,4 +1,4 @@
-﻿const VERSION = "647";
+﻿const VERSION = "648";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2863,10 +2863,22 @@ function legalMoves(x, y) {
   // Black King: filter out moves that land on a square attacked by White,
   // EXCEPT capturing a White King — that wins instantly (or bounces off its shield),
   // so it must never be filtered even when the King's square is defended.
+  const fromI = idx(x, y);
+  // NOTE (by design): a Grey blocking a White slider's ray DOES count as cover here, even though
+  // greyPlay runs right after Black's move and the Grey may wander off and expose the King. The
+  // Grey opening that line is a deliberate opportunity for the player, not an AI blind spot.
   return pseudoMoves(x, y).filter(m => {
-    if ((board[m] === KING || board[m] === CHECKERS_KING) && sides[m] === W) return true;
+    if ((board[m] === KING || board[m] === CHECKERS_KING) && sides[m] === W) return true; // taking a White King wins/bounces — never filter
     const [nx, ny] = xy(m);
-    return !isAttacked(nx, ny, B);
+    // Test the square with the move SIMULATED: vacating the origin can open a slider's line onto m —
+    // a King sliding along a checking rook's own ray must stay illegal (its body was the blocker).
+    // Checking the un-simulated board misses that. Mutate/restore in place — no RNG or other state
+    // touched, so it stays cheap enough for the minimax hot path.
+    const kp = board[fromI], ksd = sides[fromI], cp = board[m], csd = sides[m];
+    board[m] = kp; sides[m] = ksd; board[fromI] = NONE; sides[fromI] = 0;
+    const attacked = isAttacked(nx, ny, B);
+    board[fromI] = kp; sides[fromI] = ksd; board[m] = cp; sides[m] = csd;
+    return !attacked;
   });
 }
 
