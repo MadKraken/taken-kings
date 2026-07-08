@@ -1,4 +1,4 @@
-﻿const VERSION = "646";
+﻿const VERSION = "647";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -660,8 +660,8 @@ let gold = 0;
 let _lostWhiteThisRun = false; // any White piece died this run (for the "no losses" achievement)
 let _runStartMs = 0;           // wall-clock start of the current run (for timed achievements)
 let _king20TakenBy = NONE;     // piece type that captured the 20th Black King (0 if not via a direct capture)
-let _recruitedCManThisRun = false;  // recruited a neutral Checkers Man this run
-let _recruitedCKingThisRun = false; // recruited a neutral Checkers King this run
+let _recruitedCManThisRun = false;  // recruited a Grey Checkers Man this run
+let _recruitedCKingThisRun = false; // recruited a Grey Checkers King this run
 let _maxGoldThisRun = 0;            // high-water mark of gold held this run
 let _usedItemThisRun = false;       // consumed any inventory item this run (for the no-item achievement)
 let _startedClassic = false;        // this run began from the Classic setup
@@ -715,7 +715,7 @@ function _trackWhiteTake(pieceMoved, fromI, capturedPiece) {
 let spawnCount = 1;
 let leapCount = 0;
 let nextWave = []; // array of {x, piece} for preview
-let nextBonuses = []; // [{type:'chest'|'item'|'void'|'block'|'neutral'|'river', col, ...}]
+let nextBonuses = []; // [{type:'chest'|'item'|'void'|'block'|'grey'|'river', col, ...}]
 let positionHistory = []; // track board states to detect repetition
 let replaySnapshots = [];
 let replayMode = false;
@@ -959,7 +959,7 @@ let _autoPlayUsedThisRun = false; // auto-play engaged this run -> run is not le
 let _instant = false; // headless re-sim: skip animations/audio/rendering/timers, run the turn flow synchronously
 // Recorded Black minimax moves. Re-simulating a whole game is expensive ONLY because Black's main
 // move is recomputed via minimax every turn; everything else (Black's greedy Speed/Bloodthirsty/chain
-// extras, neutrals, merchant, spawns) is cheap and reproduces deterministically from the positional
+// extras, greys, merchant, spawns) is cheap and reproduces deterministically from the positional
 // RNG. So we record just that one move per Black turn and, in re-sim, apply it instead of searching —
 // turning verification into a cheap synchronous replay. A random fraction of turns are still
 // recomputed and compared (spot-check) to catch a hacked client that made Black throw the game.
@@ -993,7 +993,7 @@ function _blackMainMove() {
 }
 // Log one player action into the run's input log. Only during real play (not replay,
 // not the setup screen, not headless re-sim). The server replays these against a
-// seed-reproduced world; everything else (AI moves, spawns, auto-advances, neutrals,
+// seed-reproduced world; everything else (AI moves, spawns, auto-advances, greys,
 // merchant) is derived.
 // `r` (RNG state at log time) is a diagnostic breadcrumb: the validator ignores it, but if a
 // run ever re-simulates to a different score, comparing each input's recorded r against the
@@ -1312,7 +1312,7 @@ function _landSkyDrop(f) {
       activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
       // Don't call endWhiteTurn; stat boosts are a bonus, interactive modes persist to White's turn
     } else {
-      _applyItemAuto(f.item, f.i); // Black/Neutral — auto-apply only
+      _applyItemAuto(f.item, f.i); // Black/Grey — auto-apply only
     }
   } else if (itemSpaces[f.i] === ITEM_NONE) {
     itemSpaces[f.i] = f.item;
@@ -1912,10 +1912,10 @@ function generateWave(count) {
 
 function isDarkSquare(x, y) { return (x + y) % 2 === 1; }
 
-// Roll bonuses (chest / obstacle / neutral) into the empty columns of an incoming wave.
+// Roll bonuses (chest / obstacle / Grey) into the empty columns of an incoming wave.
 // Obstacles ramp with depth: at wave 1 an empty column has the baseline 1-in-12
 // chance of any bonus (of which 1/3 is an obstacle → 2.78% obstacle); by wave 40
-// every empty column on an obstacle-row is a guaranteed obstacle, no chests/neutrals.
+// every empty column on an obstacle-row is a guaranteed obstacle, no chests/greys.
 // Obstacles are gated to alternating waves so two obstacle-rows never spawn back to
 // back — since all rows scroll down uniformly, that guarantees a clear row between
 // every obstacle row, so obstacles can never wall the player off into a Field Advance.
@@ -1932,11 +1932,12 @@ function generateRowBonuses(wave, waveCount = spawnCount + 1) {
   }
   const obstacleRow = (waveCount % 2 === 1); // only odd waves may spawn obstacles
   const pBonus = (1 / 12) + (1 - 1 / 12) * t;   // chance an empty column rolls anything: 1/12 → 1
-  // Type weights lerp from baseline [chest1, void1, block1, neutral3] toward obstacle-only.
+  // Type weights lerp from baseline [chest1, void1, block1, grey1.5] toward obstacle-only.
   // On non-obstacle rows the void/block weight is zeroed (keeps the every-other-row guarantee).
-  const wChest = 1 - t, wNeutral = 3 * (1 - t);
+  // Grey weight dialed back 50% (was 3) — Greys spawn about half as often.
+  const wChest = 1 - t, wGrey = 1.5 * (1 - t);
   const wVoid = obstacleRow ? (1 + 2 * t) : 0, wBlock = obstacleRow ? (1 + 2 * t) : 0;
-  const wTotal = wChest + wNeutral + wVoid + wBlock;
+  const wTotal = wChest + wGrey + wVoid + wBlock;
   for (let x = 0; x < 8; x++) {
     if (waveCols.has(x)) continue;
     if (wTotal <= 0) continue;           // late-game non-obstacle row: nothing left to spawn
@@ -1945,16 +1946,16 @@ function generateRowBonuses(wave, waveCount = spawnCount + 1) {
     if ((r -= wVoid) < 0) type = 'void';
     else if ((r -= wBlock) < 0) type = 'block';
     else if ((r -= wChest) < 0) type = 'chest';
-    else type = 'neutral';
+    else type = 'grey';
     if (type === 'void' || type === 'block') {
       bonuses.push({ type, col: x });
     } else if (type === 'chest') {
       bonuses.push({ type: 'chest', col: x });
     } else {
-      let neutralPiece = _randomSetupPiece();
-      // Checkers pieces must spawn on dark squares (neutrals enter at row 0)
-      if ((neutralPiece === CHECKERS || neutralPiece === CHECKERS_KING) && !isDarkSquare(x, 0)) neutralPiece = PAWN;
-      bonuses.push({ type: 'neutral', col: x, piece: neutralPiece, eff: _rollEffectSet(waveCount) });
+      let greyPiece = _randomSetupPiece();
+      // Checkers pieces must spawn on dark squares (greys enter at row 0)
+      if ((greyPiece === CHECKERS || greyPiece === CHECKERS_KING) && !isDarkSquare(x, 0)) greyPiece = PAWN;
+      bonuses.push({ type: 'grey', col: x, piece: greyPiece, eff: _rollEffectSet(waveCount) });
     }
   }
   return bonuses;
@@ -2364,7 +2365,7 @@ function _conquestTick() {
 
 
 
-function neutralMovesFor(i) {
+function greyMovesFor(i) {
   const [x, y] = xy(i);
   const p = board[i];
   const moves = [];
@@ -2399,18 +2400,18 @@ function neutralMovesFor(i) {
   return moves;
 }
 
-function neutralPlay(onDone) {
-  const neutrals = [];
-  for (let i = 0; i < 64; i++) if (sides[i] === N) neutrals.push(i);
-  if (neutrals.length === 0) { onDone(); return; }
-  shuffle(neutrals);
+function greyPlay(onDone) {
+  const greys = [];
+  for (let i = 0; i < 64; i++) if (sides[i] === N) greys.push(i);
+  if (greys.length === 0) { onDone(); return; }
+  shuffle(greys);
   const _gen = _runGen;
   const doNext = (ni) => {
     if (_gen !== _runGen) return; // stale chain from a previous run
-    if (ni >= neutrals.length) { onDone(); return; }
-    const i = neutrals[ni];
+    if (ni >= greys.length) { onDone(); return; }
+    const i = greys[ni];
     if (sides[i] !== N) { doNext(ni + 1); return; }
-    const moves = neutralMovesFor(i);
+    const moves = greyMovesFor(i);
     if (moves.length === 0) { doNext(ni + 1); return; }
     const dest = moves[randInt(moves.length)];
     const [fx, fy] = xy(i), [tx, ty] = xy(dest);
@@ -2433,8 +2434,8 @@ function slidingMoves(moves, x, y, dirs, s) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
-      if (sides[idx(nx, ny)] === N) break; // only W King can recruit neutrals; all others treat them as impassable
       const ni = idx(nx, ny);
+      if (sides[ni] === N) { if (s === W) moves.push(ni); break; } // White captures a Grey (Kings recruit); a Grey stops all sliders either way
       if (isBlockSpace(ni)) break;
       // Enemy fire: normal sliders can land here but can't slide through. A Fire Warrior
       // ignores fire entirely and slides through it (handled by the normal checks below).
@@ -2457,7 +2458,7 @@ function airSlidingMoves(moves, x, y, dirs, s) {
       if (isVoidSpace(ni)) { nx += dx; ny += dy; continue; } // fly OVER the void — can't land on it (matches normal sliders)
       const occ = sides[ni];
       if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
-      if (occ === N) { nx += dx; ny += dy; continue; } // fly through neutrals
+      if (occ === N) { if (s === W) moves.push(ni); nx += dx; ny += dy; continue; } // White can capture a Grey; both sides still fly over it
       moves.push(ni); // vacant or capturable enemy square
       if (board[ni] !== NONE) { nx += dx; ny += dy; continue; } // fly through enemy pieces too
       nx += dx; ny += dy;
@@ -2482,9 +2483,8 @@ function airKnightMoves(x, y, s) {
   const moves = [];
   for (const ni of reachable) {
     // Land on a vacant OR capturable-enemy square — the same rule a normal Knight uses; never on
-    // own/neutral pieces or void/block. (Previously required board[ni] === NONE, so an Air Knight
-    // couldn't capture anything — a strict downgrade that stopped it taking even an exposed King.)
-    if (sides[ni] === s || sides[ni] === N) continue;
+    // own pieces or void/block. A White Air Knight may also land on a Grey (to kill it).
+    if (sides[ni] === s || (sides[ni] === N && s !== W)) continue;
     if (isVoidSpace(ni) || isBlockSpace(ni)) continue;
     moves.push(ni);
   }
@@ -2559,9 +2559,9 @@ function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlo
 function _checkersAddJumpSlide(moves, midI, landI, s, isAir) {
   if (isAir && canLandEmpty(landI)) {
     moves.push(landI);
-  } else if (sides[midI] !== 0 && sides[midI] !== s && sides[midI] !== N
+  } else if (sides[midI] !== 0 && sides[midI] !== s && (sides[midI] !== N || s === W)
       && board[midI] !== NONE && canLandEmpty(landI)) {
-    moves.push(landI);
+    moves.push(landI); // jump-capture an enemy, or (White only) a Grey
   }
 }
 
@@ -2595,12 +2595,12 @@ function pseudoMoves(x, y) {
         const ni = idx(nx, ny);
         if (isVoidSpace(ni) || isBlockSpace(ni)) break;
         if (s === W) {
-          if (side(nx, ny) === e) { moves.push(ni); break; }
+          if (side(nx, ny) === e || sides[ni] === N) { moves.push(ni); break; } // capture an enemy, or kill a Grey
           if (ni === epTarget || ni === merchantIdx) { moves.push(ni); break; }
         } else {
           if (side(nx, ny) === e) { moves.push(ni); break; }
         }
-        if (piece(nx, ny) !== NONE) break; // own piece or neutral blocks further diagonal
+        if (piece(nx, ny) !== NONE) break; // own piece or (for Black) a Grey blocks further diagonal
       }
     }
   } else if (p === CHECKERS) {
@@ -2638,7 +2638,8 @@ function pseudoMoves(x, y) {
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
-      if (inB(nx, ny) && side(nx, ny) !== s && sides[idx(nx, ny)] !== N && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      // A White Knight may land on a Grey (to kill it); Black still treats Greys as impassable.
+      if (inB(nx, ny) && side(nx, ny) !== s && (sides[idx(nx, ny)] !== N || s === W) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
@@ -2939,16 +2940,16 @@ function makeMove(fromI, toI, visual = false) {
   if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2 && Math.abs(ty - fy) === 2) {
     const midI = idx((fx + tx) / 2, (fy + ty) / 2);
     const capPiece = board[midI], capSide = sides[midI], capHlth = health[midI];
-    if (capPiece !== NONE && capSide !== s && capSide !== N) {
+    if (capPiece !== NONE && capSide !== s && (capSide !== N || s === W)) { // White may also jump-kill a Grey
       if (visual) { playSfx('capture'); playSfx('punch'); _pendingCaptureAnims.push({ piece: capPiece, side: capSide, hlth: capHlth, atk: attacks[midI], spd: speeds[midI], boardIdx: midI, sx: MARGIN + ((fx+tx)/2)*TILE + TILE/2, sy: BOARD_Y + MARGIN + ((fy+ty)/2)*TILE + TILE/2 }); }
-      if (s === W) gold += GOLD_VALUE[capPiece] ?? 0;
-      if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W) { score += 1; if (visual && score === 20) _king20TakenBy = p; if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; }
-      if (visual && s === W) _trackWhiteTake(p, fromI, capPiece); // per-turn take tracking (checkers chain, etc.)
+      if (s === W) gold += (capSide === N ? Math.floor((GOLD_VALUE[capPiece] ?? 0) / 2) : (GOLD_VALUE[capPiece] ?? 0)); // Grey kills pay half
+      if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W && capSide === B) { score += 1; if (visual && score === 20) _king20TakenBy = p; if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; } // a Grey King gives gold but no point
+      if (visual && s === W && capSide === B) _trackWhiteTake(p, fromI, capPiece); // per-turn take tracking (Black takes only)
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
     }
   }
 
-  // White piece attacks neutral: King (or Checkers King) recruits, all others kill
+  // White piece attacks a Grey: King (or Checkers King) recruits it; all others kill it (half gold)
   if (s === W && sides[toI] === N) {
     if (p === KING || p === CHECKERS_KING) {
       sides[toI] = W;
@@ -2977,9 +2978,9 @@ function makeMove(fromI, toI, visual = false) {
   }
 
   if (captured !== NONE && sides[toI] !== s && s === W) {
-    gold += GOLD_VALUE[captured] ?? 0;
+    gold += (capSide === N ? Math.floor((GOLD_VALUE[captured] ?? 0) / 2) : (GOLD_VALUE[captured] ?? 0)); // killing a Grey pays half its Black gold value
   }
-  if ((captured === KING || captured === CHECKERS_KING) && sides[toI] !== s && s === W) {
+  if ((captured === KING || captured === CHECKERS_KING) && capSide === B && s === W) { // a Grey King gives gold but no point (capSide===B only)
     score += 1;
     if (visual && score === 20) _king20TakenBy = p; // record the piece that took the 20th King
     if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; // team size at the 25th King
@@ -3061,7 +3062,7 @@ function makeMove(fromI, toI, visual = false) {
     addToInventory(itemSpaces[toI]);
     itemSpaces[toI] = ITEM_NONE;
   } else if (!visual && s !== W && itemSpaces[toI] === ITEM_BOMB) {
-    // Black/Neutral auto-detonates a field bomb on landing — model the blast so minimax
+    // Black/Grey auto-detonates a field bomb on landing — model the blast so minimax
     // sees the loss (the moved piece dies) and avoids stepping on bombs.
     _simDetonate(toI);
   }
@@ -3393,7 +3394,7 @@ function fieldAdvance(playerTriggered = false) {
     }
     for (const b of nextBonuses) {
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
+      if (b.type === 'grey') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   } else if (merchantEntersThisWave) {
     // Merchant slides in from fog preview: place pieces at their previewed positions
@@ -3409,7 +3410,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const b of nextBonuses) {
       if (b.col === merchantEnterCol) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
+      if (b.type === 'grey') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   } else {
     // Normal advance: wave works around merchant's current position
@@ -3422,7 +3423,7 @@ function fieldAdvance(playerTriggered = false) {
     for (const b of nextBonuses) {
       if (idx(b.col, 0) === merchantIdx) continue;
       if (b.type === 'chest') _placeChestBonus(b.col);
-      if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
+      if (b.type === 'grey') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
     }
   }
 
@@ -3571,7 +3572,7 @@ function simulateLeap(scoring = true) {
   for (const w of nextWave) { if (!chestSpaces.has(idx(w.x, 0))) set(w.x, 0, w.piece, B); _applyEffectSet(idx(w.x, 0), w.eff); }
   for (const b of nextBonuses) {
     if (b.type === 'chest') chestSpaces.add(idx(b.col, 0));
-    if (b.type === 'neutral') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
+    if (b.type === 'grey') { set(b.col, 0, b.piece, N); _applyEffectSet(idx(b.col, 0), b.eff); }
   }
   nextWave = generateWave(spawnCount + 1);
   nextBonuses = generateRowBonuses(nextWave);
@@ -3856,7 +3857,7 @@ function aiPlay() {
         if (countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
         else if (isCheckmated(W)) _triggerGameOver(`Checkmate! Score: ${score}`);
         if (gameOver || _rewinderSaveOffer) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
-        neutralPlay(() => {
+        greyPlay(() => {
           merchantPlay(() => {
             applyRiverFlow(() => {
               _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance to burn Black
@@ -3941,17 +3942,17 @@ function aiPlay() {
         });
       }
     } else {
-      // No Black moves — pass through to neutralPlay/merchantPlay
+      // No Black moves — pass through to greyPlay/merchantPlay
       if (countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
       else if (isCheckmated(W)) _triggerGameOver(`Checkmate! Score: ${score}`);
       if (gameOver || _rewinderSaveOffer) { aiThinking = false; takeReplaySnapshot(); draw(); return; }
-      neutralPlay(() => {
+      greyPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
             // Black had no move. White's fire only expires once an enemy/neutral has had a turn to
-            // face it — with no Black or Neutral pieces on the board, nothing could be threatened, so
+            // face it — with no Black or Grey pieces on the board, nothing could be threatened, so
             // it persists (it'll block the wave the player Field Advances in, and clears once that
-            // wave moves or White moves a piece again). If enemies/neutrals remain, clear as usual.
+            // wave moves or White moves a piece again). If enemies/greys remain, clear as usual.
             if (board.some((pc, ii) => pc !== NONE && (sides[ii] === B || sides[ii] === N))) _clearFireOfSide(W);
             _doSkyDropPhase(() => {
               turn = W;
@@ -4100,7 +4101,7 @@ function adjacentClonerDests(i) {
 }
 
 // Auto-teleport: move the piece at i to a random safe empty square (used when a Teleporter
-// item lands on / is triggered by a Neutral or Black piece — mirrors the player's teleport).
+// item lands on / is triggered by a Grey or Black piece — mirrors the player's teleport).
 function _autoTeleport(i) {
   const dests = [];
   for (let j = 0; j < 64; j++) {
@@ -4167,7 +4168,7 @@ function canItemAffectPiece(item, i) {
   }
 }
 
-// Auto-apply an item to any piece (used for Black/Neutral landings). Teleporter/Cloner auto-trigger
+// Auto-apply an item to any piece (used for Black/Grey landings). Teleporter/Cloner auto-trigger
 // (random teleport / adjacent clone); a Promoter only affects a Pawn; unhandled items consume silently.
 function _applyItemAuto(item, i) {
   itemSpaces[i] = ITEM_NONE;
@@ -4638,7 +4639,7 @@ for (const b of nextBonuses) {
     ctx.restore();
   } else if (b.type === 'block') {
     drawBlockTile(ctx, bpx, bpy, TILE);
-  } else if (b.type === 'neutral') {
+  } else if (b.type === 'grey') {
     {
       _drawPieceSprite(ctx, N, b.piece, bpx + prevPad, bpy + prevPad, TILE - prevPad * 2, TILE - prevPad * 2, false, true);
       if (b.eff && b.eff.effects.length) _drawPieceEffectIcons(ctx, bpx, bpy, b.eff.effects);
@@ -6963,13 +6964,15 @@ function handleBoardClick(cx, cy) {
           });
         });
       };
-      // Hire neutral: bounce attacker, neutral turns white
-      if (sides[clicked] === N) {
+      // Recruit a Grey: only a King (or Checkers King) recruits — attacker bounces, the Grey turns white.
+      // A non-King White piece targeting a Grey KILLS it instead, and falls through to the normal
+      // capture path below (moves onto the square, half gold, no point even for a Grey King).
+      if (sides[clicked] === N && (board[selected] === KING || board[selected] === CHECKERS_KING)) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
-        const recruitedType = board[clicked]; // the neutral being recruited (only a King/Checkers King actually recruits)
+        const recruitedType = board[clicked]; // the Grey being recruited
         if (attackPiece === KING || attackPiece === CHECKERS_KING) {
-          playSfx('recruit'); // King (or Checkers King) recruits the Neutral
+          playSfx('recruit'); // King (or Checkers King) recruits the Grey
           _turnRecruited = true;                                    // recruited a Grey this turn (streak)
           if (attackPiece === CHECKERS_KING) _recruitedWithCKing = true; // recruited with a Checkers King
           if (recruitedType === CHECKERS) _recruitedCManThisRun = true;
@@ -7049,7 +7052,7 @@ function handleBoardClick(cx, cy) {
       const _midI2 = (Math.abs(ptx - pfx) === 2 && Math.abs(pty - pfy) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
       const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
-      const _wasCapture = sides[clicked] === B || _isCheckersJump;
+      const _wasCapture = sides[clicked] === B || sides[clicked] === N || _isCheckersJump; // a Grey kill also counts (Bloodthirsty)
       // Extended Air move (Knight/Pawn/King second hop) → animate hop-by-hop. Computed pre-move.
       const _airLegs = (_fromElems & ELEM_AIR) ? _airMoveLegs(pfx, pfy, ptx, pty, _fromPiece) : null;
       makeMove(selected, clicked, true);
