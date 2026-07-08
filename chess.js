@@ -1,4 +1,4 @@
-﻿const VERSION = "630";
+﻿const VERSION = "631";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5151,12 +5151,19 @@ if (gameOver && !replayMode) {
   }
   fillBtn(L.startOver, "#2a6e3f", "Start Over");
   fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
-  // Only errors get a status line (they explain the failure, e.g. "Refresh the page").
-  // Success is conveyed by the button label ("✓ Submitted") — no extra text needed.
+  // A failed submit gets a prominent red banner so it's never mistaken for success (the button
+  // also flips to red "Retry Submit"). Success needs no text — the "✓ Submitted" label says it.
   if (L.eligible && _lbSubmitState === 'error' && _lbSubmitMsg) {
-    ctx.font = "30px Canterbury"; ctx.fillStyle = "#e0a0a0";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(_lbSubmitMsg, boardCX, L.startOver.y + L.startOver.h + 28);
+    const msgY = L.startOver.y + L.startOver.h + 44;
+    const txt = "⚠ " + _lbSubmitMsg;
+    ctx.font = "30px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const pillW = Math.min(ctx.measureText(txt).width + 44, BOARD_PX - 16);
+    ctx.fillStyle = "rgba(90,18,18,0.94)";
+    ctx.beginPath(); ctx.roundRect(boardCX - pillW / 2, msgY - 27, pillW, 54, 12); ctx.fill();
+    ctx.strokeStyle = "rgba(255,110,110,0.55)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(boardCX - pillW / 2, msgY - 27, pillW, 54, 12); ctx.stroke();
+    ctx.fillStyle = "#ffd2d2";
+    ctx.fillText(txt, boardCX, msgY);
   }
   ctx.textBaseline = "alphabetic";
 }
@@ -5805,9 +5812,14 @@ function _lbDoSubmit(name) {
   try { localStorage.setItem('tk_lb_name', name); } catch (e) {}
   _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; draw();
   const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, inputs: _replayInputs } };
-  fetch(LB_SUBMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+  // Abort a hung request so the player sees an error (and can Retry) instead of a
+  // "Submitting…" button that spins forever with no feedback.
+  const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const _timeout = setTimeout(() => { if (_ctrl) _ctrl.abort(); }, 20000);
+  fetch(LB_SUBMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: _ctrl ? _ctrl.signal : undefined })
     .then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
     .then(({ ok, j }) => {
+      clearTimeout(_timeout);
       if (ok && j.ok && j.ranked) {
         _lbSubmitState = 'done';
         const bd = _lbBoard(j.board) ? _lbBoard(j.board).tab : j.board;
@@ -5824,7 +5836,12 @@ function _lbDoSubmit(name) {
       }
       draw();
     })
-    .catch(() => { _lbSubmitState = 'error'; _lbSubmitMsg = 'Network error.'; draw(); });
+    .catch((e) => {
+      clearTimeout(_timeout);
+      _lbSubmitState = 'error';
+      _lbSubmitMsg = (e && e.name === 'AbortError') ? 'Timed out — check connection, retry.' : 'Network error — retry.';
+      draw();
+    });
 }
 
 // Shared game-over button geometry (draw + click). A "Submit" button appears above the
