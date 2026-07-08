@@ -1,4 +1,4 @@
-﻿const VERSION = "636";
+﻿const VERSION = "637";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1043,7 +1043,15 @@ function _applyReplayInput(a) {
   // input) before their next non-shop action — do the same so the turn resumes/ends.
   if (shopMode && a.t !== 'buy' && a.t !== 'sell') closeShop();
   switch (a.t) {
-    case 'm': { const [fx, fy] = _sqCenter(a.f); handleBoardClick(fx, fy); const [tx, ty] = _sqCenter(a.to); handleBoardClick(tx, ty); break; }
+    case 'm': {
+      // Click the origin ONLY if it isn't already selected. During a Speed/Bloodthirsty extra
+      // move (or a Checkers chain) the piece is pre-selected — live, the player taps just the
+      // destination. Blindly re-clicking the origin here hit the "tap the selected piece = pass"
+      // branch, silently ending the turn and desyncing every replay containing a Speed second
+      // move (the root cause of the live-vs-server score mismatches in runs 13-16).
+      if (selected !== a.f) { const [fx, fy] = _sqCenter(a.f); handleBoardClick(fx, fy); }
+      const [tx, ty] = _sqCenter(a.to); handleBoardClick(tx, ty); break;
+    }
     case 'ta': teamAdvance(); break;
     case 'fa': fieldAdvance(true); break;
     case 'p':
@@ -1103,6 +1111,7 @@ function graveSlotPos(isPlayer, pieceType) {
 }
 
 function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
+  if (_instant) { if (onDone) onDone(); return; } // headless re-sim: run the completion (graveyard counts) now
   if (!replayMode) {
     _replayAnimBuffer.push({ type: 'fly', piece, side, sx, sy, tx, ty });
   }
@@ -1148,6 +1157,11 @@ function _chestBobTick() {
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
   if (side === W && piece) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell into the void
+  // Headless re-sim: no animation — run the continuation NOW. Without this the rAF tick never
+  // fires (rAF is a no-op headless), the onDone chain dies, and the sim's turn stalls forever
+  // while live play continues — desyncing every run whose turn routed through a void death
+  // (root cause of the run-16 live-vs-server mismatch at the Team Advance into a void).
+  if (_instant) { if (onDone) onDone(); return; }
   if (piece && piece !== QUEEN) playSfx('man'); // male piece screams falling into the void (Queen doesn't)
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
