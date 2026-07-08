@@ -1,4 +1,4 @@
-﻿const VERSION = "632";
+﻿const VERSION = "633";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -956,7 +956,18 @@ let _instant = false; // headless re-sim: skip animations/audio/rendering/timers
 // `r` (RNG state at log time) is a diagnostic breadcrumb: the validator ignores it, but if a
 // run ever re-simulates to a different score, comparing each input's recorded r against the
 // re-sim's r pinpoints the exact input where live and replay diverged.
-function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) { a.r = _rngState; _replayInputs.push(a); } }
+// `h` is a full game-state hash (board + every per-square aux array + key scalars): the r
+// breadcrumb alone can't distinguish state divergences that consume equal RNG draws (seen in
+// the 13-vs-5 mismatch, where live and re-sim boards split with identical RNG trails).
+function _stateHash() {
+  let h = 0x811c9dc5 | 0; // FNV-1a over the sim-relevant state
+  const mix = (v) => { h = (h ^ (v | 0)) | 0; h = Math.imul(h, 0x01000193); };
+  for (let i = 0; i < 64; i++) { mix(board[i]); mix(sides[i]); mix(health[i]); mix(elements[i]); mix(statuses[i]); mix(attacks[i]); mix(speeds[i]); mix(itemSpaces[i]); }
+  for (let i = 0; i < inventory.length; i++) mix(inventory[i]);
+  mix(score); mix(gold); mix(spawnCount); mix(leapCount); mix(shiftCountdown); mix(merchantIdx); mix(positionHistory.length);
+  return h | 0;
+}
+function _logInput(a) { if (gamePhase === 'playing' && !replayMode && !_instant) { a.r = _rngState; a.h = _stateHash(); _replayInputs.push(a); } }
 // Log an item use (inventory or board-space). `slot` = inventory._activeSlot, or -1 when
 // the item came from a board square (fromSpace) — the server derives the item variant from
 // inventory[slot] / the board-space item, and re-rolls any mystery/wild via the seeded RNG.
@@ -991,7 +1002,7 @@ function randInt(n) { return Math.floor(_rng() * n); }
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
-function _beginSetup(setupFn) { _runGen++; _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; setupFn(); }
+function _beginSetup(setupFn) { _runGen++; _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; _lbSubmitWarn = false; setupFn(); }
 
 // --- Headless re-simulation (Phase 3): replay a recorded run's input log against a
 // seed-reproduced world and return the authoritative result. Runs synchronously in
@@ -5158,17 +5169,20 @@ if (gameOver && !replayMode) {
   fillBtn(L.startOver, "#2a6e3f", "Start Over");
   fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
   // A failed submit gets a prominent red banner so it's never mistaken for success (the button
-  // also flips to red "Retry Submit"). Success needs no text — the "✓ Submitted" label says it.
-  if (L.eligible && _lbSubmitState === 'error' && _lbSubmitMsg) {
+  // also flips to red "Retry Submit"). A ranked-but-mismatched score gets an amber banner (the
+  // submission landed, but at the server's re-simulated value — a logged determinism bug).
+  // Plain success needs no text — the "✓ Submitted" label says it.
+  if (L.eligible && (_lbSubmitState === 'error' || _lbSubmitWarn) && _lbSubmitMsg) {
+    const isWarn = _lbSubmitState !== 'error';
     const msgY = L.startOver.y + L.startOver.h + 44;
     const txt = "⚠ " + _lbSubmitMsg;
     ctx.font = "30px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const pillW = Math.min(ctx.measureText(txt).width + 44, BOARD_PX - 16);
-    ctx.fillStyle = "rgba(90,18,18,0.94)";
+    ctx.fillStyle = isWarn ? "rgba(96,68,10,0.94)" : "rgba(90,18,18,0.94)";
     ctx.beginPath(); ctx.roundRect(boardCX - pillW / 2, msgY - 27, pillW, 54, 12); ctx.fill();
-    ctx.strokeStyle = "rgba(255,110,110,0.55)"; ctx.lineWidth = 2;
+    ctx.strokeStyle = isWarn ? "rgba(255,200,90,0.55)" : "rgba(255,110,110,0.55)"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.roundRect(boardCX - pillW / 2, msgY - 27, pillW, 54, 12); ctx.stroke();
-    ctx.fillStyle = "#ffd2d2";
+    ctx.fillStyle = isWarn ? "#ffe9b8" : "#ffd2d2";
     ctx.fillText(txt, boardCX, msgY);
   }
   ctx.textBaseline = "alphabetic";
@@ -5757,6 +5771,7 @@ function _lbFormatDate(iso) {
 const LB_SUBMIT_URL = SUPABASE_URL + '/functions/v1/bright-task';
 let _lbSubmitState = 'idle'; // 'idle' | 'submitting' | 'done' | 'error'
 let _lbSubmitMsg = '';       // status line under the button
+let _lbSubmitWarn = false;   // ranked, but the server's re-simulated score differed from live
 
 // A run is submittable only if it's a genuine, reproducible human run on an eligible mode.
 // Auto-play consumes RNG the input log can't reproduce (server would reject it), so it's barred.
@@ -5816,8 +5831,10 @@ function _lbSubmit() {
 
 function _lbDoSubmit(name) {
   try { localStorage.setItem('tk_lb_name', name); } catch (e) {}
-  _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; draw();
-  const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, inputs: _replayInputs } };
+  _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; _lbSubmitWarn = false; draw();
+  // liveScore rides along for forensics: the validator ignores it, but a stored run whose
+  // re-simulated value differs from liveScore is a confirmed determinism bug worth digging into.
+  const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, liveScore: score, inputs: _replayInputs } };
   // Abort a hung request so the player sees an error (and can Retry) instead of a
   // "Submitting…" button that spins forever with no feedback.
   const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -5829,7 +5846,15 @@ function _lbDoSubmit(name) {
       if (ok && j.ok && j.ranked) {
         _lbSubmitState = 'done';
         const bd = _lbBoard(j.board) ? _lbBoard(j.board).tab : j.board;
-        _lbSubmitMsg = j.duplicate ? 'Already on the board!' : `Added to the ${bd} board!`;
+        // Transparency: the board shows the SERVER's re-simulated score. If it differs from
+        // what the player actually saw, say so plainly instead of a silent "✓ Submitted" —
+        // a mismatch is a determinism bug (the run is stored server-side for investigation).
+        if (typeof j.value === 'number' && j.value !== score && !j.duplicate) {
+          _lbSubmitWarn = true;
+          _lbSubmitMsg = `Ranked as ${j.value}, not ${score} — bug logged, sorry!`;
+        } else {
+          _lbSubmitMsg = j.duplicate ? 'Already on the board!' : `Added to the ${bd} board!`;
+        }
         if (_lbData[j.board] !== undefined) _lbState[j.board] = 'idle';
       }
       else if (ok && j.ok && !j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = 'Score too low to rank.'; }
@@ -6687,7 +6712,10 @@ function handleResignConfirmClick(cx, cy) {
 }
 
 function handleInventoryClick(cx, cy) {
-  if (gamePhase !== 'playing' || turn !== W || aiThinking) return false;
+  // anim/waveAnim guard: the click dispatcher already blocks mid-animation taps, but direct
+  // callers (replay driver, autoplay) bypass it — using an item mid-slide silently corrupts
+  // (e.g. the mode opens against a board the current animation is about to change).
+  if (gamePhase !== 'playing' || turn !== W || aiThinking || anim || waveAnim) return false;
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {

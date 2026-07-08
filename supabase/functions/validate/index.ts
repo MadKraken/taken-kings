@@ -180,8 +180,9 @@ export async function handler(req: Request): Promise<Response> {
   }
   if (run.inputs.length > 5000) return json({ ok: false, error: "run too long" }, 400);
   // Byte cap too — the whole run is stored as jsonb, and the input-count cap alone
-  // wouldn't stop oversized junk fields from bloating the table.
-  if (JSON.stringify(run).length > 262144) return json({ ok: false, error: "run too large" }, 400);
+  // wouldn't stop oversized junk fields from bloating the table. 512KB: the r/h diagnostic
+  // breadcrumbs (v626/v633) add ~55 bytes per input, so a maximal run brushes 256KB.
+  if (JSON.stringify(run).length > 524288) return json({ ok: false, error: "run too large" }, 400);
 
   const board = boardFor(run);
   if (!board) return json({ ok: false, error: "run mode not eligible" }, 400);
