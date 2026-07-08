@@ -1,4 +1,4 @@
-﻿const VERSION = "644";
+﻿const VERSION = "645";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -629,8 +629,15 @@ function loadSprites() {
   };
   for (const [key, src, needsBg] of spriteList) {
     const img = new Image();
+    let _tries = 0;
     img.onload = () => done(key, img, needsBg ? _makeTransparentBg(img) : null);
-    img.onerror = () => done(key, null, null);
+    // Retry a failed fetch (cache-busted) before giving up — a cold first load of a new version pulls
+    // ~90 large conquest frames at once and an individual request can drop under memory/network
+    // pressure. Without the retry that frame becomes null, and the intro used to freeze on it.
+    img.onerror = () => {
+      if (_tries < 2) { _tries++; img.src = src + (src.includes('?') ? '&' : '?') + 'retry=' + _tries; }
+      else done(key, null, null);
+    };
     img.src = src;
   }
 }
@@ -2312,17 +2319,18 @@ let _conquestFramesReady = false;
 let _conquestGifActive = false;
 let _conquestStartMs = 0;
 let _conquestCurrentFrame = 0;
+let _conquestStallStart = 0;              // when we began waiting on a not-yet-ready frame (0 = not waiting)
+const CONQUEST_MAX_STALL_MS = 700;        // hard cap: a cosmetic intro must NEVER freeze the game on a slow/failed frame
 
 function playConquestGif() {
   _conquestGifActive = true;
   _conquestCurrentFrame = 0;
-  // Wait for frame 0 in case preload is still in progress
-  if (_conquestFrames[0].complete) {
-    _conquestStartMs = performance.now();
-    requestAnimationFrame(_conquestTick);
-  } else {
-    _conquestFrames[0].onload = () => { _conquestStartMs = performance.now(); requestAnimationFrame(_conquestTick); };
-  }
+  _conquestStallStart = 0;
+  // Just start the loop — _conquestTick handles frame readiness (waiting up to the stall cap, and
+  // skipping a null/errored frame). Dereferencing _conquestFrames[0] here would itself throw if
+  // frame 0's load errored on a cold first-load.
+  _conquestStartMs = performance.now();
+  requestAnimationFrame(_conquestTick);
 }
 
 function _conquestTick() {
@@ -2330,12 +2338,22 @@ function _conquestTick() {
   const now = performance.now();
   const elapsed = now - _conquestStartMs;
   const targetFrame = Math.min(Math.floor(elapsed / 1000 * CONQUEST_FPS), CONQUEST_FRAME_COUNT - 1);
-  // Stall timer if the target frame isn't loaded yet (safety net)
-  if (!_conquestFrames[targetFrame].complete) {
-    _conquestStartMs = now - (targetFrame / CONQUEST_FPS * 1000);
-    requestAnimationFrame(_conquestTick);
-    return;
+  const fr = _conquestFrames[targetFrame];
+  // A frame still decoding → wait, but CAP the wait so it can't hang. A null frame (its load errored —
+  // common on a cold first load of a new version, when the 94 large frames download under memory
+  // pressure) is never waited on; the draw simply skips it. The old code did an unguarded
+  // `_conquestFrames[targetFrame].complete`, which threw a TypeError on a null frame and froze the
+  // rAF loop mid-animation (the "hangs in the latter half, only on a fresh version" bug).
+  if (fr && !fr.complete) {
+    if (!_conquestStallStart) _conquestStallStart = now;
+    if (now - _conquestStallStart < CONQUEST_MAX_STALL_MS) {
+      _conquestStartMs = now - (targetFrame / CONQUEST_FPS * 1000);
+      requestAnimationFrame(_conquestTick);
+      return;
+    }
+    // waited past the cap — skip ahead rather than freeze
   }
+  _conquestStallStart = 0;
   _conquestCurrentFrame = targetFrame;
   draw();
   if (_conquestCurrentFrame >= CONQUEST_FRAME_COUNT - 1) {
