@@ -112,14 +112,40 @@ const CORS: Record<string, string> = {
 };
 
 const engines = new Map<string, Engine>(); // one per version, cached across warm invocations
+
+// Fetch the EXACT engine version the client played on. Two sources:
+//  1. jsDelivr at the immutable git tag (v626, v627, …) — works for ANY released version,
+//     so a player whose cached client is a version or two behind the latest deploy can
+//     still submit (GitHub Pages ignores the ?v= query and only ever serves the newest file,
+//     which used to reject every submission from a stale session as "version mismatch").
+//  2. GitHub Pages — fallback for the current deployment (covers a release whose tag
+//     hasn't been pushed/propagated yet).
+async function fetchEngineSource(v: string): Promise<string> {
+  const urls = [
+    `https://cdn.jsdelivr.net/gh/MadKraken/taken-kings@v${v}/chess.js`,
+    `${GAME_BASE}/chess.js?v=${v}`,
+  ];
+  let lastErr = "no source";
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) { lastErr = `fetch ${res.status}`; continue; }
+      const src = await res.text();
+      // Cheap pre-check before evaluating ~300KB of JS: does this file claim the right version?
+      const m = src.match(/^const VERSION = "(\d+)"/);
+      if (!m || m[1] !== v) { lastErr = `version mismatch (served ${m?.[1] ?? "?"}, requested ${v})`; continue; }
+      return src;
+    } catch (e) { lastErr = (e as Error).message; }
+  }
+  throw new Error(lastErr);
+}
+
 async function getEngine(version: string): Promise<Engine> {
   const v = String(version).replace(/[^0-9]/g, ""); // digits only — goes into a URL
   if (!v) throw new Error("bad version");
   const cached = engines.get(v);
   if (cached) return cached;
-  const res = await fetch(`${GAME_BASE}/chess.js?v=${v}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`chess.js fetch failed (${res.status})`);
-  const eng = loadEngine(await res.text());
+  const eng = loadEngine(await fetchEngineSource(v));
   if (eng.VERSION !== v) throw new Error(`version mismatch (served ${eng.VERSION}, requested ${v})`);
   engines.set(v, eng);
   return eng;

@@ -1,4 +1,4 @@
-﻿const VERSION = "629";
+﻿const VERSION = "630";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5818,7 +5818,9 @@ function _lbDoSubmit(name) {
       else {
         _lbSubmitState = 'error';
         const err = (j && j.error) ? String(j.error) : '';
-        _lbSubmitMsg = /version mismatch/.test(err) ? 'Refresh the page, then submit.' : (err ? err.slice(0, 40) : 'Submit failed.');
+        // Version mismatch = the server can't fetch this release yet (tag still propagating).
+        // Never tell the player to refresh — that destroys the run; retrying is the fix.
+        _lbSubmitMsg = /version mismatch/.test(err) ? 'Server updating — retry in a minute.' : (err ? err.slice(0, 40) : 'Submit failed.');
       }
       draw();
     })
