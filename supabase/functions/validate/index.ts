@@ -83,10 +83,11 @@ export interface RunRecord {
   timed?: boolean;
   secs?: number;
   inputs: Array<Record<string, unknown>>;
+  blackMoves?: number[]; // v644+: recorded Black minimax moves (from*64+to, -1 = no move)
 }
 
 export interface Engine {
-  replayRun: (run: RunRecord) => { score: number; gameOver: boolean };
+  replayRun: (run: RunRecord, opts?: { spotRate?: number; spotSeed?: number }) => { score: number; gameOver: boolean; spotFail?: boolean };
   VERSION: string;
 }
 
@@ -96,9 +97,29 @@ export interface Engine {
 export function loadEngine(chessSource: string): Engine {
   installStubs();
   const factory = new Function(
-    chessSource + "\n;return { replayRun: (r) => _replayRun(r), get VERSION(){ return VERSION; } };\n",
+    chessSource + "\n;return { replayRun: (r, o) => _replayRun(r, o), get VERSION(){ return VERSION; } };\n",
   );
   return factory() as Engine;
+}
+
+// Fraction of recorded Black turns to recompute-and-verify against minimax. A hacked client that
+// makes Black throw the game to inflate the score must match the true AI move on every turn it can't
+// predict will be checked — so even ~10% catches meaningful cheating with high probability while
+// keeping re-sim ~10x cheaper than full recompute (the whole point: 100+ king runs fit one call).
+const SPOT_CHECK_RATE = 0.1;
+
+// Seed for the spot-check turn selection: SHA-256(server secret + the run's semantic content).
+// Deterministic per run — a rejected cheater who hits Retry gets the SAME turns re-checked, so
+// resubmitting until the tampered turns dodge the sample doesn't work. Salted with a server secret —
+// the engine code is public, so an unsalted hash would let a cheater precompute exactly which turns
+// get checked and tamper only the rest. Only semantic fields are hashed (seed + blackMoves): fields
+// the validator ignores (liveScore, r/h breadcrumbs) can't be tweaked to reroll the subset, and any
+// change to blackMoves itself reshuffles the subset unpredictably while also changing the replay.
+async function spotSeedFor(run: RunRecord): Promise<number> {
+  const salt = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "tk-spot-salt";
+  const data = new TextEncoder().encode(`${salt}|${run.seed}|${(run.blackMoves ?? []).join(",")}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return new DataView(digest).getUint32(0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,9 +212,14 @@ export async function handler(req: Request): Promise<Response> {
   try { engine = await getEngine(version); }
   catch (e) { return json({ ok: false, error: "engine load: " + (e as Error).message }, 400); }
 
-  let result: { score: number; gameOver: boolean };
-  try { result = engine.replayRun(run); }
+  // v644+ runs carry recorded Black moves → re-sim applies them (cheap) with a random spot-check.
+  // Legacy runs (no blackMoves) fall back to full recompute inside the engine (may be slow/time out,
+  // handled separately). spotRate is harmless (0 effective) when there are no recorded moves.
+  let result: { score: number; gameOver: boolean; spotFail?: boolean };
+  try { result = engine.replayRun(run, { spotRate: SPOT_CHECK_RATE, spotSeed: await spotSeedFor(run) }); }
   catch (e) { return json({ ok: false, error: "resim failed: " + (e as Error).message }, 400); }
+  // A recorded Black move disagreed with what the AI would actually play → tampered run, reject.
+  if (result.spotFail) return json({ ok: false, ranked: false, error: "spot-check failed" }, 400);
 
   const value = result.score | 0;
   if (value < 1) return json({ ok: true, ranked: false, reason: "score too low", value });

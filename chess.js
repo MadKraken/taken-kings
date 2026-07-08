@@ -1,4 +1,4 @@
-﻿const VERSION = "643";
+﻿const VERSION = "644";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -950,6 +950,40 @@ let _runSeed = 0;    // the seed this run was started from (recorded with the ru
 let _replayInputs = []; // ordered log of the run's player inputs (for re-simulation)
 let _autoPlayUsedThisRun = false; // auto-play engaged this run -> run is not leaderboard-eligible
 let _instant = false; // headless re-sim: skip animations/audio/rendering/timers, run the turn flow synchronously
+// Recorded Black minimax moves. Re-simulating a whole game is expensive ONLY because Black's main
+// move is recomputed via minimax every turn; everything else (Black's greedy Speed/Bloodthirsty/chain
+// extras, neutrals, merchant, spawns) is cheap and reproduces deterministically from the positional
+// RNG. So we record just that one move per Black turn and, in re-sim, apply it instead of searching —
+// turning verification into a cheap synchronous replay. A random fraction of turns are still
+// recomputed and compared (spot-check) to catch a hacked client that made Black throw the game.
+let _blackMoveLog = [];      // live: this run's recorded main Black moves (encoded from*64+to, -1 = no move)
+let _replayBlack = null;     // re-sim: recorded log to apply (null => recompute Black, e.g. legacy runs)
+let _replayBlackIdx = 0;
+let _replaySpotRate = 0;     // re-sim: fraction of Black turns to recompute-and-verify (server sets ~0.1)
+let _replaySpotFail = false; // re-sim: a spot-checked move disagreed with the recorded one -> reject
+let _replaySpotRand = Math.random; // re-sim: spot-selection source. The server passes opts.spotSeed —
+// derived from a SERVER SECRET + the run's semantic content — making the checked subset (a) fixed per
+// run, so a rejected cheater can't just resubmit until the tampered turns dodge the sample, and
+// (b) unpredictable to the client, so a cheater can't precompute which turns are safe to tamper.
+function _encodeMove(m) { return m ? (m[0] * 64 + m[1]) : -1; }
+function _decodeMove(c) { return c < 0 ? null : [(c / 64) | 0, c % 64]; }
+// The one expensive Black decision per turn (full minimax at aiPlay). Live records it; re-sim replays
+// the recorded move (cheap), recomputing only on spot-check turns to verify it matches.
+function _blackMainMove() {
+  if (_replayBlack) {
+    const rec = _replayBlackIdx < _replayBlack.length ? _replayBlack[_replayBlackIdx] : -1;
+    _replayBlackIdx++;
+    if (_replaySpotRate > 0 && _replaySpotRand() < _replaySpotRate) { // spot-check: seeded server-side, stream-neutral
+      const m = aiBestMove();
+      if (_encodeMove(m) !== rec) _replaySpotFail = true;
+      return m; // use the authoritative recompute (identical to rec when honest)
+    }
+    return _decodeMove(rec);
+  }
+  const m = aiBestMove();
+  if (gamePhase === 'playing' && !replayMode && !_instant) _blackMoveLog.push(_encodeMove(m));
+  return m;
+}
 // Log one player action into the run's input log. Only during real play (not replay,
 // not the setup screen, not headless re-sim). The server replays these against a
 // seed-reproduced world; everything else (AI moves, spawns, auto-advances, neutrals,
@@ -1030,7 +1064,7 @@ function _detPick(n) {
 // Begin a new run's setup: pick a fresh seed and clear the input log, THEN run the
 // deterministic setup. The validator instead calls _seedRng(recordedSeed) + the same
 // setup fn to reproduce the identical starting board.
-function _beginSetup(setupFn) { _runGen++; _seedRng(_freshSeed()); _replayInputs = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; _lbSubmitWarn = false; setupFn(); }
+function _beginSetup(setupFn) { _runGen++; _seedRng(_freshSeed()); _replayInputs = []; _blackMoveLog = []; _autoPlayUsedThisRun = false; _lbSubmitState = 'idle'; _lbSubmitMsg = ''; _lbSubmitWarn = false; setupFn(); }
 
 // --- Headless re-simulation (Phase 3): replay a recorded run's input log against a
 // seed-reproduced world and return the authoritative result. Runs synchronously in
@@ -1107,14 +1141,23 @@ function _applyReplayInput(a) {
   }
 }
 
-// run = { seed, classic, timed, secs, inputs:[...] } -> { score, gameOver }
-function _replayRun(run) {
+// run = { seed, classic, timed, secs, inputs:[...], blackMoves?:[...] } -> { score, gameOver, spotFail }
+// opts.spotRate (0..1): fraction of recorded Black turns to recompute-and-verify (server anti-cheat).
+// If run.blackMoves is absent (legacy run), Black is recomputed every turn (the old, costly path).
+function _replayRun(run, opts) {
   const _savedTimeout = window.setTimeout, _savedRAF = window.requestAnimationFrame;
   const _prevInstant = _instant, _prevTimed = timedMode, _prevSecs = timedModeSecs;
+  const _prevBlack = _replayBlack, _prevIdx = _replayBlackIdx, _prevRate = _replaySpotRate, _prevFail = _replaySpotFail, _prevSpotRand = _replaySpotRand;
   try {
     window.setTimeout = (fn) => { if (typeof fn === 'function') fn(); return 0; }; // run deferred turn-flow steps inline
     window.requestAnimationFrame = () => 0;                                        // skip all cosmetic frames
     _instant = true;
+    _replayBlack = Array.isArray(run.blackMoves) ? run.blackMoves : null; // apply recorded Black moves when present
+    _replayBlackIdx = 0; _replaySpotRate = (opts && opts.spotRate) || 0; _replaySpotFail = false;
+    if (opts && opts.spotSeed != null) { // deterministic spot selection (own mulberry32; never touches the gameplay stream)
+      let s = opts.spotSeed >>> 0;
+      _replaySpotRand = () => { s = (s + 0x6D2B79F5) | 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    } else _replaySpotRand = Math.random;
     initBoard();                                        // full state reset
     timedMode = !!run.timed; if (run.secs) timedModeSecs = run.secs;
     _seedRng(run.seed >>> 0);
@@ -1124,9 +1167,10 @@ function _replayRun(run) {
     startGame(); turn = W;
     for (const a of run.inputs) { if (gameOver) break; _applyReplayInput(a); }
     if (shopMode && !gameOver) closeShop(); // finalize a run that ended with the shop open
-    return { score, gameOver };
+    return { score, gameOver, spotFail: _replaySpotFail };
   } finally {
     _instant = _prevInstant; timedMode = _prevTimed; timedModeSecs = _prevSecs;
+    _replayBlack = _prevBlack; _replayBlackIdx = _prevIdx; _replaySpotRate = _prevRate; _replaySpotFail = _prevFail; _replaySpotRand = _prevSpotRand;
     window.setTimeout = _savedTimeout; window.requestAnimationFrame = _savedRAF;
   }
 }
@@ -3823,7 +3867,7 @@ function aiPlay() {
   setTimeout(() => {
     if (_gen !== _runGen) return;                              // stale — a new run owns the board now
     if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
-    const move = aiBestMove();
+    const move = _blackMainMove();
     if (move) {
       // If a checkmated King is the one making the forced move, follow it to its new index
       if (_blackKingsInCheckmate.has(move[0])) { _blackKingsInCheckmate.delete(move[0]); _blackKingsInCheckmate.add(move[1]); }
@@ -5986,7 +6030,7 @@ function _lbDoSubmit(name) {
   _lbSubmitState = 'submitting'; _lbSubmitMsg = ''; _lbSubmitWarn = false; draw();
   // liveScore rides along for forensics: the validator ignores it, but a stored run whose
   // re-simulated value differs from liveScore is a confirmed determinism bug worth digging into.
-  const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, liveScore: score, inputs: _replayInputs } };
+  const payload = { version: VERSION, name, run: { seed: _runSeed, classic: _startedClassic, timed: timedMode, secs: timedModeSecs, liveScore: score, inputs: _replayInputs, blackMoves: _blackMoveLog } };
   // Abort a hung request so the player sees an error (and can Retry) instead of a
   // "Submitting…" button that spins forever with no feedback.
   const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
