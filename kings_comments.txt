@@ -44,4 +44,31 @@ Is this kingdom not blessed to have such a warrior as Queen!
 Even your martial moves are strange, foreign one, but I am no less grateful for them!
 
 [IMPLEMENTED v656] On White Checkers King taking a Black Warrior:
-Foreign King, I do not undersand your form, but your strength is seen!
+Foreign King, I do not understand your form, but your strength is seen!
+
+[IMPLEMENTED v657] On first Grey Warrior entering field:
+Behold, the Grey Warrior, whose curse falters at conviction! If I speak to them, perhaps they may be saved. Otherwise, they shall fall with the others!
+
+[IMPLEMENTED v657] On recruiting a Pawn:
+Another little one joins our cause! Every blade matters!
+
+[IMPLEMENTED v657] On recruiting a Rook:
+Another Rook to join our force, and a force they are indeed!
+
+[IMPLEMENTED v657] On recruiting a Bishop:
+Come, Bishop! March with us on the path of light!
+
+[IMPLEMENTED v657] On recruiting a Knight:
+Turn your mount, Knight! Ride with us!
+
+[IMPLEMENTED v657] On recruiting a Queen:
+It is a very hard thing that you should turn, Queen, but your blades are most welcome!
+
+[IMPLEMENTED v657] On recruiting a King:
+Ah, there is still honor amongst Kings here! Restore your honor!
+
+[IMPLEMENTED v657] On recruiting Checkers Man:
+O Man of Checkers, were your fathers not immigrants from afar? Likewise, seek a new banner, our banner of honor!
+
+[IMPLEMENTED v657] On recruiting Checkers King:
+Our kingdoms may be different, but ally yourself with us, King of Checkers!

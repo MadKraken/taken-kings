@@ -1,4 +1,4 @@
-﻿const VERSION = "656";
+﻿const VERSION = "657";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2995,6 +2995,7 @@ function makeMove(fromI, toI, visual = false) {
   // White piece attacks a Grey: King (or Checkers King) recruits it; all others kill it (half gold)
   if (s === W && sides[toI] === N) {
     if (p === KING || p === CHECKERS_KING) {
+      if (visual && _KING_RECRUIT_KEY[board[toI]]) _kingQueue(_KING_RECRUIT_KEY[board[toI]]); // the King welcomes the convert
       sides[toI] = W;
       const bounceI = calcBouncePos(fromI, toI, p);
       if (bounceI !== fromI) {
@@ -5502,14 +5503,27 @@ const KING_LINES = {
   capQueen:        ["Is this kingdom not blessed to have such a warrior as Queen!"],
   capCheckers:     ["Even your martial moves are strange, foreign one, but I am no less grateful for them!"],
   capCheckersKing: ["Foreign King, I do not understand your form, but your strength is seen!"],
+  // ── First Grey sighting (one-shot) ──
+  firstGrey: ["Behold, the Grey Warrior, whose curse falters at conviction! If I speak to them, perhaps they may be saved. Otherwise, they shall fall with the others!"],
+  // ── Recruit reactions, keyed by the Grey piece a White King just won over ──
+  recruitPawn:         ["Another little one joins our cause! Every blade matters!"],
+  recruitRook:         ["Another Rook to join our force, and a force they are indeed!"],
+  recruitBishop:       ["Come, Bishop! March with us on the path of light!"],
+  recruitKnight:       ["Turn your mount, Knight! Ride with us!"],
+  recruitQueen:        ["It is a very hard thing that you should turn, Queen, but your blades are most welcome!"],
+  recruitKing:         ["Ah, there is still honor amongst Kings here! Restore your honor!"],
+  recruitCheckers:     ["O Man of Checkers, were your fathers not immigrants from afar? Likewise, seek a new banner, our banner of honor!"],
+  recruitCheckersKing: ["Our kingdoms may be different, but ally yourself with us, King of Checkers!"],
 };
 const _KING_PRI = {
   gameOver: 100, king25: 70, king20: 70, king10: 70, tookKingMulti: 60, tookKing: 50,
   firstMove: 50, secondMove: 50,
   kingDanger: 45, lostPiece: 40,
   firstFieldAdvance: 30, firstWCheckersMove: 30, firstWCheckersKingMove: 30,
-  firstBCheckers: 30, firstBCheckersKing: 30, firstShadow: 30, firstItemFall: 30,
+  firstBCheckers: 30, firstBCheckersKing: 30, firstShadow: 30, firstItemFall: 30, firstGrey: 30,
   killGrey: 25, recruit: 25,
+  recruitPawn: 25, recruitRook: 25, recruitBishop: 25, recruitKnight: 25, recruitQueen: 25,
+  recruitKing: 25, recruitCheckers: 25, recruitCheckersKing: 25,
   capPawn: 20, capRook: 20, capBishop: 20, capKnight: 20, capQueen: 20, capKing: 20,
   capCheckers: 20, capCheckersKing: 20,
   fieldAdvance: 15, teamAdvance: 15,
@@ -5520,6 +5534,11 @@ const _KING_PRI = {
 const _KING_CAP_KEY = {
   [PAWN]: 'capPawn', [ROOK]: 'capRook', [BISHOP]: 'capBishop', [KNIGHT]: 'capKnight',
   [QUEEN]: 'capQueen', [KING]: 'capKing', [CHECKERS]: 'capCheckers', [CHECKERS_KING]: 'capCheckersKing',
+};
+// Which recruit line each Grey piece type earns when a White King wins it over.
+const _KING_RECRUIT_KEY = {
+  [PAWN]: 'recruitPawn', [ROOK]: 'recruitRook', [BISHOP]: 'recruitBishop', [KNIGHT]: 'recruitKnight',
+  [QUEEN]: 'recruitQueen', [KING]: 'recruitKing', [CHECKERS]: 'recruitCheckers', [CHECKERS_KING]: 'recruitCheckersKing',
 };
 let _kingRemark = "";        // current line shown in the dialogue box ('' = just the portrait)
 let _kingRemarkPri = 0;      // priority of the current line
@@ -5624,10 +5643,11 @@ function _kingMaybeIdle() {
 // Black checkers piece, sky shadows/drops), worry aloud if the King is threatened, else maybe chatter.
 function _kingOnPlayerTurn() {
   if (_instant || replayMode || gameOver) return;
-  for (let i = 0; i < 64; i++) { // first sighting of Black checkers pieces, any entry path (wave, promotion)
-    if (sides[i] !== B) continue;
-    if (board[i] === CHECKERS) _kingQueueFirst('firstBCheckers');
-    else if (board[i] === CHECKERS_KING) _kingQueueFirst('firstBCheckersKing');
+  for (let i = 0; i < 64; i++) { // first sighting of Black checkers pieces / Greys, any entry path (wave, promotion)
+    if (sides[i] === B) {
+      if (board[i] === CHECKERS) _kingQueueFirst('firstBCheckers');
+      else if (board[i] === CHECKERS_KING) _kingQueueFirst('firstBCheckersKing');
+    } else if (sides[i] === N && board[i] !== NONE) _kingQueueFirst('firstGrey');
   }
   _kingFlush();
   const [kx, ky] = findKing(W);
