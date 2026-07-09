@@ -1,4 +1,4 @@
-﻿const VERSION = "659";
+﻿const VERSION = "660";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1361,7 +1361,6 @@ function startWaveAnim(squares, shoveParams, onDone) {
     for (const ni of squares) {
       if (ni === sp.toI) continue;
       if (board[ni] === NONE && ni !== merchantIdx) continue;
-      if (elements[ni] & ELEM_EARTH) continue; // Earth is immune — no shove, no drawAt
       const [nx, ny] = xy(ni);
       const sdx = nx - tx, sdy = ny - ty;
       const releaseK = squareToK.get(ni) ?? 0;
@@ -1388,7 +1387,6 @@ function startWaveAnim(squares, shoveParams, onDone) {
       const ni = squares[i];
       if (ni === sp.toI) continue;
       if (board[ni] === NONE && ni !== merchantIdx) continue;
-      if (elements[ni] & ELEM_EARTH) continue;
       const [nx, ny] = xy(ni);
       const destX = nx + sp.dx, destY = ny + sp.dy;
       if (!inB(destX, destY) || isBlockSpace(idx(destX, destY))) continue;
@@ -1478,46 +1476,52 @@ function _waveLineSqFromMove(fromI, toI, p) {
   return { squares: sq, shoveParams: { isKnight: false, dx, dy, toI } };
 }
 
-// Draw a storefront icon centered in the tile at (tx,ty) with the given tile size.
-function drawBlockTile(gctx, tx, ty, tileSize) {
+// Stone-block tile palettes. `temp` swaps the tan stone for a mossy earthen green so a temporary
+// Earth block (spawned in front of an Earth warrior) reads at a glance as different from permanent rock.
+const _BLOCK_PALETTE = {
+  perm: { base: "#1e1a16", top: "#c8b890", bot: "#2e2418", left: "#908068", right: "#403428", face: "#786450", hi: "#a09070", sh: "#3e3028" },
+  temp: { base: "#141a10", top: "#b6cf86", bot: "#20301a", left: "#7c8c56", right: "#2c3a22", face: "#66783f", hi: "#95ac63", sh: "#2e3a20" },
+};
+function drawBlockTile(gctx, tx, ty, tileSize, temp = false) {
+  const c = temp ? _BLOCK_PALETTE.temp : _BLOCK_PALETTE.perm;
   const bev = tileSize * 0.22;
   gctx.save();
   // Outer dark edge / base
-  gctx.fillStyle = "#1e1a16";
+  gctx.fillStyle = c.base;
   gctx.fillRect(tx, ty, tileSize, tileSize);
   // Top bevel â€" lit from above
-  gctx.fillStyle = "#c8b890";
+  gctx.fillStyle = c.top;
   gctx.beginPath();
   gctx.moveTo(tx, ty); gctx.lineTo(tx + tileSize, ty);
   gctx.lineTo(tx + tileSize - bev, ty + bev); gctx.lineTo(tx + bev, ty + bev);
   gctx.closePath(); gctx.fill();
   // Bottom bevel â€" deep shadow
-  gctx.fillStyle = "#2e2418";
+  gctx.fillStyle = c.bot;
   gctx.beginPath();
   gctx.moveTo(tx, ty + tileSize); gctx.lineTo(tx + tileSize, ty + tileSize);
   gctx.lineTo(tx + tileSize - bev, ty + tileSize - bev); gctx.lineTo(tx + bev, ty + tileSize - bev);
   gctx.closePath(); gctx.fill();
   // Left bevel â€" half-lit
-  gctx.fillStyle = "#908068";
+  gctx.fillStyle = c.left;
   gctx.beginPath();
   gctx.moveTo(tx, ty); gctx.lineTo(tx, ty + tileSize);
   gctx.lineTo(tx + bev, ty + tileSize - bev); gctx.lineTo(tx + bev, ty + bev);
   gctx.closePath(); gctx.fill();
   // Right bevel â€" shadow side
-  gctx.fillStyle = "#403428";
+  gctx.fillStyle = c.right;
   gctx.beginPath();
   gctx.moveTo(tx + tileSize, ty); gctx.lineTo(tx + tileSize, ty + tileSize);
   gctx.lineTo(tx + tileSize - bev, ty + tileSize - bev); gctx.lineTo(tx + tileSize - bev, ty + bev);
   gctx.closePath(); gctx.fill();
   // Center face
-  gctx.fillStyle = "#786450";
+  gctx.fillStyle = c.face;
   gctx.fillRect(tx + bev, ty + bev, tileSize - bev * 2, tileSize - bev * 2);
   // Inner highlight lines (top-left edge of center)
-  gctx.strokeStyle = "#a09070"; gctx.lineWidth = 1.5;
+  gctx.strokeStyle = c.hi; gctx.lineWidth = 1.5;
   gctx.beginPath(); gctx.moveTo(tx + bev, ty + bev); gctx.lineTo(tx + tileSize - bev, ty + bev); gctx.stroke();
   gctx.beginPath(); gctx.moveTo(tx + bev, ty + bev); gctx.lineTo(tx + bev, ty + tileSize - bev); gctx.stroke();
   // Inner shadow lines (bottom-right edge of center)
-  gctx.strokeStyle = "#3e3028"; gctx.lineWidth = 1.5;
+  gctx.strokeStyle = c.sh; gctx.lineWidth = 1.5;
   gctx.beginPath(); gctx.moveTo(tx + tileSize - bev, ty + bev); gctx.lineTo(tx + tileSize - bev, ty + tileSize - bev); gctx.stroke();
   gctx.beginPath(); gctx.moveTo(tx + bev, ty + tileSize - bev); gctx.lineTo(tx + tileSize - bev, ty + tileSize - bev); gctx.stroke();
   gctx.restore();
@@ -2020,7 +2024,7 @@ function applyRiverFlow(onDone) {
       if (isBlockSpace(di)) continue;
       // Move piece/chest
       if (board[i] !== NONE) {
-        if (elements[i] & (ELEM_EARTH | ELEM_WATER)) continue;
+        if (elements[i] & ELEM_WATER) continue; // Water pieces still resist the current; Earth no longer does
         if (board[di] !== NONE || di === merchantIdx) continue;
         {
           animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
@@ -2380,8 +2384,9 @@ function _conquestTick() {
 function greyMovesFor(i) {
   const [x, y] = xy(i);
   const p = board[i];
+  const isEarth = !!(elements[i] & ELEM_EARTH); // Earth Greys may also land on (destroy) a block
   const moves = [];
-  const canLand = (nx, ny) => inB(nx, ny) && board[idx(nx, ny)] === NONE && idx(nx, ny) !== merchantIdx && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny));
+  const canLand = (nx, ny) => inB(nx, ny) && board[idx(nx, ny)] === NONE && idx(nx, ny) !== merchantIdx && !isVoidSpace(idx(nx, ny)) && (isEarth || !isBlockSpace(idx(nx, ny)));
   if (p === PAWN) {
     if (canLand(x, y - 1)) moves.push(idx(x, y - 1));
     if (canLand(x, y + 1)) moves.push(idx(x, y + 1));
@@ -2403,8 +2408,10 @@ function greyMovesFor(i) {
     else dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
     for (const [dx, dy] of dirs) {
       let nx = x + dx, ny = y + dy;
-      while (inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
-        moves.push(idx(nx, ny));
+      while (inB(nx, ny) && board[idx(nx, ny)] === NONE && !isVoidSpace(idx(nx, ny))) {
+        const bi = idx(nx, ny);
+        if (isBlockSpace(bi)) { if (isEarth) moves.push(bi); break; } // Earth Grey may land on the block, not slide past
+        moves.push(bi);
         nx += dx; ny += dy;
       }
     }
@@ -2413,6 +2420,7 @@ function greyMovesFor(i) {
 }
 
 function greyPlay(onDone) {
+  _clearTempBlocks(N); // Greys' own temp blocks expire as their next turn begins (before any early-out)
   const greys = [];
   for (let i = 0; i < 64; i++) if (sides[i] === N) greys.push(i);
   if (greys.length === 0) { onDone(); return; }
@@ -2429,6 +2437,7 @@ function greyPlay(onDone) {
     const [fx, fy] = xy(i), [tx, ty] = xy(dest);
     const p = board[i], h = health[i];
     movePiece(i, dest); // preserves statuses/elements/attacks/speeds/effectOrders (e.g. Bloodthirsty)
+    if (elements[dest] & ELEM_EARTH) _applyEarthLanding(dest, N, true); // Earth Grey: destroy a block landed on, else drop a temp block below
     if (itemSpaces[dest] !== ITEM_NONE) _applyItemAuto(itemSpaces[dest], dest);
     checkFireDeath(dest);
     startAnim([{
@@ -2441,14 +2450,14 @@ function greyPlay(onDone) {
   doNext(0);
 }
 
-function slidingMoves(moves, x, y, dirs, s) {
+function slidingMoves(moves, x, y, dirs, s, isEarth = false) {
   for (const [dx, dy] of dirs) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       if (side(nx, ny) === s) break;
       const ni = idx(nx, ny);
       if (sides[ni] === N) { if (s === W) moves.push(ni); break; } // White captures a Grey (Kings recruit); a Grey stops all sliders either way
-      if (isBlockSpace(ni)) break;
+      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth may land on the block (destroying it) but not slide past
       // Enemy fire: normal sliders can land here but can't slide through. A Fire Warrior
       // ignores fire entirely and slides through it (handled by the normal checks below).
       if (fireSquares.has(ni) && fireSquares.get(ni) !== s && !(elements[idx(x, y)] & ELEM_FIRE)) { moves.push(ni); break; }
@@ -2461,12 +2470,12 @@ function slidingMoves(moves, x, y, dirs, s) {
 }
 
 // Air variant: pass through pieces/obstacles, land on any reachable vacant square
-function airSlidingMoves(moves, x, y, dirs, s) {
+function airSlidingMoves(moves, x, y, dirs, s, isEarth = false) {
   for (const [dx, dy] of dirs) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       const ni = idx(nx, ny);
-      if (isBlockSpace(ni)) break; // physical blocks still stop Air
+      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // physical blocks still stop Air; Earth may land on (destroy) it
       if (isVoidSpace(ni)) { nx += dx; ny += dy; continue; } // fly OVER the void — can't land on it (matches normal sliders)
       const occ = sides[ni];
       if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
@@ -2478,7 +2487,7 @@ function airSlidingMoves(moves, x, y, dirs, s) {
   }
 }
 
-function airKnightMoves(x, y, s) {
+function airKnightMoves(x, y, s, isEarth = false) {
   const OFFSETS = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
   const reachable = new Set();
   for (const [dx, dy] of OFFSETS) {
@@ -2497,7 +2506,7 @@ function airKnightMoves(x, y, s) {
     // Land on a vacant OR capturable-enemy square — the same rule a normal Knight uses; never on
     // own pieces or void/block. A White Air Knight may also land on a Grey (to kill it).
     if (sides[ni] === s || (sides[ni] === N && s !== W)) continue;
-    if (isVoidSpace(ni) || isBlockSpace(ni)) continue;
+    if (isVoidSpace(ni) || (!isEarth && isBlockSpace(ni))) continue; // only Earth may land on a block
     moves.push(ni);
   }
   return moves;
@@ -2566,13 +2575,15 @@ function _airKingIntermediate(fx, fy, tx, ty) {
 function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 function isBlockSpace(i) { return specialSpaces[i]?.type === 'block'; }
 function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlockSpace(i); }
+// Earth-aware landing test: an Earth warrior may also end on a block square (destroying it).
+function canLandEarth(i, isEarth) { return board[i] === NONE && !isVoidSpace(i) && (isEarth || !isBlockSpace(i)); }
 
 // Adds a 2-square checkers move (jump capture or Air slide) to moves[]. Bounds checked by caller.
-function _checkersAddJumpSlide(moves, midI, landI, s, isAir) {
-  if (isAir && canLandEmpty(landI)) {
+function _checkersAddJumpSlide(moves, midI, landI, s, isAir, isEarth = false) {
+  if (isAir && canLandEarth(landI, isEarth)) {
     moves.push(landI);
   } else if (sides[midI] !== 0 && sides[midI] !== s && (sides[midI] !== N || s === W)
-      && board[midI] !== NONE && canLandEmpty(landI)) {
+      && board[midI] !== NONE && canLandEarth(landI, isEarth)) {
     moves.push(landI); // jump-capture an enemy, or (White only) a Grey
   }
 }
@@ -2581,8 +2592,9 @@ function pseudoMoves(x, y) {
   const moves = [];
   const p = piece(x, y), s = side(x, y), e = enemy(s);
   const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
+  const isEarth = !!(elements[idx(x, y)] & ELEM_EARTH); // Earth warriors may land on (and destroy) block squares
   // Air Knights get their own extended move set
-  if (isAir && p === KNIGHT) return airKnightMoves(x, y, s);
+  if (isAir && p === KNIGHT) return airKnightMoves(x, y, s, isEarth);
   if (p === PAWN) {
     const dir = s === W ? -1 : 1;
     const startY   = s === W ? 6 : 0;
@@ -2595,7 +2607,8 @@ function pseudoMoves(x, y) {
       const ny = y + dir * step;
       if (!inB(x, ny)) break;
       const ni = idx(x, ny);
-      if (ni === merchantIdx || isVoidSpace(ni) || isBlockSpace(ni)) break;
+      if (ni === merchantIdx || isVoidSpace(ni)) break;
+      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth pawn may step onto the block (destroying it), but not past
       if (piece(x, ny) !== NONE) break;
       moves.push(ni);
       // Enemy fire stops the forward march: a pawn may step ONTO it (and burn on landing) but can't
@@ -2625,47 +2638,47 @@ function pseudoMoves(x, y) {
     for (const dx of [-1, 1]) {
       const nx = x + dx, ny = y + dir;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
-      if (ni >= 0 && canLandEmpty(ni)) moves.push(ni);
+      if (ni >= 0 && canLandEarth(ni, isEarth)) moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dir;
-      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir);
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir, isEarth);
     }
     // Air bent-path: (x, y+2*dir) reachable via two zigzag forward steps
     if (isAir) {
       const bentI = inB(x, y + 2*dir) ? idx(x, y + 2*dir) : -1;
-      if (bentI >= 0 && canLandEmpty(bentI)) moves.push(bentI);
+      if (bentI >= 0 && canLandEarth(bentI, isEarth)) moves.push(bentI);
     }
   } else if (p === CHECKERS_KING) {
     const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
       const nx = x + dx, ny = y + dy;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
-      if (ni >= 0 && (canLandEmpty(ni) || sides[ni] === N) && !isVoidSpace(ni) && !isBlockSpace(ni))
+      if (ni >= 0 && !isVoidSpace(ni) && (canLandEarth(ni, isEarth) || sides[ni] === N))
         moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dy;
-      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir);
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir, isEarth);
     }
     // Air bent-path slides: squares reachable via two diagonal steps in different directions
     if (isAir) {
       for (const [bdx, bdy] of [[2,0],[-2,0],[0,2],[0,-2]]) {
         const bx = x + bdx, by = y + bdy;
-        if (inB(bx, by) && canLandEmpty(idx(bx, by))) moves.push(idx(bx, by));
+        if (inB(bx, by) && canLandEarth(idx(bx, by), isEarth)) moves.push(idx(bx, by));
       }
     }
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
       const nx = x + dx, ny = y + dy;
       // A White Knight may land on a Grey (to kill it); Black still treats Greys as impassable.
-      if (inB(nx, ny) && side(nx, ny) !== s && (sides[idx(nx, ny)] !== N || s === W) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) moves.push(idx(nx, ny));
+      if (inB(nx, ny) && side(nx, ny) !== s && (sides[idx(nx, ny)] !== N || s === W) && !isVoidSpace(idx(nx, ny)) && (isEarth || !isBlockSpace(idx(nx, ny)))) moves.push(idx(nx, ny));
     }
   } else if (p === BISHOP) {
     const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
-    if (isAir) airSlidingMoves(moves, x, y, dirs, s); else slidingMoves(moves, x, y, dirs, s);
+    if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
   } else if (p === ROOK) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-    if (isAir) airSlidingMoves(moves, x, y, dirs, s); else slidingMoves(moves, x, y, dirs, s);
+    if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
   } else if (p === QUEEN) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
-    if (isAir) airSlidingMoves(moves, x, y, dirs, s); else slidingMoves(moves, x, y, dirs, s);
+    if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
   } else if (p === KING) {
     if (isAir) {
       // Air King = TWO king-steps in ANY combination (not just a straight line): it reaches every
@@ -2677,7 +2690,7 @@ function pseudoMoves(x, y) {
         const nx = x + ddx, ny = y + ddy;
         if (!inB(nx, ny)) continue;
         const ni = idx(nx, ny);
-        if (isVoidSpace(ni) || isBlockSpace(ni)) continue;              // can't land on a void or block
+        if (isVoidSpace(ni) || (!isEarth && isBlockSpace(ni))) continue; // can't land on a void; only Earth may land on a block
         if (side(nx, ny) === s || (s === B && sides[ni] === N)) continue; // can't land on own / (Black) neutral
         if (Math.max(Math.abs(ddx), Math.abs(ddy)) === 1) { moves.push(ni); continue; } // adjacent: one step
         if (_airKingIntermediate(x, y, nx, ny) >= 0) moves.push(ni);    // distance 2: needs a flyable path
@@ -2686,7 +2699,7 @@ function pseudoMoves(x, y) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dy === 0) continue;
         const nx = x + dx, ny = y + dy;
-        if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && !isBlockSpace(idx(nx, ny))) {
+        if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && (isEarth || !isBlockSpace(idx(nx, ny)))) {
           moves.push(idx(nx, ny));
         }
       }
@@ -2740,7 +2753,6 @@ function _shoveMerchant(dx, dy) {
 }
 
 function shovePiece(srcI, dx, dy) {
-  if (elements[srcI] & ELEM_EARTH) return; // Earth pieces immune to forced movement
   // Merchant is tracked separately from board[]
   if (srcI === merchantIdx) return _shoveMerchant(dx, dy);
   if (board[srcI] === NONE) return;
@@ -2898,39 +2910,11 @@ function legalMoves(x, y) {
   });
 }
 
-// Returns the destination index if an Earth attacker can bonk the defender, else -1 (fall back to bounce).
-// fromI = attacker origin, toI = defender square, p = attacker piece type.
-function calcEarthBonkDest(fromI, toI, p) {
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
-  let nx, ny;
-  if (p === KNIGHT) {
-    nx = tx + (tx - fx); ny = ty + (ty - fy);
-  } else {
-    const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
-    nx = tx + dx; ny = ty + dy;
-  }
-  if (!inB(nx, ny)) return -1;
-  const di = idx(nx, ny);
-  if (isBlockSpace(di)) return -1;
-  if (board[di] !== NONE) return -1;
-  return di;
-}
-
 // Applies shield-bounce state for atkI→defI (must already satisfy health[defI]>1 check).
-// Returns { mode:'earth-bonk', bonkDest } or { mode:'attacker-bounce', bounceI }.
+// Returns { mode:'attacker-bounce', bounceI } (Earth no longer "bonks" — it bounces like any attacker).
 function applyShieldBounceState(atkI, defI, p) {
   health[defI]--;
   if (health[defI] < 2) _removeEffect(defI, 'hlt'); // shield consumed — drop the badge
-  if ((elements[atkI] & ELEM_EARTH) && !(elements[defI] & ELEM_EARTH)) {
-    const bonkDest = calcEarthBonkDest(atkI, defI, p);
-    if (bonkDest >= 0) {
-      // Move defender to bonkDest, attacker occupies defI
-      copyPiece(defI, bonkDest);
-      copyPiece(atkI, defI);
-      clearSquare(atkI);
-      return { mode: 'earth-bonk', bonkDest };
-    }
-  }
   const bounceI = calcBouncePos(atkI, defI, p);
   if (bounceI !== atkI) {
     if (isVoidSpace(bounceI)) {
@@ -3099,6 +3083,7 @@ function makeMove(fromI, toI, visual = false) {
   elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
   effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
+  if (movedElem & ELEM_EARTH) _applyEarthLanding(toI, s, visual); // Earth: destroy a block landed on, else drop a temp block in front
 
   // Ground items (sky drops): in simulation, bank the item so the search values
   // landing on item squares (via the inventory eval term). Real pickups run
@@ -3110,6 +3095,32 @@ function makeMove(fromI, toI, visual = false) {
     // Black/Grey auto-detonates a field bomb on landing — model the blast so minimax
     // sees the loss (the moved piece dies) and avoids stepping on bombs.
     _simDetonate(toI);
+  }
+}
+
+// Earth landing: if the warrior ended on a Block square, destroy it (no temp block spawns then).
+// Otherwise drop a Temporary Block on the vacant square "in front" of the piece — the square toward
+// the enemy (White: one row up; Black/Grey: one row down). Temp blocks obstruct exactly like normal
+// blocks and are cleared right before their owner's next turn (see _clearTempBlocks). The spawn is a
+// real-move effect (visual): it runs identically in live play and headless re-sim — which drive every
+// real move through makeMove(visual=true) — but is kept out of minimax so lookahead stays cheap. The
+// block-destruction runs in sim too (it changes legality), which is why saveState covers specialSpaces.
+function _applyEarthLanding(landI, side, visual) {
+  if (isBlockSpace(landI)) { specialSpaces[landI] = null; return; } // landed on a block → destroy it; no temp block
+  if (!visual) return;
+  const [lx, ly] = xy(landI);
+  const fy = ly + (side === W ? -1 : 1);
+  if (!inB(lx, fy)) return;
+  const fi = idx(lx, fy);
+  if (board[fi] !== NONE || specialSpaces[fi] || fi === merchantIdx) return; // only on a fully vacant square
+  specialSpaces[fi] = { type: 'block', temp: true, owner: side };
+}
+// Remove the temporary blocks a side dropped last turn — called right before that side acts again,
+// so each temp block lasts through exactly one opponent turn. Deterministic (runs in live + re-sim).
+function _clearTempBlocks(side) {
+  for (let i = 0; i < 64; i++) {
+    const sp = specialSpaces[i];
+    if (sp && sp.type === 'block' && sp.temp && sp.owner === side) specialSpaces[i] = null;
   }
 }
 
@@ -3561,6 +3572,7 @@ function saveState() {
     histLen: positionHistory.length, shiftCountdown,
     chestSpaces: new Set(chestSpaces),
     itemSpaces: [...itemSpaces],
+    specialSpaces: specialSpaces.map(s => s ? {...s} : null), // Earth destroys blocks in sim — must roll back
     merchantIdx, merchantQueued, merchantQueuedCol,
     rngState: _rngState, rngEpoch: _rngEpoch, // minimax lookahead must NOT perturb the real RNG stream/epoch
   };
@@ -3578,6 +3590,7 @@ function restoreState(st) {
   shiftCountdown = st.shiftCountdown;
   if (st.chestSpaces) chestSpaces = new Set(st.chestSpaces);
   if (st.itemSpaces) itemSpaces.splice(0, 64, ...st.itemSpaces);
+  if (st.specialSpaces) specialSpaces.splice(0, 64, ...st.specialSpaces.map(s => s ? {...s} : null));
   if (st.merchantIdx !== undefined) merchantIdx = st.merchantIdx;
   if (st.merchantQueued !== undefined) { merchantQueued = st.merchantQueued; merchantQueuedCol = st.merchantQueuedCol; }
   if (st.rngState !== undefined) _rngState = st.rngState; // roll back RNG consumed during lookahead
@@ -3917,6 +3930,7 @@ function aiPlay() {
   setTimeout(() => {
     if (_gen !== _runGen) return;                              // stale — a new run owns the board now
     if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
+    _clearTempBlocks(B); // Black's own temp blocks expire as its next turn begins
     const move = _blackMainMove();
     if (move) {
       lastActingSide = B;
@@ -3934,6 +3948,7 @@ function aiPlay() {
               _doSkyDropPhase(() => {
                 turn = W;
                 aiThinking = false;
+                _clearTempBlocks(W); // White's temp blocks expire as its next turn begins
                 _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
                 takeReplaySnapshot();
                 _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -3945,13 +3960,11 @@ function aiPlay() {
         });
       };
 
-      // Shield bounce: attacker slides in, then bounces back (or Earth bonks defender forward)
+      // Shield bounce: attacker slides in, then bounces back
       if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
         playSfx('shield'); // shield block sound at attack start (pop stays on impact)
         const attackPiece = board[move[0]], attackHlth = health[move[0]];
-        const defPiece = board[move[1]], defSide = sides[move[1]], defHlth = health[move[1]];
         const wasLastShield = health[move[1]] === 2;
-        const isEarth = !!(elements[move[0]] & ELEM_EARTH);
         const hitCX = mToCX + TILE / 2, hitCY = mToCY + TILE / 2;
         // Phase 1: slide attacker toward defender's square
         startAnim([{ toIdx: move[0], fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
@@ -3959,15 +3972,8 @@ function aiPlay() {
           if (move[1] === merchantIdx) respawnMerchant();
           recordPosition();
           if (wasLastShield) startShieldPop(hitCX, hitCY); // shield blocks on impact (sound + pop)
-          if (result.mode === 'earth-bonk') {
-            // Attacker already at move[1]; animate defender being bonked to bonkDest
-            const [bdx, bdy] = xy(result.bonkDest);
-            const bonkCX = MARGIN + bdx * TILE, bonkCY = BOARD_Y + MARGIN + bdy * TILE;
-            startAnim([{ toIdx: result.bonkDest, fromCX: mToCX, fromCY: mToCY, toCX: bonkCX, toCY: bonkCY, piece: defPiece, side: defSide, hlth: defHlth - 1, atk: attacks[result.bonkDest], spd: speeds[result.bonkDest] }], 0, () => {
-              _aiSpeedContinue(move[1], 0, _aiFinish); // Earth attacker now occupies the defender's square
-            });
-          } else {
-            // Normal bounce: animate attacker sliding back
+          {
+            // Animate attacker sliding back
             const [bx, by] = xy(result.bounceI);
             const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
             startAnim([{ toIdx: result.bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
@@ -4033,6 +4039,7 @@ function aiPlay() {
             _doSkyDropPhase(() => {
               turn = W;
               aiThinking = false;
+              _clearTempBlocks(W); // White's temp blocks expire as its next turn begins
               _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
               takeReplaySnapshot();
               _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -4918,7 +4925,7 @@ for (let i = 0; i < 64; i++) {
   const sp = specialSpaces[i];
   if (!sp || sp.type !== 'block') continue;
   const [x, y] = xy(i);
-  drawBlockTile(ctx, MARGIN + x * TILE, MARGIN + y * TILE, TILE);
+  drawBlockTile(ctx, MARGIN + x * TILE, MARGIN + y * TILE, TILE, !!sp.temp);
 }
 
 // Water wave animation overlay
@@ -7119,7 +7126,6 @@ function handleElementizerClick(cx, cy) {
     effectOrders[i] = effectOrders[i].filter(e => e !== 'fire' && e !== 'water' && e !== 'earth' && e !== 'air');
     elements[i] = resolvedElem;
     _grantEffect(i, _ELEM_BADGE[resolvedElem]);
-    if (resolvedElem === ELEM_EARTH) { health[i] = 2; _grantEffect(i, 'hlt'); }
     playSfx('spell'); // item grants a piece an effect
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
@@ -7314,7 +7320,7 @@ function handleBoardClick(cx, cy) {
         if (speeds[fromI] > 1 && health[clicked] - attacks[fromI] >= 1) _turnFastBounced.add(clicked);
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
-        const bounceI = result.mode === 'attacker-bounce' ? result.bounceI : fromI;
+        const bounceI = result.bounceI;
         selected = -1; validMoves = [];
         if (result.voidDeath) { // the White attacker bounced into a Void and fell in
           _speedIdx = -1; _speedMovesUsed = 0;
@@ -7330,7 +7336,7 @@ function handleBoardClick(cx, cy) {
         }
         // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
         // (mirrors the AI's _aiSpeedContinue after a shield bounce).
-        const _sbFinalI = result.mode === 'earth-bonk' ? clicked : result.bounceI;
+        const _sbFinalI = result.bounceI;
         if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
           _speedMovesUsed++; _speedIdx = _sbFinalI;
         } else {
