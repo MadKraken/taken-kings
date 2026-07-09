@@ -38,7 +38,7 @@ Yes, rider! And so we ride to victory!
 A White King does not sit idle on his throne when his people are so ravaged!
 
 [IMPLEMENTED v656] On a White Queen taking a Black Warrior:
-Is this kingdom not blessed to have such a warrior as Queen!
+Is this kingdom not blessed to have such a warrior as this Queen!
 
 [IMPLEMENTED v656] On White Checkers Man taking a Black Warrior:
 Even your martial moves are strange, foreign one, but I am no less grateful for them!
