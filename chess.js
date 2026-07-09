@@ -1,4 +1,4 @@
-﻿const VERSION = "653";
+﻿const VERSION = "654";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -863,6 +863,16 @@ let aiThinking = false;
 
 const AI_DEPTH = 3;
 const HINT_DEPTH = 5;
+// Density-bounded Black search: a full depth-3 minimax cost grows ~ (Black moves × White
+// replies) per extra ply, so a swarmed late-game board (25+ kings, big White army, Air/Speed
+// extra-move plies) can take many seconds per turn on a phone — and blows the leaderboard
+// validator's CPU budget, surfacing as "Submit failed". We step the depth down as the board
+// crowds, keyed on Bmoves×Wmoves at the decision point. This is deterministic (a pure function
+// of the position), so live play and headless re-simulation choose the SAME depth and the
+// recorded-move spot-check stays valid. Thresholds tuned so normal early/mid play keeps full
+// depth 3; only genuinely swarmed boards (where the player is already dominating) drop lower.
+const AI_DENSITY_DEPTH2 = 600;   // Bmoves×Wmoves above this → depth 2
+const AI_DENSITY_DEPTH1 = 3000;  // …above this → depth 1
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
 const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 30};
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
@@ -3758,6 +3768,17 @@ function allPseudoMovesForSide(s) {
   return moves;
 }
 
+// Density-bounded search depth for Black's turn. bMoves is the number of root candidate
+// moves; we pair it with White's reply count to estimate the branching cost and step the
+// depth down on crowded boards. Pure function of the current position → same result live and
+// in re-simulation. See AI_DENSITY_* above.
+function _aiSearchDepth(bMoves) {
+  const product = bMoves * allLegalMovesForSide(W).length;
+  if (product > AI_DENSITY_DEPTH1) return 1;
+  if (product > AI_DENSITY_DEPTH2) return AI_DEPTH - 1;
+  return AI_DEPTH;
+}
+
 // Check if a specific Black King (by board index ki) is in checkmate:
 // it must be in check AND no Black move leaves it safe.
 function aiBestMove() {
@@ -3784,13 +3805,14 @@ function aiBestMove() {
   });
   if (chainKingAttacks.length > 0) return chainKingAttacks[_detPick(chainKingAttacks.length)];
   if (moves.length === 0) return null;
+  const searchDepth = _aiSearchDepth(moves.length);
   let bestScore = Infinity;
   let bestMoves = [];
   for (const [from, to] of moves) {
     const val = withState(() => {
       const wasCap = sides[to] === W;
       makeMove(from, to); _simFireDeath(to); recordPosition();
-      return _turnContinuation(to, _extraMoveBudget(to, wasCap), AI_DEPTH, -Infinity, Infinity, false);
+      return _turnContinuation(to, _extraMoveBudget(to, wasCap), searchDepth, -Infinity, Infinity, false);
     });
     if (val < bestScore) {
       bestScore = val;
@@ -6148,8 +6170,8 @@ function _lbDoSubmit(name) {
   const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const _timeout = setTimeout(() => { if (_ctrl) _ctrl.abort(); }, 20000);
   fetch(LB_SUBMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: _ctrl ? _ctrl.signal : undefined })
-    .then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
-    .then(({ ok, j }) => {
+    .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j })).catch(() => ({ ok: r.ok, status: r.status, j: {} })))
+    .then(({ ok, status, j }) => {
       clearTimeout(_timeout);
       if (ok && j.ok && j.ranked) {
         _lbSubmitState = 'done';
@@ -6169,9 +6191,15 @@ function _lbDoSubmit(name) {
       else {
         _lbSubmitState = 'error';
         const err = (j && j.error) ? String(j.error) : '';
-        // Version mismatch = the server can't fetch this release yet (tag still propagating).
-        // Never tell the player to refresh — that destroys the run; retrying is the fix.
-        _lbSubmitMsg = /version mismatch/.test(err) ? 'Server updating — retry in a minute.' : (err ? err.slice(0, 40) : 'Submit failed.');
+        // Surface enough to diagnose from the player's screen instead of a bare "Submit failed.":
+        //  • version mismatch = server can't fetch this release yet (tag still propagating) —
+        //    never tell the player to refresh (that destroys the run); retrying is the fix.
+        //  • 546 = Supabase worker CPU/mem limit (a run too heavy to re-simulate in budget).
+        //  • anything else = show the server's error text, or the raw HTTP status as a fallback.
+        if (/version mismatch/.test(err)) _lbSubmitMsg = 'Server updating — retry in a minute.';
+        else if (err) _lbSubmitMsg = err.slice(0, 44);
+        else if (status === 546) _lbSubmitMsg = 'Run too heavy to verify (546) — retry.';
+        else _lbSubmitMsg = `Submit failed (HTTP ${status || '?'}).`;
       }
       draw();
     })
