@@ -1,4 +1,4 @@
-﻿const VERSION = "657";
+﻿const VERSION = "659";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2148,6 +2148,7 @@ function initBoard() {
   chestSpaces = new Set();
   _rewinderSaveOffer = false;
   if (_lbNameInput) { _lbNameInput.onblur = null; _lbNameInput.onkeydown = null; _lbNameInput.style.display = 'none'; } // hide the name field on Start Over
+  if (_lbNameBtn) { _lbNameBtn.onpointerdown = null; _lbNameBtn.onclick = null; _lbNameBtn.style.display = 'none'; }     // …and its Submit button
   mainMenuOpen = false; // Start Over / new run lands on the setup screen (menu-bg scroll stops on its own)
   health.fill(1); shiftCountdown = 10;
   itemSpaces.fill(ITEM_NONE);
@@ -5500,7 +5501,7 @@ const KING_LINES = {
   capBishop:       ["O seer, have you not indeed seen our enemy fall!"],
   capKnight:       ["Yes, rider! And so we ride to victory!"],
   capKing:         ["A White King does not sit idle on his throne when his people are so ravaged!"],
-  capQueen:        ["Is this kingdom not blessed to have such a warrior as Queen!"],
+  capQueen:        ["Is this kingdom not blessed to have such a warrior as this Queen!"],
   capCheckers:     ["Even your martial moves are strange, foreign one, but I am no less grateful for them!"],
   capCheckersKing: ["Foreign King, I do not understand your form, but your strength is seen!"],
   // ── First Grey sighting (one-shot) ──
@@ -6210,10 +6211,13 @@ function _lbEligible() {
   return !_autoPlayUsedThisRun && score >= 1 && _replayInputs.length > 0 && (!timedMode || timedModeSecs === 15);
 }
 
-// On-screen name entry via a real HTML <input> overlaid on the canvas. Works everywhere —
-// preview panes and mobile/app webviews block window.prompt(), and mobile needs a focusable
-// input to raise the keyboard. cb(name) on Enter/OK, cb(null) on Escape/cancel.
+// On-screen name entry via a real HTML <input> overlaid on the canvas, with a Submit button to
+// its right — mobile players get an explicit tap target instead of hunting for the keyboard's
+// return key. Works everywhere: preview panes and mobile/app webviews block window.prompt(), and
+// mobile needs a focusable input to raise the keyboard. cb(name) on Enter/Submit, cb(null) on
+// Escape/cancel.
 let _lbNameInput = null;
+let _lbNameBtn = null;
 function _lbShowNameEntry(prefill, cb) {
   const wrap = (typeof document !== 'undefined' && (document.getElementById('game-wrap') || document.body)) || null;
   if (!wrap) { // no DOM (headless) — fall back to prompt if available, else cancel
@@ -6227,25 +6231,51 @@ function _lbShowNameEntry(prefill, cb) {
     _lbNameInput.setAttribute('autocomplete', 'off'); _lbNameInput.setAttribute('autocapitalize', 'off');
     _lbNameInput.style.cssText = 'position:absolute; z-index:20; box-sizing:border-box; text-align:center; font-family:sans-serif; color:#fff; background:#12122a; border:2px solid #b8912e; border-radius:8px; outline:none; padding:0 10px;';
     wrap.appendChild(_lbNameInput);
+    _lbNameBtn = document.createElement('button');
+    _lbNameBtn.type = 'button';
+    _lbNameBtn.textContent = 'Submit';
+    // Match the game's canvas buttons (drawUIButton): solid gold fill like the "Submit to
+    // Leaderboard" button, white Canterbury text, rounded corners, and the same drop shadow.
+    _lbNameBtn.style.cssText = "position:absolute; z-index:20; box-sizing:border-box; display:flex; align-items:center; justify-content:center; color:#fff; background:#b8912e; border:none; border-radius:8px; cursor:pointer; padding:0; box-shadow:0 5px 14px rgba(0,0,0,0.7); font-family:'Canterbury', serif; line-height:1; touch-action:manipulation; user-select:none;";
+    wrap.appendChild(_lbNameBtn);
   }
-  const inp = _lbNameInput;
-  // Position the input over the full Submit-button rect (its placeholder reads "Your name").
+  const inp = _lbNameInput, btn = _lbNameBtn;
+  // Split the Submit-button rect: name field on the left, Submit button on the right.
   const b = _gameOverBtns().submit;
   const scale = (canvas.getBoundingClientRect().width || canvas.width) / canvas.width;
+  const gap = 8 * scale, btnW = b.w * scale * 0.34;
+  const inpW = b.w * scale - btnW - gap;
   inp.style.left = (b.x * scale) + 'px';
   inp.style.top = (b.y * scale) + 'px';
-  inp.style.width = (b.w * scale) + 'px';
+  inp.style.width = inpW + 'px';
   inp.style.height = (b.h * scale) + 'px';
   inp.style.fontSize = Math.max(12, Math.round(b.h * scale * 0.48)) + 'px';
+  btn.style.left = (b.x * scale + inpW + gap) + 'px';
+  btn.style.top = (b.y * scale) + 'px';
+  btn.style.width = btnW + 'px';
+  btn.style.height = (b.h * scale) + 'px';
+  btn.style.fontSize = Math.max(16, Math.round(b.h * scale * 0.6)) + 'px'; // Canterbury sits small — match the canvas buttons' proportions
   inp.value = prefill || '';
   inp.style.display = 'block';
+  btn.style.display = 'block';
   let done = false;
-  const finish = (val) => { if (done) return; done = true; inp.style.display = 'none'; inp.onkeydown = null; inp.onblur = null; cb(val); };
+  const finish = (val) => {
+    if (done) return; done = true;
+    inp.style.display = 'none'; btn.style.display = 'none';
+    inp.onkeydown = null; inp.onblur = null; btn.onpointerdown = null; btn.onclick = null;
+    cb(val);
+  };
+  const submit = () => finish((inp.value || '').trim().slice(0, 20));
   inp.onkeydown = (e) => {
-    if (e.key === 'Enter')  { e.preventDefault(); finish((inp.value || '').trim().slice(0, 20)); }
+    if (e.key === 'Enter')  { e.preventDefault(); submit(); }
     if (e.key === 'Escape') { e.preventDefault(); finish(null); }
   };
-  // Tapping away cancels (delayed so an Enter/OK path isn't clobbered).
+  // pointerdown fires BEFORE the input's blur, and preventDefault keeps focus on the field —
+  // so tapping Submit can't be mistaken for the tap-away cancel below. onclick is a fallback
+  // for environments without pointer events (the done flag makes a double fire harmless).
+  btn.onpointerdown = (e) => { e.preventDefault(); submit(); };
+  btn.onclick = () => submit();
+  // Tapping away cancels (delayed so an Enter/Submit path isn't clobbered).
   inp.onblur = () => setTimeout(() => { if (!done) finish(null); }, 120);
   setTimeout(() => { inp.focus(); try { inp.select(); } catch (e) {} }, 0);
 }
