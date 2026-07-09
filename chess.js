@@ -1,4 +1,4 @@
-﻿const VERSION = "652";
+﻿const VERSION = "653";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2919,6 +2919,17 @@ function applyShieldBounceState(atkI, defI, p) {
   }
   const bounceI = calcBouncePos(atkI, defI, p);
   if (bounceI !== atkI) {
+    if (isVoidSpace(bounceI)) {
+      // The attacker bounced onto a Void — it perishes there rather than surviving on it. score/gold
+      // are rolled back by saveState during minimax (so lookahead values it correctly); the graveyard
+      // tally, Game Over (a White King lost), and the fall animation are real-only, done by the
+      // caller via result.voidDeath.
+      const bp = board[atkI], bs = sides[atkI];
+      if (bs === B && (bp === KING || bp === CHECKERS_KING)) score++; // a Black King lost to the void still counts
+      if (bs === B) gold += GOLD_VALUE[bp] ?? 0;
+      clearSquare(atkI);
+      return { mode: 'attacker-bounce', bounceI, voidDeath: true, deadPiece: bp, deadSide: bs };
+    }
     movePiece(atkI, bounceI);
   }
   return { mode: 'attacker-bounce', bounceI };
@@ -3919,7 +3930,12 @@ function aiPlay() {
             const [bx, by] = xy(result.bounceI);
             const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
             startAnim([{ toIdx: result.bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
-              _aiSpeedContinue(result.bounceI, 0, _aiFinish); // attacker bounced back — may still have Speed moves
+              if (result.voidDeath) { // bounced into a Void — it fell in and perished
+                enemyDead[result.deadPiece] = (enemyDead[result.deadPiece] || 0) + 1;
+                startVoidDeath(bounceCX + TILE / 2, bounceCY + TILE / 2, attackPiece, B, _aiFinish);
+              } else {
+                _aiSpeedContinue(result.bounceI, 0, _aiFinish); // attacker bounced back — may still have Speed moves
+              }
             });
           }
         });
@@ -7141,6 +7157,18 @@ function handleBoardClick(cx, cy) {
         const result = applyShieldBounceState(fromI, clicked, attackPiece);
         const bounceI = result.mode === 'attacker-bounce' ? result.bounceI : fromI;
         selected = -1; validMoves = [];
+        if (result.voidDeath) { // the White attacker bounced into a Void and fell in
+          _speedIdx = -1; _speedMovesUsed = 0;
+          recordPosition();
+          const [bvx, bvy] = xy(result.bounceI);
+          const bvCX = MARGIN + bvx * TILE, bvCY = BOARD_Y + MARGIN + bvy * TILE;
+          const kingFell = (result.deadPiece === KING || result.deadPiece === CHECKERS_KING);
+          _doBounceAnim(fromI, pToCX, pToCY, result.bounceI, null, attackPiece, W, attackHlth, () => {
+            if (kingFell) _triggerGameOver(`Game Over! Score: ${score}`);
+            startVoidDeath(bvCX + TILE / 2, bvCY + TILE / 2, attackPiece, W, () => { if (gameOver) { takeReplaySnapshot(); draw(); } else endWhiteTurn(); });
+          });
+          return;
+        }
         // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
         // (mirrors the AI's _aiSpeedContinue after a shield bounce).
         const _sbFinalI = result.mode === 'earth-bonk' ? clicked : result.bounceI;
