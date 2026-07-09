@@ -1,4 +1,4 @@
-﻿const VERSION = "655";
+﻿const VERSION = "656";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -712,6 +712,8 @@ function _trackWhiteTake(pieceMoved, fromI, capturedPiece) {
   if (_turnActorTakes === 0) { _turnActorType = pieceMoved; _turnActorBuffed = (speeds[fromI] > 1) || !!(statuses[fromI] & STATUS_BLOODTHIRSTY); }
   _turnActorTakes++;
   if (capturedPiece === KING || capturedPiece === CHECKERS_KING) _turnKingsTaken++;
+  // The King praises the taker (non-King victims only — King takes belong to the tookKing lines).
+  else if (_KING_CAP_KEY[pieceMoved]) _kingQueue(_KING_CAP_KEY[pieceMoved]);
 }
 let spawnCount = 1;
 let leapCount = 0;
@@ -2270,6 +2272,7 @@ function startGame() {
   takeReplaySnapshot();
   _turnStartSnapIndices.push(replaySnapshots.length - 1);
   _kingTurnNum = 0; _kingLastMovedType = NONE;   // fresh run — the next White turns are #1, #2 for the King's early lines
+  _kingCand = []; for (const k in _kingFirsts) delete _kingFirsts[k]; // clear queued comments + one-shot flags
   _kingSay('start');
   draw();
   startWhiteTurnTimer();
@@ -2963,7 +2966,11 @@ function calcBouncePos(fromI, toI, p) {
 function makeMove(fromI, toI, visual = false) {
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
-  if (visual && s === W) _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
+  if (visual && s === W) {
+    _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
+    if (p === CHECKERS) _kingQueueFirst('firstWCheckersMove');           // first time fielding the strange folk
+    else if (p === CHECKERS_KING) _kingQueueFirst('firstWCheckersKingMove');
+  }
   const captured = board[toI];
   const capSide = sides[toI];
   // "Unless White moves again": a fresh White piece move expires White's own lingering fire.
@@ -3316,6 +3323,7 @@ function fieldAdvance(playerTriggered = false) {
   else _flawlessAdvances = 0;
   _lastAdvanceScore = score; _whiteLostSinceAdvance = false;
   _kingLastMovedType = NONE; // an Advance moved no single piece — the King's line falls back to random
+  _kingQueueFirst('firstFieldAdvance'); // the run's first advance — before the count/flush below
   _turnBoundaryUpdate(); // Field Advance ends the White turn — update streaks, clear per-turn counters
   _kingCountTurn(); // Field Advance is its own turn end (doesn't route through endWhiteTurn)
   _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
@@ -3924,6 +3932,7 @@ function aiPlay() {
               _doSkyDropPhase(() => {
                 turn = W;
                 aiThinking = false;
+                _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
                 takeReplaySnapshot();
                 _turnStartSnapIndices.push(replaySnapshots.length - 1);
                 draw();
@@ -4022,6 +4031,7 @@ function aiPlay() {
             _doSkyDropPhase(() => {
               turn = W;
               aiThinking = false;
+              _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
               takeReplaySnapshot();
               _turnStartSnapIndices.push(replaySnapshots.length - 1);
               draw();
@@ -4276,6 +4286,8 @@ function _doSkyDropPhase(onDone) {
   while (_sdci < _sdCandidates.length && randInt(10) === 0) {
     _shadowSpaces.set(_sdCandidates[_sdci++], _randomItem());
   }
+  if (_sdci > 0) _kingQueueFirst('firstShadow');   // the run's first looming shadow
+  if (hasDrops) _kingQueueFirst('firstItemFall');  // the run's first item actually falling
   if (hasDrops) {
     if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
     // Land all drops deterministically before onDone (which snapshots the turn start), so the
@@ -5473,12 +5485,41 @@ const KING_LINES = {
   kingDanger:    [],  // the player's turn begins with the White King under threat
   idle:          [],  // occasional chatter when nothing else is happening
   gameOver:      [],  // defeat
+  // ── One-shot "first sighting" lines (fire once per run; see _kingQueueFirst) ──
+  firstFieldAdvance:      ["Ah, this Black King has a Warrior with him, also blackened by this curse. Perhaps they also drank the cup of their master's greed."],
+  firstWCheckersMove:     ["Man of Checkers, your kind defies fathomage, but we welcome your service!"],
+  firstWCheckersKingMove: ["King of Checkers, you are of most alien lineage, but a King knows a King! Your alliance is appreciated!"],
+  firstBCheckers:         ["Even the strange Men of Checkers are among their number!"],
+  firstBCheckersKing:     ["Even the states of Checkers were corrupted! O Checkers King, your path shames your kind!"],
+  firstShadow:            ["Observe that shadow! Who knows what befalls us!"],
+  firstItemFall:          ["Indeed, these Black Kings bring a magic into the air. Odd spells fall from the sky."],
+  // ── Capture reactions, keyed by the WHITE piece that took a Black warrior (non-King victims) ──
+  capPawn:         ["Good on you, little one! Your vigor is noble!"],
+  capRook:         ["The smasher smashes! Good kill, Rook!"],
+  capBishop:       ["O seer, have you not indeed seen our enemy fall!"],
+  capKnight:       ["Yes, rider! And so we ride to victory!"],
+  capKing:         ["A White King does not sit idle on his throne when his people are so ravaged!"],
+  capQueen:        ["Is this kingdom not blessed to have such a warrior as Queen!"],
+  capCheckers:     ["Even your martial moves are strange, foreign one, but I am no less grateful for them!"],
+  capCheckersKing: ["Foreign King, I do not understand your form, but your strength is seen!"],
 };
 const _KING_PRI = {
   gameOver: 100, king25: 70, king20: 70, king10: 70, tookKingMulti: 60, tookKing: 50,
   firstMove: 50, secondMove: 50,
-  kingDanger: 45, lostPiece: 40, killGrey: 25, recruit: 25, fieldAdvance: 15, teamAdvance: 15,
+  kingDanger: 45, lostPiece: 40,
+  firstFieldAdvance: 30, firstWCheckersMove: 30, firstWCheckersKingMove: 30,
+  firstBCheckers: 30, firstBCheckersKing: 30, firstShadow: 30, firstItemFall: 30,
+  killGrey: 25, recruit: 25,
+  capPawn: 20, capRook: 20, capBishop: 20, capKnight: 20, capQueen: 20, capKing: 20,
+  capCheckers: 20, capCheckersKing: 20,
+  fieldAdvance: 15, teamAdvance: 15,
   start: 10, idle: 1,
+};
+// Which capture line each White piece type speaks (victim must be a non-King Black warrior —
+// King takes are the tookKing/king10/20/25 family's turf).
+const _KING_CAP_KEY = {
+  [PAWN]: 'capPawn', [ROOK]: 'capRook', [BISHOP]: 'capBishop', [KNIGHT]: 'capKnight',
+  [QUEEN]: 'capQueen', [KING]: 'capKing', [CHECKERS]: 'capCheckers', [CHECKERS_KING]: 'capCheckersKing',
 };
 let _kingRemark = "";        // current line shown in the dialogue box ('' = just the portrait)
 let _kingRemarkPri = 0;      // priority of the current line
@@ -5503,6 +5544,30 @@ function _kingSay(key) {
   if (pool.length > 1 && idx === _kingLastIdx[key]) idx = (idx + 1) % pool.length; // no immediate repeat
   _kingLastIdx[key] = idx;
   _kingSetRemark(pool[idx], _KING_PRI[key] || 0);
+}
+// ── Per-turn candidate roll ── Events don't speak immediately; they queue a situation key, and at
+// the next flush point (end of the player's turn / control returning to the player) ONE queued
+// situation is chosen uniformly at random — so a busy turn rolls among its comments instead of the
+// last event always talking over the rest. Commentary is cosmetic and live-only: uses Math.random
+// (never the gameplay RNG) and no-ops in headless re-sim/replay.
+let _kingCand = [];       // situation keys queued since the last flush
+const _kingFirsts = {};   // one-shot situations that have already fired this run
+function _kingQueue(key) {
+  if (_instant || replayMode) return;
+  if (!_kingCand.includes(key)) _kingCand.push(key);
+}
+// One-shot variant: the first occurrence queues the line; every later occurrence is silent.
+// The flag is set even if the pool is empty — "first" means the event happened, not that he spoke.
+function _kingQueueFirst(key) {
+  if (_instant || replayMode || _kingFirsts[key]) return;
+  _kingFirsts[key] = true;
+  _kingQueue(key);
+}
+function _kingFlush() {
+  if (_kingCand.length === 0) return;
+  const speakable = _kingCand.filter(k => (KING_LINES[k] || []).length > 0);
+  _kingCand = [];
+  if (speakable.length) _kingSay(speakable[(Math.random() * speakable.length) | 0]);
 }
 // Spell a small count as words ("one", "two", …). Falls back to the numeral past 99 (absurd armies).
 function _numWord(n) {
@@ -5544,6 +5609,7 @@ function _kingSaySecondMove() {
 // _turnBoundaryUpdate — Team Advance triggers that twice (its own call + endWhiteTurn's), which was
 // double-counting the turn and skipping firstMove straight to the secondMove line.
 function _kingCountTurn() {
+  _kingFlush(); // roll among this turn's queued comments; the early-game lines below outrank it
   _kingTurnNum++;
   if (_kingTurnNum === 1) _kingSay('firstMove');
   else if (_kingTurnNum === 2) _kingSaySecondMove();
@@ -5554,9 +5620,16 @@ function _kingMaybeIdle() {
   if (_kingRemark && (performance.now() - _kingRemarkMs) < 8000) return;
   if (Math.random() < 0.4) _kingSay('idle');
 }
-// Called when control returns to the player: worry aloud if the King is threatened, else maybe chatter.
+// Called when control returns to the player: flush the enemy-phase comments (first sighting of a
+// Black checkers piece, sky shadows/drops), worry aloud if the King is threatened, else maybe chatter.
 function _kingOnPlayerTurn() {
   if (_instant || replayMode || gameOver) return;
+  for (let i = 0; i < 64; i++) { // first sighting of Black checkers pieces, any entry path (wave, promotion)
+    if (sides[i] !== B) continue;
+    if (board[i] === CHECKERS) _kingQueueFirst('firstBCheckers');
+    else if (board[i] === CHECKERS_KING) _kingQueueFirst('firstBCheckersKing');
+  }
+  _kingFlush();
   const [kx, ky] = findKing(W);
   if (kx >= 0 && isAttacked(kx, ky, W)) _kingSay('kingDanger');
   else _kingMaybeIdle();

@@ -1,0 +1,47 @@
+Convention: entries marked [IMPLEMENTED vNNN] are wired into the game.
+Unmarked entries are new — add them below in the same "trigger line + comment line(s)" format.
+
+[IMPLEMENTED v656] On first Field Advance:
+Ah, this Black King has a Warrior with him, also blackened by this curse. Perhaps they also drank the cup of their master's greed.
+
+[IMPLEMENTED v656] On first White Checkers Man move:
+Man of Checkers, your kind defies fathomage, but we welcome your service!
+
+[IMPLEMENTED v656] On first White Checkers King move:
+King of Checkers, you are of most alien lineage, but a King knows a King! Your alliance is appreciated!
+
+[IMPLEMENTED v656] On first Black Checkers Man entering field:
+Even the strange Men of Checkers are among their number!
+
+[IMPLEMENTED v656] On first Black Checkers King entering field:
+Even the states of Checkers were corrupted! O Checkers King, your path shames your kind!
+
+[IMPLEMENTED v656] On first item shadow on board:
+Observe that shadow! Who knows what befalls us!
+
+[IMPLEMENTED v656] On first item fall:
+Indeed, these Black Kings bring a magic into the air. Odd spells fall from the sky.
+
+[IMPLEMENTED v656] On White Pawn taking a Black Warrior:
+Good on you, little one! Your vigor is noble!
+
+[IMPLEMENTED v656] On White Rook taking a Black Warrior:
+The smasher smashes! Good kill, Rook!
+
+[IMPLEMENTED v656] On White Bishop taking a Black Warrior:
+O seer, have you not indeed seen our enemy fall!
+
+[IMPLEMENTED v656] On White Knight taking a Black Warrior:
+Yes, rider! And so we ride to victory!
+
+[IMPLEMENTED v656] On White King taking a Black Warrior:
+A White King does not sit idle on his throne when his people are so ravaged!
+
+[IMPLEMENTED v656] On a White Queen taking a Black Warrior:
+Is this kingdom not blessed to have such a warrior as Queen!
+
+[IMPLEMENTED v656] On White Checkers Man taking a Black Warrior:
+Even your martial moves are strange, foreign one, but I am no less grateful for them!
+
+[IMPLEMENTED v656] On White Checkers King taking a Black Warrior:
+Foreign King, I do not undersand your form, but your strength is seen!
