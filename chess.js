@@ -1,4 +1,4 @@
-﻿const VERSION = "660";
+﻿const VERSION = "661";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2437,7 +2437,7 @@ function greyPlay(onDone) {
     const [fx, fy] = xy(i), [tx, ty] = xy(dest);
     const p = board[i], h = health[i];
     movePiece(i, dest); // preserves statuses/elements/attacks/speeds/effectOrders (e.g. Bloodthirsty)
-    if (elements[dest] & ELEM_EARTH) _applyEarthLanding(dest, N, true); // Earth Grey: destroy a block landed on, else drop a temp block below
+    if (elements[dest] & ELEM_EARTH) _applyEarthLanding(i, dest, N, true); // Earth Grey: destroy a block landed on, else drop a temp block along its move direction
     if (itemSpaces[dest] !== ITEM_NONE) _applyItemAuto(itemSpaces[dest], dest);
     checkFireDeath(dest);
     startAnim([{
@@ -3083,7 +3083,7 @@ function makeMove(fromI, toI, visual = false) {
   elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
   effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
-  if (movedElem & ELEM_EARTH) _applyEarthLanding(toI, s, visual); // Earth: destroy a block landed on, else drop a temp block in front
+  if (movedElem & ELEM_EARTH) _applyEarthLanding(fromI, toI, s, visual); // Earth: destroy a block landed on, else drop a temp block along the move direction
 
   // Ground items (sky drops): in simulation, bank the item so the search values
   // landing on item squares (via the inventory eval term). Real pickups run
@@ -3099,19 +3099,21 @@ function makeMove(fromI, toI, visual = false) {
 }
 
 // Earth landing: if the warrior ended on a Block square, destroy it (no temp block spawns then).
-// Otherwise drop a Temporary Block on the vacant square "in front" of the piece — the square toward
-// the enemy (White: one row up; Black/Grey: one row down). Temp blocks obstruct exactly like normal
+// Otherwise drop a Temporary Block on the vacant square CONTINUING the piece's movement — one step
+// past the landing square along the move's direction (the sign of each axis). Moving up puts the
+// wall above, down below, sideways beside, diagonals diagonal — and a Knight's L (e.g. +1,-2 →
+// +1,-1) lands its wall on the approximate diagonal. Temp blocks obstruct exactly like normal
 // blocks and are cleared right before their owner's next turn (see _clearTempBlocks). The spawn is a
 // real-move effect (visual): it runs identically in live play and headless re-sim — which drive every
 // real move through makeMove(visual=true) — but is kept out of minimax so lookahead stays cheap. The
 // block-destruction runs in sim too (it changes legality), which is why saveState covers specialSpaces.
-function _applyEarthLanding(landI, side, visual) {
+function _applyEarthLanding(fromI, landI, side, visual) {
   if (isBlockSpace(landI)) { specialSpaces[landI] = null; return; } // landed on a block → destroy it; no temp block
   if (!visual) return;
-  const [lx, ly] = xy(landI);
-  const fy = ly + (side === W ? -1 : 1);
-  if (!inB(lx, fy)) return;
-  const fi = idx(lx, fy);
+  const [ox, oy] = xy(fromI), [lx, ly] = xy(landI);
+  const bx = lx + Math.sign(lx - ox), by = ly + Math.sign(ly - oy);
+  if (!inB(bx, by)) return;
+  const fi = idx(bx, by);
   if (board[fi] !== NONE || specialSpaces[fi] || fi === merchantIdx) return; // only on a fully vacant square
   specialSpaces[fi] = { type: 'block', temp: true, owner: side };
 }
