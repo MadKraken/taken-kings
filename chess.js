@@ -1,4 +1,4 @@
-﻿const VERSION = "649";
+﻿const VERSION = "650";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2155,7 +2155,7 @@ function initBoard() {
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
-  _beginSetup(rollSetup);
+  _beginSetup(classicSetup); // default the setup screen to Classic; the player can switch to Roll
 }
 
 function _randomSetupPiece() {
