@@ -1,4 +1,4 @@
-﻿const VERSION = "650";
+﻿const VERSION = "652";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -588,6 +588,7 @@ function loadSprites() {
     ['explosion',       'sprites/explosion.svg'],
     ['ground',          'sprites/Ground.png'],
     ['merchant',        'sprites/merchant.svg'],
+    ['king_profile',    'sprites/king_profile.png'],
   ];
   // Conquest animation frames — loaded here so the splash covers them
   for (let ci = 0; ci < CONQUEST_FRAME_COUNT; ci++) {
@@ -1182,13 +1183,6 @@ function _replayRun(run, opts) {
   }
 }
 
-function graveSlotPos(isPlayer, pieceType) {
-  const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-  const slotIdx = GRAVE_TYPES.indexOf(pieceType);
-  const slotW = GRAVE_W / GRAVE_TYPES.length;
-  return [gx + slotIdx * slotW + slotW / 2, GRAVE_Y + 10 + 40];
-}
-
 function startFlyAnim(piece, side, sx, sy, tx, ty, onDone) {
   if (_instant) { if (onDone) onDone(); return; } // headless re-sim: run the completion (graveyard counts) now
   if (!replayMode) {
@@ -1202,8 +1196,10 @@ function startCaptureAnim(piece, side, sx, sy) {
   const isPlayer = side === W;
   if (isPlayer && !replayMode) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell (capture / field advance / bomb); replayed falls don't count
   const pool = isPlayer ? playerDead : enemyDead;
-  const [tgx, tgy] = graveSlotPos(isPlayer, piece);
-  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
+  // No graveyard panels anymore — fling the fallen piece up and off the board, into the ether, where
+  // it spins away and fades. (pool still counts the fall for achievements/stats.)
+  const tgx = sx + (sx < MARGIN + BOARD_PX / 2 ? -1 : 1) * (TILE * 1.5);
+  startFlyAnim(piece, side, sx, sy, tgx, BOARD_Y - TILE * 3, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
 }
 
 function _warnFlashTick() {
@@ -2263,6 +2259,7 @@ function startGame() {
   for (let i = 0; i < 64; i++) if (sides[i] === W) _startCounts[board[i]] = (_startCounts[board[i]] || 0) + 1;
   takeReplaySnapshot();
   _turnStartSnapIndices.push(replaySnapshots.length - 1);
+  _kingSay('start');
   draw();
   startWhiteTurnTimer();
 }
@@ -5399,48 +5396,111 @@ if (replayMode && !_miniReplayActive) {
 }
 }
 
-function drawGraveyardPanels() {
-// Graveyard panels (hidden while using an item or in replay mode)
-if (!isItemActive() && gamePhase === 'playing' && (!replayMode || _miniReplayActive)) for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
-  const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
-  ctx.font = "42px Canterbury";
-  ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-  ctx.fillStyle = "#fff";
-  ctx.fillText(isPlayer ? "Fallen" : "Slain", gx + GRAVE_W / 2, GRAVE_Y - 6);
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
-  const sideVal = isPlayer ? W : B;
-  const slotW = GRAVE_W / GRAVE_TYPES.length;
-  const pieceSz = 80;
-  const pieceCY = GRAVE_Y + 10 + pieceSz / 2;
-  for (let si = 0; si < GRAVE_TYPES.length; si++) {
-    const pt = GRAVE_TYPES[si];
-    const count = pool[pt] || 0;
-    const [cx] = graveSlotPos(isPlayer, pt);
-    const cy = pieceCY;
-    const isKing = pt === KING;
-    if (count === 0) {
-      if (pt !== CHECKERS && pt !== CHECKERS_KING) {
-        ctx.globalAlpha = 0.15;
-        _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz, false, false, true);
-        ctx.globalAlpha = 1;
-      }
-    } else {
-      if (isKing) {
-        ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
-        ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
-      }
-      _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz, false, false, true);
-      ctx.font = "28px Canterbury";
-      ctx.fillStyle = "#fff";
-      ctx.textAlign = "center"; ctx.textBaseline = "top";
-      ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
-    }
-  }
+// The White King's dialogue box — occupies the strip where the Fallen/Slain panels used to be.
+// Portrait on the left, his current remark on the right. _kingRemark holds the text to show.
+// ── White King commentary ─────────────────────────────────────────────────────────────────────
+// The King reacts to what happens on the board. To author his lines, just fill the arrays below —
+// each key is a SITUATION, and when that situation fires a random line from its array is shown (never
+// repeating the immediately-previous one). Leave an array empty and he stays silent for that case.
+// When two situations land close together, _KING_PRI decides who wins: a bigger moment (higher number)
+// won't be stomped by a smaller one while it's still on screen (for KING_HOLD_MS).
+const KING_LINES = {
+  start:         ["Behold! The monsters who took our kingdom and burned our homes! Let us come upon them as fire of judgment!"],  // a new run begins (after Go / the Begin Conquest intro)
+  tookKing:      [],  // took a Black King this turn
+  tookKingMulti: [],  // took 2+ Black Kings in a single turn
+  king10:        [],  // reached 10 Taken Kings
+  king20:        [],  // reached 20 Taken Kings
+  king25:        [],  // reached 25 Taken Kings
+  lostPiece:     [],  // a White warrior fell
+  recruit:       [],  // recruited a Grey to the cause
+  killGrey:      [],  // struck down a Grey (non-King)
+  fieldAdvance:  [],  // the field advanced — a fresh wave rolls in
+  teamAdvance:   [],  // ordered a Team Advance
+  kingDanger:    [],  // the player's turn begins with the White King under threat
+  idle:          [],  // occasional chatter when nothing else is happening
+  gameOver:      [],  // defeat
+};
+const _KING_PRI = {
+  gameOver: 100, king25: 70, king20: 70, king10: 70, tookKingMulti: 60, tookKing: 50,
+  kingDanger: 45, lostPiece: 40, killGrey: 25, recruit: 25, fieldAdvance: 15, teamAdvance: 15,
+  start: 10, idle: 1,
+};
+let _kingRemark = "";        // current line shown in the dialogue box ('' = just the portrait)
+let _kingRemarkPri = 0;      // priority of the current line
+let _kingRemarkMs = 0;       // performance.now() when it was set
+const _kingLastIdx = {};     // last line index shown per key — avoids back-to-back repeats
+const KING_HOLD_MS = 3800;   // a line holds at least this long before a LOWER-priority line may replace it
+
+// Fire the King's reaction to a situation. Live play only (no-op in headless re-sim / replay).
+function _kingSay(key) {
+  if (_instant || replayMode) return;
+  const pool = KING_LINES[key];
+  if (!pool || pool.length === 0) return;                  // no lines authored yet → stay silent
+  const pri = _KING_PRI[key] || 0;
+  if (_kingRemark && pri < _kingRemarkPri && (performance.now() - _kingRemarkMs) < KING_HOLD_MS) return;
+  let idx = Math.floor(Math.random() * pool.length);
+  if (pool.length > 1 && idx === _kingLastIdx[key]) idx = (idx + 1) % pool.length; // no immediate repeat
+  _kingLastIdx[key] = idx;
+  _kingRemark = pool[idx]; _kingRemarkPri = pri; _kingRemarkMs = performance.now();
+}
+// Occasional idle chatter — only once the current line has sat a while, so it never stomps a fresh reaction.
+function _kingMaybeIdle() {
+  if (_instant || replayMode) return;
+  if (_kingRemark && (performance.now() - _kingRemarkMs) < 8000) return;
+  if (Math.random() < 0.4) _kingSay('idle');
+}
+// Called when control returns to the player: worry aloud if the King is threatened, else maybe chatter.
+function _kingOnPlayerTurn() {
+  if (_instant || replayMode || gameOver) return;
+  const [kx, ky] = findKing(W);
+  if (kx >= 0 && isAttacked(kx, ky, W)) _kingSay('kingDanger');
+  else _kingMaybeIdle();
 }
 
+function drawKingDialogue() {
+  if (isItemActive() || gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) return;
+  const x = PLAYER_GRAVE_X, w = ENEMY_GRAVE_X + GRAVE_W - PLAYER_GRAVE_X;
+  // Taller box: raise the top to sit just under the "Field Auto-Advances" label; keep the bottom
+  // where the graveyard ended so the Resign/Auto buttons below don't shift.
+  const y = COUNTDOWN_Y + 30, h = (GRAVE_Y + GRAVE_H) - y;
+  ctx.save();
+  // Box
+  ctx.fillStyle = "rgba(18,14,34,0.85)";
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 10); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
+  ctx.beginPath(); ctx.roundRect(x + 1.5, y + 1.5, w - 3, h - 3, 9); ctx.stroke();
+  // Portrait (circular, center-cropped so it never stretches)
+  const pad = 14, picSz = Math.min(h - pad * 2, 150);
+  const pcx = x + pad + picSz / 2, pcy = y + h / 2;
+  const img = spriteImages['king_profile'];
+  if (img && img.complete && img.naturalWidth) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(pcx, pcy, picSz / 2, 0, Math.PI * 2); ctx.clip();
+    const iw = img.naturalWidth, ih = img.naturalHeight, scale = Math.max(picSz / iw, picSz / ih);
+    const sw = picSz / scale, sh = picSz / scale;
+    ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, pcx - picSz / 2, pcy - picSz / 2, picSz, picSz);
+    ctx.restore();
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.95)";
+    ctx.beginPath(); ctx.arc(pcx, pcy, picSz / 2, 0, Math.PI * 2); ctx.stroke();
+  }
+  // Remark text — word-wrapped, vertically centered in the remaining space
+  const textX = x + pad + picSz + pad + 2;
+  const textW = x + w - pad - textX;
+  ctx.font = "34px Canterbury";
+  ctx.fillStyle = "#f0e6c8";
+  ctx.textAlign = "left"; ctx.textBaseline = "top";
+  const lineH = 40;
+  const words = String(_kingRemark).split(/\s+/);
+  const lines = []; let cur = "";
+  for (const word of words) {
+    const test = cur ? cur + " " + word : word;
+    if (ctx.measureText(test).width > textW && cur) { lines.push(cur); cur = word; }
+    else cur = test;
+  }
+  if (cur) lines.push(cur);
+  let ty = y + (h - lines.length * lineH) / 2 + 2;
+  for (const ln of lines) { ctx.fillText(ln, textX, ty); ty += lineH; }
+  ctx.restore();
 }
 
 function drawResignConfirm() {
@@ -6354,7 +6414,7 @@ function _drawScene() {
   drawActionButtons();
   drawGameOverOverlay();
   drawReplayControls();
-  drawGraveyardPanels();
+  drawKingDialogue();
   drawResignConfirm();
   drawRewinderSaveOffer();
   drawShieldPops();
