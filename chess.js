@@ -1,4 +1,4 @@
-﻿const VERSION = "654";
+﻿const VERSION = "655";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3138,13 +3138,19 @@ function isItemActive() {
 }
 
 function cancelItemMode() {
+  // If the active mode came from a board item space (a Team-Advance landing queued it),
+  // canceling must still drain pendingItemQueue — otherwise the items behind it (e.g. a Bomb
+  // another piece landed on) silently evaporate and the turn never ends. Mirrors the cancel
+  // paths inside the per-item click handlers.
+  const fromSpace = activeItemSpaceIdx >= 0;
+  activeItemSpaceIdx = -1;
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   vampireFangMode = false; swordMode = false; speedMode = false;
   teleporterSelected = -1; clonerSelected = -1;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
-  draw();
+  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
 function trashActiveItem() {
@@ -3152,11 +3158,13 @@ function trashActiveItem() {
     removeFromInventory(inventory._activeSlot);
     delete inventory._activeSlot;
   }
+  const fromSpace = activeItemSpaceIdx >= 0; // same queue-drain duty as cancelItemMode above
+  activeItemSpaceIdx = -1;
   piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   teleporterSelected = -1; clonerSelected = -1;
-  draw();
+  if (fromSpace) { processNextQueuedItem(); } else { draw(); }
 }
 
 function canTeamLeap() {
