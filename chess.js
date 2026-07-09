@@ -2259,6 +2259,7 @@ function startGame() {
   for (let i = 0; i < 64; i++) if (sides[i] === W) _startCounts[board[i]] = (_startCounts[board[i]] || 0) + 1;
   takeReplaySnapshot();
   _turnStartSnapIndices.push(replaySnapshots.length - 1);
+  _kingTurnNum = 0; _kingLastMovedType = NONE;   // fresh run — the next White turns are #1, #2 for the King's early lines
   _kingSay('start');
   draw();
   startWhiteTurnTimer();
@@ -2941,6 +2942,7 @@ function calcBouncePos(fromI, toI, p) {
 function makeMove(fromI, toI, visual = false) {
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
+  if (visual && s === W) _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
   const captured = board[toI];
   const capSide = sides[toI];
   // "Unless White moves again": a fresh White piece move expires White's own lingering fire.
@@ -3098,8 +3100,9 @@ function endWhiteTurn() {
   _clearFireOfSide(B);   // White moved a piece — enemy fire has done its job; clear it
   shiftCountdown--;
   if (shiftCountdown <= 0) {
-    fieldAdvance();
+    fieldAdvance(); // auto-advance ends the turn AND counts it (via fieldAdvance's _kingCountTurn)
   } else {
+    _kingCountTurn(); // a normal turn ended here (also the tail of a Team Advance)
     updateWindAmbiance(); // fade wind in if the player just cleared the board of Black pieces
     turn = B;
     draw();
@@ -3155,6 +3158,7 @@ function canTeamLeap() {
 function teamAdvance() {
   if (gameOver || turn !== W || aiThinking || anim || waveAnim) return;
   _logInput({ t: 'ta' });
+  _kingLastMovedType = NONE; // an Advance moved no single piece — the King's line falls back to random
   _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
   _clearFireOfSide(B);   // Team Advance counts as a White move — enemy fire clears (Field Advance never does)
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
@@ -3282,7 +3286,9 @@ function fieldAdvance(playerTriggered = false) {
   if (score === _lastAdvanceScore && !_whiteLostSinceAdvance) _flawlessAdvances++;
   else _flawlessAdvances = 0;
   _lastAdvanceScore = score; _whiteLostSinceAdvance = false;
+  _kingLastMovedType = NONE; // an Advance moved no single piece — the King's line falls back to random
   _turnBoundaryUpdate(); // Field Advance ends the White turn — update streaks, clear per-turn counters
+  _kingCountTurn(); // Field Advance is its own turn end (doesn't route through endWhiteTurn)
   _resetTurnState(); // Field Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   stopWindLoop();     // a new wave is incoming — fade the calm wind back out
   playSfx('whoosh');  // Field Advance
@@ -5405,7 +5411,9 @@ if (replayMode && !_miniReplayActive) {
 // When two situations land close together, _KING_PRI decides who wins: a bigger moment (higher number)
 // won't be stomped by a smaller one while it's still on screen (for KING_HOLD_MS).
 const KING_LINES = {
-  start:         ["Behold! The monsters who took our kingdom and burned our homes! Let us come upon them as fire of judgment!"],  // a new run begins (after Go / the Begin Conquest intro)
+  start:         ["Behold! The monsters who took our kingdom and burned our homes! Let us come upon them as a fire of judgment!"],  // a new run begins (after Go / the Begin Conquest intro)
+  firstMove:     ["There is but the first of the Black Kings before us, marching on like ants. Only ants have more of a mind. This one shall be first of many to fall."],  // after the player's 1st turn
+  // secondMove is DYNAMIC (built from the army composition) — see _kingSecondMoveLine(); no pool here.
   tookKing:      [],  // took a Black King this turn
   tookKingMulti: [],  // took 2+ Black Kings in a single turn
   king10:        [],  // reached 10 Taken Kings
@@ -5422,26 +5430,77 @@ const KING_LINES = {
 };
 const _KING_PRI = {
   gameOver: 100, king25: 70, king20: 70, king10: 70, tookKingMulti: 60, tookKing: 50,
+  firstMove: 50, secondMove: 50,
   kingDanger: 45, lostPiece: 40, killGrey: 25, recruit: 25, fieldAdvance: 15, teamAdvance: 15,
   start: 10, idle: 1,
 };
 let _kingRemark = "";        // current line shown in the dialogue box ('' = just the portrait)
 let _kingRemarkPri = 0;      // priority of the current line
 let _kingRemarkMs = 0;       // performance.now() when it was set
+let _kingTurnNum = 0;        // White turns completed this run — drives the firstMove/secondMove lines
+let _kingLastMovedType = NONE; // type of the player's most recent piece MOVE (NONE after an Advance) — the second-move line's subject
 const _kingLastIdx = {};     // last line index shown per key — avoids back-to-back repeats
 const KING_HOLD_MS = 3800;   // a line holds at least this long before a LOWER-priority line may replace it
 
+// Set the remark to an explicit line at a given priority (respecting the hold/priority rule).
+function _kingSetRemark(text, pri) {
+  if (!text) return;
+  if (_kingRemark && pri < _kingRemarkPri && (performance.now() - _kingRemarkMs) < KING_HOLD_MS) return;
+  _kingRemark = text; _kingRemarkPri = pri; _kingRemarkMs = performance.now();
+}
 // Fire the King's reaction to a situation. Live play only (no-op in headless re-sim / replay).
 function _kingSay(key) {
   if (_instant || replayMode) return;
   const pool = KING_LINES[key];
   if (!pool || pool.length === 0) return;                  // no lines authored yet → stay silent
-  const pri = _KING_PRI[key] || 0;
-  if (_kingRemark && pri < _kingRemarkPri && (performance.now() - _kingRemarkMs) < KING_HOLD_MS) return;
   let idx = Math.floor(Math.random() * pool.length);
   if (pool.length > 1 && idx === _kingLastIdx[key]) idx = (idx + 1) % pool.length; // no immediate repeat
   _kingLastIdx[key] = idx;
-  _kingRemark = pool[idx]; _kingRemarkPri = pri; _kingRemarkMs = performance.now();
+  _kingSetRemark(pool[idx], _KING_PRI[key] || 0);
+}
+// Spell a small count as words ("one", "two", …). Falls back to the numeral past 99 (absurd armies).
+function _numWord(n) {
+  const ones = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve',
+    'thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+  const tens = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+  if (n < 0 || n > 99) return String(n);
+  if (n < 20) return ones[n];
+  return tens[(n / 10) | 0] + (n % 10 ? '-' + ones[n % 10] : '');
+}
+// Second-move rally — built LIVE from the current White army: one line per piece type the player
+// fields, with the count (spelled out) and pluralization filled in. Queen has singular/clone variants;
+// the King line only applies when the player commands clones (>1 King). If preferType names a piece the
+// player just moved and it has a line, that one is used; otherwise a random applicable line is rolled.
+function _kingSecondMoveLine(preferType) {
+  const cnt = { [PAWN]: 0, [ROOK]: 0, [BISHOP]: 0, [KNIGHT]: 0, [QUEEN]: 0, [KING]: 0 };
+  for (let i = 0; i < 64; i++) if (sides[i] === W && cnt[board[i]] !== undefined) cnt[board[i]]++;
+  const lead = "Let our blades taste wicked blood, White Warriors! ", s = n => n > 1 ? 's' : '', w = _numWord;
+  const byType = {};
+  if (cnt[PAWN])   byType[PAWN]   = `${lead}My ${w(cnt[PAWN])} Pawn${s(cnt[PAWN])}, your training may be incomplete, but do not falter. For now is the true test of your hearts!`;
+  if (cnt[ROOK])   byType[ROOK]   = `${lead}My ${w(cnt[ROOK])} Rook${s(cnt[ROOK])}, you who stand like a fortress, stand now for retribution!`;
+  if (cnt[BISHOP]) byType[BISHOP] = `${lead}My ${w(cnt[BISHOP])} Bishop${s(cnt[BISHOP])}, sayers of victory, cry out now and take up your rod of justice!`;
+  if (cnt[KNIGHT]) byType[KNIGHT] = `${lead}My ${w(cnt[KNIGHT])} Knight${s(cnt[KNIGHT])}, grand horsemaster${s(cnt[KNIGHT])}, let the hooves beneath you trample these beasts!!`;
+  if (cnt[QUEEN] === 1) byType[QUEEN] = `${lead}My Queen, surely the most elite swordmaster among us, let your poise be an agent of punishment!`;
+  else if (cnt[QUEEN] > 1) byType[QUEEN] = `${lead}My Queen and her ${w(cnt[QUEEN] - 1)} clone${s(cnt[QUEEN] - 1)}... one of you makes the heart of any army glad, surely the lot of you are an army unto yourselves!`;
+  if (cnt[KING] > 1) byType[KING] = `${lead}I and my ${w(cnt[KING] - 1)} clone${s(cnt[KING] - 1)} will not rest till every one of these creatures is taken to their graves!`;
+  if (preferType != null && byType[preferType]) return byType[preferType]; // name the piece just moved
+  const keys = Object.keys(byType);
+  return keys.length ? byType[keys[(Math.random() * keys.length) | 0]] : null;
+}
+function _kingSaySecondMove() {
+  if (_instant || replayMode) return;
+  // _kingLastMovedType is the piece the player just moved, or NONE after a Team/Field Advance (→ random).
+  _kingSetRemark(_kingSecondMoveLine(_kingLastMovedType), _KING_PRI.secondMove || 0);
+}
+// Advance the White-turn counter and fire the early-game lines. Called EXACTLY once per completed
+// player turn: from endWhiteTurn's normal-end branch (covers piece moves and Team Advance, which flows
+// through endWhiteTurn) and from fieldAdvance (which ends the turn itself). Deliberately NOT in
+// _turnBoundaryUpdate — Team Advance triggers that twice (its own call + endWhiteTurn's), which was
+// double-counting the turn and skipping firstMove straight to the secondMove line.
+function _kingCountTurn() {
+  _kingTurnNum++;
+  if (_kingTurnNum === 1) _kingSay('firstMove');
+  else if (_kingTurnNum === 2) _kingSaySecondMove();
 }
 // Occasional idle chatter — only once the current line has sat a while, so it never stomps a fresh reaction.
 function _kingMaybeIdle() {
