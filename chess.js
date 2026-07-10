@@ -1,4 +1,4 @@
-﻿const VERSION = "674";
+﻿const VERSION = "675";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1305,7 +1305,7 @@ function _chestBobTick() {
 
 const VOID_DEATH_MS = 600;
 function startVoidDeath(cx, cy, piece, side, onDone) {
-  if (side === W && piece) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell into the void
+  if (side === W && piece) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; _kingSayVoidDeath(piece); } // a White Warrior fell into the void
   // Headless re-sim: no animation — run the continuation NOW. Without this the rAF tick never
   // fires (rAF is a no-op headless), the onDone chain dies, and the sim's turn stalls forever
   // while live play continues — desyncing every run whose turn routed through a void death
@@ -3072,6 +3072,7 @@ function makeMove(fromI, toI, visual = false) {
       if (s === W) gold += (capSide === N ? Math.floor((GOLD_VALUE[capPiece] ?? 0) / 2) : (GOLD_VALUE[capPiece] ?? 0)); // Grey kills pay half
       if ((capPiece === KING || capPiece === CHECKERS_KING) && s === W && capSide === B) { score += 1; if (visual && score === 20) _king20TakenBy = p; if (visual && score === 25) _had4KingsAt25 = countKings(W) >= 4; } // a Grey King gives gold but no point
       if (visual && s === W && capSide === B) _trackWhiteTake(p, fromI, capPiece); // per-turn take tracking (Black takes only)
+      else if (visual && s === W && capSide === N) _kingQueue('killGrey'); // struck down a Grey
       board[midI] = NONE; sides[midI] = 0; health[midI] = 1;
     }
   }
@@ -3119,7 +3120,7 @@ function makeMove(fromI, toI, visual = false) {
     if ((captured === KING || captured === CHECKERS_KING) && health[toI] >= 2) _tookShieldedKingWithSword = true;
     // A Fast warrior finished off a shielded Black piece it had bounced off earlier this turn
     if (_turnFastBounced.has(toI)) _tookShieldedWithDoubleHit = true;
-  }
+  } else if (visual && s === W && captured !== NONE && capSide === N) _kingQueue('killGrey'); // struck down a Grey
   if (chestSpaces.has(toI) && s === W) {
     chestSpaces.delete(toI);
     const _chestItem = _randomItem();
@@ -3271,6 +3272,7 @@ function endWhiteTurn() {
   _turnBoundaryUpdate(); // fold this turn's activity into streaks, clear per-turn counters
   shiftCountdown--;
   if (shiftCountdown <= 0) {
+    _kingQueueFirst('firstAutoAdvance'); // first countdown-forced advance (before fieldAdvance's flush)
     fieldAdvance(); // auto-advance ends the turn AND counts it (via fieldAdvance's _kingCountTurn)
   } else {
     _kingCountTurn(); // a normal turn ended here (also the tail of a Team Advance)
@@ -4503,6 +4505,7 @@ function detonateBomb(centerI, _alreadyDetonated) {
     if (board[i] !== NONE) {
       const _bp = board[i], _bs = sides[i];
       if (_bs === W && (_bp === KING || _bp === CHECKERS_KING)) _triggerGameOver(`Game Over! Score: ${score}`);
+      else if (_bs === W) _kingQueue('bombDeath'); // a White Warrior lost to the Bomb
       if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) { score++; if (!replayMode) _turnKingsTaken++; }
       if (_bs === B) {
         gold += GOLD_VALUE[_bp] ?? 0;
@@ -4623,6 +4626,7 @@ function openMerchantShop(onDone) {
   sellConfirmSlot = -1;
   shopOnDone = onDone || null;
   playSfx('shopopen'); // Merchant dialogue appears
+  _kingSayShop();      // first-open intro, then rotating chatter
   draw();
 }
 
@@ -5686,11 +5690,18 @@ const KING_LINES = {
   king25:        [],  // reached 25 Taken Kings
   lostPiece:     [],  // a White warrior fell
   recruit:       [],  // recruited a Grey to the cause
-  killGrey:      [],  // struck down a Grey (non-King)
+  killGrey:      ["Lo, I wish we could have taken a different path together, Grey, but this was not to be."],  // struck down a Grey (non-King)
   fieldAdvance:  [],  // the field advanced — a fresh wave rolls in
   teamAdvance:   [],  // ordered a Team Advance
   kingDanger:    [],  // the player's turn begins with the White King under threat
-  idle:          [],  // occasional chatter when nothing else is happening
+  idle:          [ // occasional chatter when nothing else is happening ("On any random turn")
+    "The Team Advance is a tactic handed down by my fathers. By it, the whole army may progress together, one step at a time.",
+    "The Field Advance is a necessary notion of war to continue onward. If anybody gets left behind, it is the price that must be paid.",
+    "If I hadn't gone on that cursed diplomatic mission, we might have prevented the Black Kings from committing their bloodshed!",
+    "I can't believe the rumors seem to be true: that the kings of the far lands allied against a friendly neighbor to take his resources unjustly. And thus this curse fell upon them!",
+    "These Black Kings -- all they have left is to ravage and destroy! It consumes them!",
+    "The further we tear through these murderers, the stronger they seem to get! Truly this cursed magic is strong...",
+  ],
   gameOver:      [],  // defeat
   // ── One-shot "first sighting" lines (fire once per run; see _kingQueueFirst) ──
   firstFieldAdvance:      ["Ah, this Black King has a Warrior with him, also blackened by this curse. Perhaps they also drank the cup of their master's greed."],
@@ -5720,6 +5731,20 @@ const KING_LINES = {
   recruitKing:         ["Ah, there is still honor amongst Kings here! Restore your honor!"],
   recruitCheckers:     ["O Man of Checkers, were your fathers not immigrants from afar? Likewise, seek a new banner, our banner of honor!"],
   recruitCheckersKing: ["Our kingdoms may be different, but ally yourself with us, King of Checkers!"],
+  // ── Features / hazards first coming into play (one-shot) ──
+  firstChest:       ["The Black Kings carry with them treasures of fallen magics. This shall only serve as plunder for my men!"],
+  firstMerchant:    ["Who is that strange man? He does not appear a part of the dark party. Perhaps one of my men could speak to him."],
+  firstVoid:        ["The dark magics wafting off these Kings is even eating at the very world itself. Lo, let us beware these Voids in the dirt."],
+  firstBlock:       ["Behold, that Block of stone -- no Warrior's blade could pierce that. Unless they partook of a magic of the Earth itself..."],
+  firstRiver:       ["Beware the currents of that River, men! Adjust your course or they will adjust it for you!"],
+  firstAutoAdvance: ["My patience has its limits! We cannot linger here forever, or the Black Kings will never pay their dues!"],
+  firstShop:        ["Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will surely take advantage..."],
+  // Merchant shop reopened — rotating chatter; a second variant naming a current ware is built live (_kingSayShop).
+  shopReopen:       ["This seller appears to update his wares every once in a while. If I like something I see here, I better grab it quick."],
+  // A White Warrior lost to a Bomb.
+  bombDeath:        ["Stricken by the power of the Bomb! Let us do better to respect it in the future!"],
+  // Down to the last King (oneLeft is a pool; twoLeft is dynamic — built with the companion's name, no pool).
+  oneLeft:          ["All my men... gone. So be it. My honor demands fighting till the end!"],
 };
 const _KING_PRI = {
   gameOver: 100, king25: 70, king20: 70, king10: 70, tookKingMulti: 60, tookKing: 50,
@@ -5728,6 +5753,9 @@ const _KING_PRI = {
   firstFieldAdvance: 30, firstWCheckersMove: 30, firstWCheckersKingMove: 30,
   firstBCheckers: 30, firstBCheckersKing: 30, firstShadow: 30, firstItemFall: 30, firstGrey: 30,
   killGrey: 25, recruit: 25,
+  oneLeft: 55, bombDeath: 40, twoLeft: 40, voidDeath: 40,
+  firstChest: 30, firstMerchant: 30, firstVoid: 30, firstBlock: 30, firstRiver: 30, firstAutoAdvance: 30, firstShop: 30,
+  shopReopen: 5,
   recruitPawn: 25, recruitRook: 25, recruitBishop: 25, recruitKnight: 25, recruitQueen: 25,
   recruitKing: 25, recruitCheckers: 25, recruitCheckersKing: 25,
   capPawn: 20, capRook: 20, capBishop: 20, capKnight: 20, capQueen: 20, capKing: 20,
@@ -5794,6 +5822,30 @@ function _kingFlush() {
   _kingCand = [];
   if (speakable.length) _kingSay(speakable[(Math.random() * speakable.length) | 0]);
 }
+// Display name of a piece type for the King's lines ("Knight", "Checkers King").
+function _kingPieceName(p) {
+  return { [PAWN]: 'Pawn', [ROOK]: 'Rook', [KNIGHT]: 'Knight', [BISHOP]: 'Bishop', [QUEEN]: 'Queen',
+    [KING]: 'King', [CHECKERS]: 'Checkers Man', [CHECKERS_KING]: 'Checkers King' }[p] || 'Warrior';
+}
+// A White Warrior fell into a Void — mourn it by name (live-only; the [piece] line is dynamic).
+function _kingSayVoidDeath(piece) {
+  if (_instant || replayMode) return;
+  _kingSetRemark(`What a tragic end, ${_kingPieceName(piece)}! Oh, to fall not by the blade of an enemy, but by... falling!`, _KING_PRI.voidDeath || 40);
+}
+// Merchant shop opened: a one-shot intro the first time, then rotating chatter — one variant names a
+// current ware (built live from shopOffers, so it can't live in a static pool).
+function _kingSayShop() {
+  if (_instant || replayMode) return;
+  if (!_kingFirsts._shop) { _kingFirsts._shop = true; _kingSay('firstShop'); return; }
+  const offers = (shopOffers || []).filter(x => x != null && x !== ITEM_NONE);
+  if (offers.length && Math.random() < 0.5) {
+    const nm = itemName(offers[(Math.random() * offers.length) | 0]);
+    const article = /^[aeiou]/i.test(nm) ? 'an' : 'a';
+    _kingSetRemark(`Ooh, ${article} ${nm}! That could be very handy!`, _KING_PRI.shopReopen || 5);
+  } else {
+    _kingSay('shopReopen');
+  }
+}
 // Spell a small count as words ("one", "two", …). Falls back to the numeral past 99 (absurd armies).
 function _numWord(n) {
   const ones = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve',
@@ -5849,16 +5901,32 @@ function _kingMaybeIdle() {
 // Black checkers piece, sky shadows/drops), worry aloud if the King is threatened, else maybe chatter.
 function _kingOnPlayerTurn() {
   if (_instant || replayMode || gameOver) return;
-  for (let i = 0; i < 64; i++) { // first sighting of Black checkers pieces / Greys, any entry path (wave, promotion)
+  let _wCount = 0, _wKings = 0, _wCompanion = NONE;
+  for (let i = 0; i < 64; i++) { // first sighting of Black checkers pieces / Greys / hazards, any entry path
     if (sides[i] === B) {
       if (board[i] === CHECKERS) _kingQueueFirst('firstBCheckers');
       else if (board[i] === CHECKERS_KING) _kingQueueFirst('firstBCheckersKing');
     } else if (sides[i] === N && board[i] !== NONE) _kingQueueFirst('firstGrey');
+    else if (sides[i] === W) { _wCount++; if (board[i] === KING || board[i] === CHECKERS_KING) _wKings++; else _wCompanion = board[i]; }
+    const sp = specialSpaces[i];
+    if (sp) {
+      if (sp.type === 'void') _kingQueueFirst('firstVoid');
+      else if (sp.type === 'block' && !sp.temp) _kingQueueFirst('firstBlock'); // hazard block, not a player's Earth wall
+      else if (sp.type === 'river') _kingQueueFirst('firstRiver');
+    }
   }
+  if (merchantIdx >= 0) _kingQueueFirst('firstMerchant');
+  if (chestSpaces && chestSpaces.size > 0) _kingQueueFirst('firstChest');
   _kingFlush();
   const [kx, ky] = findKing(W);
   if (kx >= 0 && isAttacked(kx, ky, W)) _kingSay('kingDanger');
   else _kingMaybeIdle();
+  // Dwindling army — one-shot emotional beats (last say, so they win their priority against the above).
+  if (_wKings >= 1 && _wCount === 1 && !_kingFirsts._oneLeft) { _kingFirsts._oneLeft = true; _kingSay('oneLeft'); }
+  else if (_wCount === 2 && _wCompanion !== NONE && !_kingFirsts._twoLeft) {
+    _kingFirsts._twoLeft = true;
+    _kingSetRemark(`It's just you and me, ${_kingPieceName(_wCompanion)}! We ride until the darkness takes us!`, _KING_PRI.twoLeft || 40);
+  }
 }
 
 function drawKingDialogue() {
