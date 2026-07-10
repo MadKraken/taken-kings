@@ -1,4 +1,4 @@
-﻿const VERSION = "671";
+﻿const VERSION = "672";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -45,8 +45,10 @@ function _loadSfx() {
     }
   }
   // Unlock/resume the audio context on the first user gesture (mobile autoplay policy).
+  // The same first touch of the title screen kicks off the looping background music.
   const unlock = () => {
     _sfxUnlockCtx();
+    _playMusic();
     window.removeEventListener('pointerdown', unlock);
     window.removeEventListener('touchstart', unlock);
     window.removeEventListener('keydown', unlock);
@@ -58,11 +60,12 @@ function _loadSfx() {
   // phone sleeps; resume on return. Mobile browsers otherwise keep the
   // AudioContext running in the background.
   const onVisibility = () => {
-    if (!_sfxCtx) return;
     if (document.hidden) {
-      if (_sfxCtx.state === 'running') _sfxCtx.suspend();
-    } else if (_sfxUnlocked && !_sfxMuted && _sfxCtx.state === 'suspended') {
-      _sfxCtx.resume();
+      _pauseMusic();
+      if (_sfxCtx && _sfxCtx.state === 'running') _sfxCtx.suspend();
+    } else {
+      if (_musicStarted && !_sfxMuted) _playMusic();
+      if (_sfxCtx && _sfxUnlocked && !_sfxMuted && _sfxCtx.state === 'suspended') _sfxCtx.resume();
     }
   };
   document.addEventListener('visibilitychange', onVisibility);
@@ -101,6 +104,7 @@ function playSfx(name) {
 function toggleSfxMute() {
   _sfxMuted = !_sfxMuted;
   try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
+  if (_sfxMuted) _pauseMusic(); else if (_sfxUnlocked) _playMusic(); // music follows the mute toggle
   return _sfxMuted;
 }
 
@@ -138,6 +142,31 @@ function updateWindAmbiance() {
   if (typeof gamePhase !== 'undefined' && gamePhase !== 'playing') return;
   for (let i = 0; i < 64; i++) if (sides[i] === B) return; // a Black piece is present → no wind
   startWindLoop();
+}
+
+// ─── Background music ────────────────────────────────────────────────────────
+// The main theme streams on loop for the whole session (a lightweight <audio>
+// element, not a decoded Web Audio buffer — the track is minutes long). Browsers
+// block audible autoplay until a user gesture, so it starts on the first touch of
+// the title screen (the same unlock hook that wakes the SFX context). Honors the
+// SFX mute flag and pauses while the app is backgrounded.
+let _musicEl = null;
+let _musicStarted = false; // has the first-gesture start happened (so visibility can resume it)
+const MUSIC_VOLUME = 0.4;
+function _playMusic() {
+  if (_instant || _sfxMuted) return;
+  if (!_musicEl) {
+    try {
+      _musicEl = new Audio(`music/main_theme.mp3?v=${VERSION}`);
+      _musicEl.loop = true;
+      _musicEl.volume = MUSIC_VOLUME;
+    } catch (e) { _musicEl = null; return; }
+  }
+  _musicStarted = true;
+  _musicEl.play().catch(() => {}); // gesture-gated; a pre-gesture reject is expected
+}
+function _pauseMusic() {
+  if (_musicEl) { try { _musicEl.pause(); } catch (e) {} }
 }
 _loadSfx();
 
