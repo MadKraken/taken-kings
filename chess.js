@@ -1,4 +1,4 @@
-﻿const VERSION = "669";
+﻿const VERSION = "670";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2604,6 +2604,11 @@ function airSlidingMoves(moves, x, y, dirs, s, isEarth = false) {
 
 function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 function isBlockSpace(i) { return specialSpaces[i]?.type === 'block'; }
+// Rivers are ROW bands: they render (see "River rows") and flow (applyRiverFlow) by the whole
+// row, keyed off column 0. Per-cell river checks must match, or a "zombie" river cell — one left
+// in a row whose column 0 is no longer a river (partial band from scrolling) — renders as dry land
+// yet still silently douses fire. So river-ness is a property of the row, not the individual cell.
+function isRiverSpace(i) { return specialSpaces[((i / 8) | 0) * 8]?.type === 'river'; }
 function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlockSpace(i); }
 // Earth-aware landing test: an Earth warrior may also end on a block square (destroying it).
 function canLandEarth(i, isEarth) { return board[i] === NONE && !isVoidSpace(i) && (isEarth || !isBlockSpace(i)); }
@@ -2710,7 +2715,7 @@ function pseudoMoves(x, y) {
 // --- Elemental effect functions ---
 
 function applyFireTrail(fromI, toI, p, s) {
-  const _lay = (i) => { if (specialSpaces[i]?.type !== 'river') fireSquares.set(i, { side: s, age: 0 }); }; // rivers can't be set on fire
+  const _lay = (i) => { if (!isRiverSpace(i)) fireSquares.set(i, { side: s, age: 0 }); }; // rivers can't be set on fire
   _lay(fromI);
   _lay(toI); // destination also burns
   // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
@@ -2829,7 +2834,7 @@ function _igniteFromCrossing(fromI, toI) {
   for (const sq of path) {
     const f = fireSquares.get(sq);
     if (f && f.side !== s) burn = 3;                    // crossed opposing fire → ignite
-    if (specialSpaces[sq]?.type === 'river') burn = 0;  // crossed water → extinguished
+    if (isRiverSpace(sq)) burn = 0;  // crossed water → extinguished
   }
   burning[toI] = burn;
 }
@@ -3478,7 +3483,7 @@ function fieldAdvance(playerTriggered = false) {
     const [fx, fy] = xy(fi);
     if (fy >= 7) continue;
     const di = idx(fx, fy + 1);
-    if (specialSpaces[di]?.type !== 'river') newFireSquares.set(di, fs);
+    if (!isRiverSpace(di)) newFireSquares.set(di, fs);
   }
   fireSquares = newFireSquares;
 
