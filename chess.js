@@ -1,4 +1,4 @@
-﻿const VERSION = "666";
+﻿const VERSION = "667";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2528,7 +2528,9 @@ function slidingMoves(moves, x, y, dirs, s, isEarth = false) {
       if (side(nx, ny) === s) break;
       const ni = idx(nx, ny);
       if (sides[ni] === N) { if (s === W) moves.push(ni); break; } // White captures a Grey (Kings recruit); a Grey stops all sliders either way
-      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth may land on the block (destroying it) but not slide past
+      // Earth moves THROUGH blocks (perm or temp) — it can land on one (destroying it) or slide past;
+      // a plain slider is stopped by the block.
+      if (isBlockSpace(ni)) { if (isEarth) { moves.push(ni); nx += dx; ny += dy; continue; } break; }
       // Fire no longer blocks movement — a piece slides straight through it and catches fire on the
       // way (handled by _igniteFromCrossing after the move); it just can't be *set* on a river.
       const isVoid = specialSpaces[ni]?.type === 'void';
@@ -2545,7 +2547,9 @@ function airSlidingMoves(moves, x, y, dirs, s, isEarth = false) {
     let nx = x + dx, ny = y + dy;
     while (inB(nx, ny)) {
       const ni = idx(nx, ny);
-      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // physical blocks still stop Air; Earth may land on (destroy) it
+      // Air moves THROUGH all blocks (perm or temp) — it flies over one and lands beyond; it can't
+      // land ON a block (a solid tile) unless it's also Earth, which destroys it on landing.
+      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); nx += dx; ny += dy; continue; }
       if (isVoidSpace(ni)) { nx += dx; ny += dy; continue; } // fly OVER the void — can't land on it (matches normal sliders)
       const occ = sides[ni];
       if (occ === s) { nx += dx; ny += dy; continue; } // fly through own pieces
@@ -2590,7 +2594,8 @@ function pseudoMoves(x, y) {
       if (!inB(x, ny)) break;
       const ni = idx(x, ny);
       if (ni === merchantIdx || isVoidSpace(ni)) break;
-      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth pawn may step onto the block (destroying it), but not past
+      // Earth/Air pawns move through blocks; Earth may also land on one (destroying it); a plain pawn stops.
+      if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); if (isEarth || isAir) continue; break; }
       if (piece(x, ny) !== NONE) break;
       moves.push(ni);
       // Fire no longer stops the pawn's march — it steps through and catches fire on the way.
