@@ -1,4 +1,4 @@
-﻿const VERSION = "672";
+﻿const VERSION = "674";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -45,10 +45,8 @@ function _loadSfx() {
     }
   }
   // Unlock/resume the audio context on the first user gesture (mobile autoplay policy).
-  // The same first touch of the title screen kicks off the looping background music.
   const unlock = () => {
     _sfxUnlockCtx();
-    _playMusic();
     window.removeEventListener('pointerdown', unlock);
     window.removeEventListener('touchstart', unlock);
     window.removeEventListener('keydown', unlock);
@@ -56,6 +54,16 @@ function _loadSfx() {
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('touchstart', unlock);
   window.addEventListener('keydown', unlock);
+  // Background music has its OWN autoplay gate, separate from the AudioContext: on Android the first
+  // gesture unlocks the context (so SFX play) but the media element's play() is still refused. A
+  // one-shot start would give up after that single refusal — music then only appeared once a
+  // minimize/refocus re-triggered play via the visibility hook. So retry on every gesture (pointer,
+  // touch, click, key) until playback actually starts, then stop listening.
+  const _MUSIC_GESTURES = ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click', 'keydown'];
+  const startMusic = () => {
+    _playMusic().then(ok => { if (ok) for (const ev of _MUSIC_GESTURES) window.removeEventListener(ev, startMusic); });
+  };
+  for (const ev of _MUSIC_GESTURES) window.addEventListener(ev, startMusic);
   // Silence audio (esp. the looping wind) when the app is backgrounded / the
   // phone sleeps; resume on return. Mobile browsers otherwise keep the
   // AudioContext running in the background.
@@ -151,19 +159,22 @@ function updateWindAmbiance() {
 // the title screen (the same unlock hook that wakes the SFX context). Honors the
 // SFX mute flag and pauses while the app is backgrounded.
 let _musicEl = null;
-let _musicStarted = false; // has the first-gesture start happened (so visibility can resume it)
+let _musicStarted = false; // has playback ever begun (so visibility can resume it)
 const MUSIC_VOLUME = 0.4;
+// Attempt to start/resume the loop. Returns a promise resolving true if it's now playing, false if it
+// was blocked/muted/unavailable — never rejects, so every caller (gesture retry, visibility, mute) is
+// safe. Only the gesture-retry path inspects the result.
 function _playMusic() {
-  if (_instant || _sfxMuted) return;
+  if (_instant || _sfxMuted) return Promise.resolve(false);
   if (!_musicEl) {
     try {
       _musicEl = new Audio(`music/main_theme.mp3?v=${VERSION}`);
       _musicEl.loop = true;
+      _musicEl.preload = 'auto';
       _musicEl.volume = MUSIC_VOLUME;
-    } catch (e) { _musicEl = null; return; }
+    } catch (e) { _musicEl = null; return Promise.resolve(false); }
   }
-  _musicStarted = true;
-  _musicEl.play().catch(() => {}); // gesture-gated; a pre-gesture reject is expected
+  return Promise.resolve(_musicEl.play()).then(() => { _musicStarted = true; return true; }, () => false);
 }
 function _pauseMusic() {
   if (_musicEl) { try { _musicEl.pause(); } catch (e) {} }
@@ -7651,6 +7662,12 @@ function handleBoardClick(cx, cy) {
           if (bounceI !== fromI) {
             board[bounceI] = attackPiece; sides[bounceI] = W; health[bounceI] = attackHlth; elements[bounceI] = attackElem; statuses[bounceI] = attackStat; attacks[bounceI] = attackAtk; speeds[bounceI] = attackSpd; effectOrders[bounceI] = attackEff;
             clearSquare(fromI);
+            // An elemental Warrior still leaves its trail along the approach even when it bounces off
+            // the Merchant — the slide happened, only the landing changed. fromI is now vacant, so the
+            // origin is eligible. (Runs in live and re-sim alike: replay drives this same branch.)
+            if (attackElem & ELEM_EARTH) _applyEarthLanding(fromI, bounceI, W, true);
+            if (attackElem & ELEM_FIRE) applyFireTrail(fromI, bounceI, attackPiece, W);
+            if (attackElem & ELEM_WATER) applyWaterTrail(fromI, bounceI, attackPiece, W);
           }
           // Pre-register speed so endWhiteTurn shows second move after shop closes
           const _mSpI = bounceI !== fromI ? bounceI : fromI;
