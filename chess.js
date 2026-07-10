@@ -1,4 +1,4 @@
-﻿const VERSION = "670";
+﻿const VERSION = "671";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -826,6 +826,7 @@ let burning = new Array(64).fill(0);  // rounds a piece has left before it burns
                                       // 3 when a piece crosses opposing fire; ticks down once per round; a
                                       // crossed river extinguishes it. Travels with the piece.
 let fireSquares = new Map(); // Map<boardIdx, {side, age}> — fire trail; ignites opposing pieces that cross it
+let waterTrails = new Map(); // Map<boardIdx, {dx, dy, side, age}> — directional river trail a Water Warrior leaves in its wake; flows once per round (applyRiverFlow), pushes occupants one step, douses fire, ages out over 2 rounds
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
@@ -1686,6 +1687,7 @@ function _snapReplayCommon() {
     score, gold, leapCount, shiftCountdown, merchantIdx,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
+    waterTrails: [...waterTrails].map(([k, v]) => [k, { ...v }]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
   };
 }
@@ -1815,10 +1817,11 @@ function recordPosition() {
   positionHistory.push(boardHash());
 }
 
-function takeReplaySnapshot() {
-  _replayTransitions.push([..._replayAnimBuffer]);
-  _replayAnimBuffer = [];
-  replaySnapshots.push({
+// Serialize the full live game state into a snapshot object (same shape applyReplaySnapshot restores).
+// Split out of takeReplaySnapshot so a caller can capture "now" without pushing a turn snapshot —
+// used by Last Move to preserve state across a non-destructive review.
+function _buildReplaySnapshot() {
+  return {
     board: [...board], sides: [...sides], health: [...health],
     specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
     itemSpaces: [...itemSpaces], chestSpaces: [...chestSpaces],
@@ -1829,9 +1832,15 @@ function takeReplaySnapshot() {
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
     elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], burning: [...burning],
     fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
+    waterTrails: [...waterTrails].map(([k, v]) => [k, { ...v }]),
     effectOrders: effectOrders.map(a => [...a]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
-  });
+  };
+}
+function takeReplaySnapshot() {
+  _replayTransitions.push([..._replayAnimBuffer]);
+  _replayAnimBuffer = [];
+  replaySnapshots.push(_buildReplaySnapshot());
 }
 
 function applyReplaySnapshot(snap) {
@@ -1852,6 +1861,7 @@ function applyReplaySnapshot(snap) {
   if (snap.speeds) speeds.splice(0, 64, ...snap.speeds); else speeds.fill(1);
   if (snap.burning) burning.splice(0, 64, ...snap.burning); else burning.fill(0);
   fireSquares = snap.fireSquares ? new Map(snap.fireSquares.map(([k, v]) => [k, { ...v }])) : new Map();
+  waterTrails = snap.waterTrails ? new Map(snap.waterTrails.map(([k, v]) => [k, { ...v }])) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   _shadowSpaces = snap.shadowSpaces ? new Map(snap.shadowSpaces) : new Map();
   if (snap.effectOrders) { for (let i = 0; i < 64; i++) effectOrders[i] = snap.effectOrders[i] ? [...snap.effectOrders[i]] : []; } else { for (let i = 0; i < 64; i++) effectOrders[i] = []; }
@@ -1934,6 +1944,7 @@ function _playReplayTransition(snapIdx, onDone) {
     if (ev.burning) burning.splice(0, 64, ...ev.burning); else burning.fill(0);
     if (ev.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = ev.effectOrders[i] ? [...ev.effectOrders[i]] : []; // badges follow the piece mid-transition (older buffers lack this -> keep current)
     fireSquares = ev.fireSquares ? new Map(ev.fireSquares.map(([k, v]) => [k, { ...v }])) : new Map();
+    waterTrails = ev.waterTrails ? new Map(ev.waterTrails.map(([k, v]) => [k, { ...v }])) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
     if (ev.chestSpaces) chestSpaces = new Set(ev.chestSpaces);
@@ -2154,6 +2165,48 @@ function applyRiverFlow(onDone) {
       }
     }
   }
+  // Water-trail currents: per-cell directional rivers left by Water Warriors flow one step this round,
+  // just like the spawn bands above. Grouped by direction and processed downstream-first so a pushed
+  // piece isn't swept twice within a group; _sweptTo guards across groups (a piece pushed onto a trail
+  // cell of a DIFFERENT direction must not be pushed again this round — one river push per round, same
+  // as the spawn bands). shovePiece applies each move (and its void/bomb/item/ignite side effects, plus
+  // the Riptide/Flushed take flags via _waterShoveActive). Water pieces resist their own current.
+  // (Band→trail chaining can't happen: trails are never laid on spawn-river rows.)
+  _waterShoveActive = true;
+  const _dirGroups = new Map(); // "dx,dy" -> [boardIdx,...]
+  for (const [i, w] of waterTrails) {
+    const k = w.dx + ',' + w.dy;
+    (_dirGroups.get(k) || _dirGroups.set(k, []).get(k)).push(i);
+  }
+  const _sweptTo = new Set(); // squares a piece was pushed TO this flow — not pushed again
+  for (const [k, cells] of _dirGroups) {
+    const [wdx, wdy] = k.split(',').map(Number);
+    const proj = (i) => (i % 8) * wdx + ((i / 8) | 0) * wdy;
+    cells.sort((a, b) => proj(b) - proj(a)); // downstream end first
+    for (const i of cells) {
+      if (_sweptTo.has(i)) continue; // occupant already took its one push this round
+      const isMerchant = i === merchantIdx && board[i] === NONE;
+      if (board[i] === NONE && !isMerchant) continue;
+      if (board[i] !== NONE && (elements[i] & ELEM_WATER)) continue; // Water pieces hold against the current
+      const [x, y] = xy(i);
+      const nx = x + wdx, ny = y + wdy;
+      if (!inB(nx, ny)) continue;
+      const di = idx(nx, ny);
+      if (isBlockSpace(di) || board[di] !== NONE || di === merchantIdx) continue; // hard stop
+      if (isVoidSpace(di)) {
+        // Swept into a Void: shovePiece resolves the death; play the fall (startVoidDeath also
+        // sets the White-loss achievement flags, in live play and re-sim alike).
+        if (!isMerchant) startVoidDeath(MARGIN + nx * TILE + TILE / 2, BOARD_Y + MARGIN + ny * TILE + TILE / 2, board[i], sides[i], null);
+      } else {
+        const base = { fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + ny * TILE, toIdx: di };
+        animPieces.push(isMerchant ? { ...base, spriteKey: 'merchant' }
+          : { ...base, piece: board[i], side: sides[i], hlth: health[i], atk: attacks[i], spd: speeds[i] });
+      }
+      shovePiece(i, wdx, wdy);
+      _sweptTo.add(di);
+    }
+  }
+  _waterShoveActive = false;
   if (animPieces.length > 0) {
     startAnim(animPieces, 0, onDone);
   } else {
@@ -2275,7 +2328,7 @@ function initBoard() {
   merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
   sellMode = false; sellConfirmSlot = -1;
-  elements.fill(0); speeds.fill(1); burning.fill(0); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
+  elements.fill(0); speeds.fill(1); burning.fill(0); fireSquares = new Map(); waterTrails = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
@@ -2715,7 +2768,7 @@ function pseudoMoves(x, y) {
 // --- Elemental effect functions ---
 
 function applyFireTrail(fromI, toI, p, s) {
-  const _lay = (i) => { if (!isRiverSpace(i)) fireSquares.set(i, { side: s, age: 0 }); }; // rivers can't be set on fire
+  const _lay = (i) => { if (!isRiverSpace(i) && !waterTrails.has(i)) fireSquares.set(i, { side: s, age: 0 }); }; // water can't be set on fire (spawn river or trail current) — and water laid over fire douses it, so water wins both ways
   _lay(fromI);
   _lay(toI); // destination also burns
   // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
@@ -2723,6 +2776,27 @@ function applyFireTrail(fromI, toI, p, s) {
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
   const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
+  let cx = fx + dx, cy = fy + dy;
+  while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
+}
+
+// A Water Warrior leaves a directional river current in its wake: every square it started on and slid
+// THROUGH (not the landing — it stands there) becomes a river pointing the move direction. Those
+// currents flow once per round (applyRiverFlow) like spawn-rivers, pushing occupants one step, and age
+// out over two rounds (_ageTrails). Laying a current also douses any fire on the square. Jumpers have no
+// path, so they only lay their origin. Skips walls, voids, and spawn-river rows (which flow row-wide).
+function applyWaterTrail(fromI, toI, p, s) {
+  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
+  const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
+  const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
+  const _lay = (i) => {
+    if (isBlockSpace(i) || isVoidSpace(i) || isRiverSpace(i)) return;
+    waterTrails.set(i, { dx, dy, side: s, age: 0 });
+    fireSquares.delete(i);            // water douses fire on the square
+    if (burning[i] > 0) burning[i] = 0; // and puts out any piece standing there
+  };
+  _lay(fromI);
+  if (p === KNIGHT || p === CHECKERS || p === CHECKERS_KING) return; // jumpers: origin-only (no slid-through path)
   let cx = fx + dx, cy = fy + dy;
   while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
 }
@@ -2774,39 +2848,6 @@ function shovePiece(srcI, dx, dy) {
   if (!replayMode) _igniteOnLand(destI); // shoved onto enemy fire → catches fire
 }
 
-function applyWaterWave(fromI, toI, p) {
-  _waterShoveActive = true; // this whole shove sweep is from a Water piece
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
-  if (p === KNIGHT) {
-    // Radial shove from landing square
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const ni = idx(tx + dx, ty + dy);
-      if (!inB(tx + dx, ty + dy) || ni === toI) continue;
-      if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, dx, dy);
-    }
-    _waterShoveActive = false;
-    return;
-  }
-  // Sliding piece: wave travels the full movement axis, edge to edge
-  const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
-  const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
-  // Find the start of the axis line (walk opposite direction to edge)
-  let sx = tx, sy = ty;
-  while (inB(sx - dx, sy - dy)) { sx -= dx; sy -= dy; }
-  // Collect all squares on this line
-  const line = [];
-  let cx = sx, cy = sy;
-  while (inB(cx, cy)) { line.push(idx(cx, cy)); cx += dx; cy += dy; }
-  // Process from the far end (direction of wave) inward to avoid cascades
-  for (let i = line.length - 1; i >= 0; i--) {
-    const ni = line[i];
-    if (ni === toI) continue; // don't shove the mover itself
-    if (board[ni] !== NONE || ni === merchantIdx) shovePiece(ni, dx, dy);
-  }
-  _waterShoveActive = false;
-}
-
 // A piece that moved fromI→toI catches fire if its path crossed OPPOSING fire (set burning=3), and
 // is extinguished if its path crossed a river/water (burning=0) — later wins, so a move that crosses
 // fire then water ends up safe. Fire & Water warriors never burn. Runs in BOTH real play and minimax
@@ -2834,7 +2875,7 @@ function _igniteFromCrossing(fromI, toI) {
   for (const sq of path) {
     const f = fireSquares.get(sq);
     if (f && f.side !== s) burn = 3;                    // crossed opposing fire → ignite
-    if (isRiverSpace(sq)) burn = 0;  // crossed water → extinguished
+    if (isRiverSpace(sq) || waterTrails.has(sq)) burn = 0;  // crossed water (spawn river or trail current) → extinguished
   }
   burning[toI] = burn;
 }
@@ -3168,6 +3209,10 @@ function _ageTrails(side) {
     if (f.side !== side) continue;
     if (++f.age >= 2) fireSquares.delete(i);
   }
+  for (const [i, w] of [...waterTrails]) {
+    if (w.side !== side) continue;
+    if (++w.age >= 2) waterTrails.delete(i);
+  }
 }
 
 function endWhiteTurn() {
@@ -3486,6 +3531,16 @@ function fieldAdvance(playerTriggered = false) {
     if (!isRiverSpace(di)) newFireSquares.set(di, fs);
   }
   fireSquares = newFireSquares;
+
+  // Shift water-trail currents down one row; drop any off row 7 or onto a wall/hole/spawn-river
+  const newWaterTrails = new Map();
+  for (const [wi, w] of waterTrails) {
+    const [wx, wy] = xy(wi);
+    if (wy >= 7) continue;
+    const di = idx(wx, wy + 1);
+    if (!isBlockSpace(di) && !isVoidSpace(di) && !isRiverSpace(di)) newWaterTrails.set(di, w);
+  }
+  waterTrails = newWaterTrails;
 
   // Shift chest spaces down one row, drop any that fall off row 7
   const newChestSpaces = new Set();
@@ -4089,13 +4144,13 @@ function aiPlay() {
         });
       } else {
         const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
-        const _aiWaveData = (_aiFromElems & ELEM_WATER) ? _waveLineSqFromMove(move[0], move[1], _aiFromPiece0) : null;
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
         const _aiWasCapture = sides[move[1]] === W
           || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2);
         const _aiLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
         makeMove(move[0], move[1], true);
         if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
+        if (_aiFromElems & ELEM_WATER) applyWaterTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
         if (move[1] === merchantIdx) respawnMerchant();
         const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
         const _aiIsCheckersJump = (_aiPiece0 === CHECKERS || _aiPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2;
@@ -4113,13 +4168,9 @@ function aiPlay() {
           recordPosition();
           const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () =>
             _aiBloodthirstyContinue(move[1], _aiWasCapture, (btDest) => _aiSpeedContinue(btDest, 0, _aiFinish)));
-          const _aiChainContinues = _aiIsCheckersJump && _checkersJumpsFrom(move[1]).length > 0;
           if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
             const [vx, vy] = xy(move[1]);
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiAfterLand);
-          } else if (_aiWaveData && !_aiChainContinues) {
-            _aiWaveData.shoveParams.toI = move[1];
-            startWaveAnim(_aiWaveData.squares, _aiWaveData.shoveParams, _aiAfterLand);
           } else { _aiAfterLand(); }
         });
       }
@@ -4208,9 +4259,9 @@ function _aiExtraMove(dest, onDone) {
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
   const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
   const elems = elements[dest], piece0 = board[dest], side0 = sides[dest];
-  const waveData = (elems & ELEM_WATER) ? _waveLineSqFromMove(dest, best, piece0) : null;
   makeMove(dest, best, true);
   if (elems & ELEM_FIRE) applyFireTrail(dest, best, piece0, side0);
+  if (elems & ELEM_WATER) applyWaterTrail(dest, best, piece0, side0);
   const p0 = board[best], s0 = sides[best], h0 = health[best];
   const anims = [{ toIdx: best, fromCX, fromCY, toCX, toCY, piece: p0, side: s0, hlth: h0, atk: attacks[best], spd: speeds[best] }];
   _appendCaptureGhosts(anims);
@@ -4218,8 +4269,7 @@ function _aiExtraMove(dest, onDone) {
     _drainCaptureAnims();
     if (board[best] !== NONE && itemSpaces[best] !== ITEM_NONE) _applyItemAuto(itemSpaces[best], best);
     recordPosition();
-    if (waveData) { waveData.shoveParams.toI = best; startWaveAnim(waveData.squares, waveData.shoveParams, () => onDone(best)); }
-    else onDone(best);
+    onDone(best);
   });
 }
 
@@ -4252,21 +4302,16 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
   const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
   const chainElems = elements[landI], chainPiece0 = board[landI], chainSide0 = sides[landI];
-  const chainWaveData = (chainElems & ELEM_WATER) ? _waveLineSqFromMove(landI, nextTo, chainPiece0) : null;
   makeMove(landI, nextTo, true);
   if (chainElems & ELEM_FIRE) applyFireTrail(landI, nextTo, chainPiece0, chainSide0);
+  if (chainElems & ELEM_WATER) applyWaterTrail(landI, nextTo, chainPiece0, chainSide0);
   const cp0 = board[nextTo], cs0 = sides[nextTo], ch0 = health[nextTo];
   const chainAnims = [{ toIdx: nextTo, fromCX, fromCY, toCX, toCY, piece: cp0, side: cs0, hlth: ch0, atk: attacks[nextTo], spd: speeds[nextTo], arc: TILE * 1.5 }];
   _appendCaptureGhosts(chainAnims);
   startAnim(chainAnims, 0, () => {
     _drainCaptureAnims();
     recordPosition();
-    const isFinalJump = _checkersJumpsFrom(nextTo).length === 0;
-    const afterChain = () => _aiTryChainJump(nextTo, true, onDone);
-    if (chainWaveData && isFinalJump) {
-      chainWaveData.shoveParams.toI = nextTo;
-      startWaveAnim(chainWaveData.squares, chainWaveData.shoveParams, afterChain);
-    } else { afterChain(); }
+    _aiTryChainJump(nextTo, true, onDone);
   });
 }
 
@@ -5013,6 +5058,26 @@ for (let y = 0; y < 8; y++) {
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-11,-5); ctx.lineTo(-11,5); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
+  ctx.restore();
+}
+
+// Water-trail currents: per-cell directional rivers a Water Warrior leaves in its wake. Unlike the
+// row-wide spawn bands above, each cell carries its own (dx,dy), so the arrow rotates to the flow
+// direction (diagonals included). Dims as it nears expiry. Static fill — no per-frame gradient.
+for (const [i, w] of waterTrails) {
+  const [wtx, wty] = xy(i);
+  const px = MARGIN + wtx * TILE, py = MARGIN + wty * TILE;
+  const fade = w.age >= 1 ? 0.55 : 1;
+  ctx.save();
+  ctx.fillStyle = `rgba(40,160,220,${(0.2 * fade).toFixed(2)})`;
+  ctx.fillRect(px, py, TILE, TILE);
+  ctx.translate(px + TILE / 2, py + TILE / 2);
+  ctx.rotate(Math.atan2(w.dy, w.dx));
+  const aLen = TILE * 0.28;
+  ctx.strokeStyle = `rgba(120,220,255,${(0.75 * fade).toFixed(2)})`; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-aLen * 0.6, 0); ctx.lineTo(aLen, 0); ctx.stroke();
+  ctx.fillStyle = `rgba(120,220,255,${(0.75 * fade).toFixed(2)})`;
+  ctx.beginPath(); ctx.moveTo(aLen, 0); ctx.lineTo(aLen - 11, -5); ctx.lineTo(aLen - 11, 5); ctx.closePath(); ctx.fill();
   ctx.restore();
 }
 
@@ -7570,7 +7635,6 @@ function handleBoardClick(cx, cy) {
         return;
       }
       const _fromElems = elements[selected], _fromPiece = board[selected], _fromSide = sides[selected], _fromI = selected;
-      const _waveData = (_fromElems & ELEM_WATER) ? _waveLineSqFromMove(selected, clickedDest, _fromPiece) : null;
       const _midI2 = (Math.abs(ptx - pfx) === 2 && Math.abs(pty - pfy) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
       const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
@@ -7579,6 +7643,7 @@ function handleBoardClick(cx, cy) {
       const _airLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
       makeMove(selected, clicked, true);
       if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece, _fromSide);
+      if (_fromElems & ELEM_WATER) applyWaterTrail(selected, clickedDest, _fromPiece, _fromSide);
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
@@ -7644,22 +7709,10 @@ function handleBoardClick(cx, cy) {
         _drainCaptureAnims();
         checkWhiteKingAlive();
         if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
-        const _afterWave = () => {
-          if (isVoidSpace(clickedDest) && _wPiece0 !== NONE) {
-            const [vx, vy] = xy(clickedDest);
-            startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece0, _wSide0, () => _wContinue(clickedDest));
-          } else { _wContinue(clickedDest); }
-        };
-        // For Water Checkers chains: suppress wave on non-final jumps; final jump applies its own wave
-        const _chainContinues = _isCheckersJump
-          && (board[clickedDest] === CHECKERS || board[clickedDest] === CHECKERS_KING)
-          && _checkersJumpsFrom(clickedDest).length > 0;
-        if (_waveData && !_chainContinues) {
-          _waveData.shoveParams.toI = clickedDest;
-          startWaveAnim(_waveData.squares, _waveData.shoveParams, _afterWave);
-        } else {
-          _afterWave();
-        }
+        if (isVoidSpace(clickedDest) && _wPiece0 !== NONE) {
+          const [vx, vy] = xy(clickedDest);
+          startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _wPiece0, _wSide0, () => _wContinue(clickedDest));
+        } else { _wContinue(clickedDest); }
       });
       return;
     } else if (clicked === selected) {
@@ -7727,7 +7780,12 @@ canvas.addEventListener("click", (e) => {
     playSfx('button');
     selected = -1; validMoves = []; // clear any selection — the board is about to be spliced
     replayMode = true; _miniReplayActive = true;
+    // Last Move is a pure review: capture the true current state (including any items used or effects
+    // applied THIS turn, which have no turn snapshot of their own) and restore it when the review ends,
+    // rather than leaving the board at the last turn-start snapshot (which would undo those actions).
+    const _liveState = _buildReplaySnapshot();
     _playReplayTransition(replaySnapshots.length - 1, () => {
+      applyReplaySnapshot(_liveState);
       replayMode = false; _miniReplayActive = false;
       draw();
     });
