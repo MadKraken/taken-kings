@@ -1,4 +1,4 @@
-﻿const VERSION = "664";
+﻿const VERSION = "665";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1494,11 +1494,11 @@ function _waveLineSqFromMove(fromI, toI, p) {
   return { squares: sq, shoveParams: { isKnight: false, dx, dy, toI } };
 }
 
-// Stone-block tile palettes. `temp` swaps the tan stone for a mossy earthen green so a temporary
-// Earth block (spawned in front of an Earth warrior) reads at a glance as different from permanent rock.
+// Stone-block tile palettes. `temp` is the permanent stone palette blue-filtered (R/B channels
+// swapped) so a temporary Earth block reads at a glance as different from permanent rock.
 const _BLOCK_PALETTE = {
   perm: { base: "#1e1a16", top: "#c8b890", bot: "#2e2418", left: "#908068", right: "#403428", face: "#786450", hi: "#a09070", sh: "#3e3028" },
-  temp: { base: "#141a10", top: "#b6cf86", bot: "#20301a", left: "#7c8c56", right: "#2c3a22", face: "#66783f", hi: "#95ac63", sh: "#2e3a20" },
+  temp: { base: "#161a1e", top: "#90b8c8", bot: "#18242e", left: "#688090", right: "#283440", face: "#506478", hi: "#7090a0", sh: "#28303e" },
 };
 function drawBlockTile(gctx, tx, ty, tileSize, temp = false) {
   const c = temp ? _BLOCK_PALETTE.temp : _BLOCK_PALETTE.perm;
@@ -3019,21 +3019,40 @@ function makeMove(fromI, toI, visual = false) {
 // real move through makeMove(visual=true) — but is kept out of minimax so lookahead stays cheap. The
 // block-destruction runs in sim too (it changes legality), which is why saveState covers specialSpaces.
 function _applyEarthLanding(fromI, landI, side, visual) {
-  if (isBlockSpace(landI)) { specialSpaces[landI] = null; return; } // landed on a block → destroy it; no temp block
-  if (!visual) return;
-  const [ox, oy] = xy(fromI), [lx, ly] = xy(landI);
-  const bx = lx + Math.sign(lx - ox), by = ly + Math.sign(ly - oy);
-  if (!inB(bx, by)) return;
-  const fi = idx(bx, by);
-  if (board[fi] !== NONE || specialSpaces[fi] || fi === merchantIdx) return; // only on a fully vacant square
-  specialSpaces[fi] = { type: 'block', temp: true, owner: side };
+  if (isBlockSpace(landI)) specialSpaces[landI] = null; // Earth destroys the block it lands on (also in sim: changes legality)
+  if (!visual) return;                                  // the block TRAIL below is a real-move effect only
+  // Lay a temporary block on every vacant square the warrior slid THROUGH — the trail it leaves
+  // behind (its origin + the squares between), never the landing square where it now stands. Like
+  // the Fire trail: a straight slide fills its whole path; a Knight jumps, so it only marks its origin.
+  const [fx, fy] = xy(fromI), [tx, ty] = xy(landI);
+  const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
+  const _lay = (i) => {
+    if (i === landI || board[i] !== NONE || specialSpaces[i] || i === merchantIdx) return; // vacant squares only
+    specialSpaces[i] = { type: 'block', temp: true, owner: side, age: 0 };
+  };
+  _lay(fromI);
+  // Jumpers leave no mid-path trail (same rule as applyFireTrail): a Knight has no path, and a
+  // Checkers jump leaps OVER its square — without this a jump would wall the captured piece's
+  // square. board[landI] is the piece that just landed (a Checkers promoted on landing is a
+  // Checkers King — also excluded).
+  const lp = board[landI];
+  if (lp === KNIGHT || lp === CHECKERS || lp === CHECKERS_KING) return;
+  const straightLine = (dx !== 0 || dy !== 0) && (dx === 0 || dy === 0 || Math.abs(tx - fx) === Math.abs(ty - fy));
+  if (straightLine) {
+    let cx = fx + dx, cy = fy + dy;
+    while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
+  }
 }
-// Remove the temporary blocks a side dropped last turn — called right before that side acts again,
-// so each temp block lasts through exactly one opponent turn. Deterministic (runs in live + re-sim).
+// Age a side's temporary blocks — called right before that side acts again. Each temp block survives
+// TWO of the owner's turns (age 0 when laid, cleared once it reaches age 2), so the owner gets a turn
+// to make use of its own trail. Deterministic (runs identically in live + re-sim).
 function _clearTempBlocks(side) {
   for (let i = 0; i < 64; i++) {
     const sp = specialSpaces[i];
-    if (sp && sp.type === 'block' && sp.temp && sp.owner === side) specialSpaces[i] = null;
+    if (sp && sp.type === 'block' && sp.temp && sp.owner === side) {
+      sp.age = (sp.age || 0) + 1;
+      if (sp.age >= 2) specialSpaces[i] = null;
+    }
   }
 }
 
