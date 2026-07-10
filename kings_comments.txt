@@ -38,7 +38,7 @@ Yes, rider! And so we ride to victory!
 A White King does not sit idle on his throne when his people are so ravaged!
 
 [IMPLEMENTED v656] On a White Queen taking a Black Warrior:
-Is this kingdom not blessed to have such a warrior as this Queen!
+Is a kingdom not blessed to have such a warrior as Queen!
 
 [IMPLEMENTED v656] On White Checkers Man taking a Black Warrior:
 Even your martial moves are strange, foreign one, but I am no less grateful for them!
@@ -72,3 +72,52 @@ O Man of Checkers, were your fathers not immigrants from afar? Likewise, seek a 
 
 [IMPLEMENTED v657] On recruiting Checkers King:
 Our kingdoms may be different, but ally yourself with us, King of Checkers!
+
+On killing a Grey Warrior:
+Lo, I wish we could have taken a different path together, Grey, but this was not to be.
+
+On Chest coming into play:
+The Black Kings carry with them treasures of fallen magics. This shall only serve as plunder for my men!
+
+On the Merchant coming into play:
+Who is that strange man? He does not appear a part of the dark party. Perhaps one of my men could speak to him.
+
+On a Void coming into play:
+The dark magics wafting off these Kings is even eating at the very world itself. Lo, let us beware these Voids in the dirt.
+
+On a Block coming into play:
+Behold, that Block of stone -- no Warrior's blade could pierce that. Unless they partook of a magic of the Earth itself...
+
+On a White Warrior falling into a Void:
+What a tragic end, [piece]! Oh, to fall not by the blade of an enemy, but by... falling!
+
+On a Bomb killing a White Warrior:
+Stricken by the power of the Bomb! Let us do better to respect it in the future!
+
+On a River coming into play:
+Beware the currents of that River, men! Adjust your course or they will adjust it for you!
+
+On first auto-field advance:
+My patience has its limits! We cannot linger here forever, or the Black Kings will never pay their dues!
+
+On any random turn (each line separate):
+The Team Advance is a tactic handed down by my fathers. By it, the whole army may progress together, one step at a time.
+The Field Advance is a necessary notion of war to continue onward. If anybody gets left behind, it is the price that must be paid.
+If I hadn't gone on that cursed diplomatic mission, we might have prevented the Black Kings from committing their bloodshed!
+I can't believe the rumors seem to be true: that the kings of the far lands allied against a friendly neighbor to take his resources unjustly. And thus this curse fell upon them!
+These Black Kings -- all they have left is to ravage and destroy! It consumes them!
+The further we tear through these murderers, the stronger they seem to get! Truly this cursed magic is strong...
+
+On having only two White pieces left:
+It's just you and me, [piece]! We ride until the darkness takes us!
+
+On having only one White piece left (King):
+All my men... gone. So be it. My honor demands fighting till the end!
+
+On Merchant shop open first time:
+Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will surely take advantage...
+
+On second opening onward, random by line:
+This seller appears to update his wares every once in a while. If I like something I see here, I better grab it quick.
+Ooh, a(n) [random present item]! That could be very handy!
+

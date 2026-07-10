@@ -1,4 +1,4 @@
-﻿const VERSION = "662";
+﻿const VERSION = "664";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -863,18 +863,28 @@ let wraMoved = false, wrhMoved = false;
 let epTarget = -1;
 let aiThinking = false;
 
-const AI_DEPTH = 3;
+const AI_DEPTH = 3;   // iterative-deepening ceiling for Black's search
 const HINT_DEPTH = 5;
-// Density-bounded Black search: a full depth-3 minimax cost grows ~ (Black moves × White
-// replies) per extra ply, so a swarmed late-game board (25+ kings, big White army, Air/Speed
-// extra-move plies) can take many seconds per turn on a phone — and blows the leaderboard
-// validator's CPU budget, surfacing as "Submit failed". We step the depth down as the board
-// crowds, keyed on Bmoves×Wmoves at the decision point. This is deterministic (a pure function
-// of the position), so live play and headless re-simulation choose the SAME depth and the
-// recorded-move spot-check stays valid. Thresholds tuned so normal early/mid play keeps full
-// depth 3; only genuinely swarmed boards (where the player is already dominating) drop lower.
-const AI_DENSITY_DEPTH2 = 600;   // Bmoves×Wmoves above this → depth 2
-const AI_DENSITY_DEPTH1 = 3000;  // …above this → depth 1
+// Hard node budget for Black's search. aiBestMove runs iterative deepening (search depth 1, then 2,
+// … up to AI_DEPTH) sharing ONE budget across all depths; when it's exhausted mid-depth the search
+// stops and Black plays the best move from the deepest FULLY-completed depth. This bounds a turn by
+// the number of positions examined regardless of the pieces involved — a board full of phasing Air
+// sliders explodes the branching factor, which the old Bmoves×Wmoves depth heuristic under-counted
+// (few Black pieces kept the product low, so it stayed at depth 3 and searched a ~200-wide White
+// layer twice → multi-second freezes). The budget is deterministic (fixed traversal order + fixed
+// count), so live play and headless re-simulation examine the same nodes and choose the same move.
+const AI_NODE_BUDGET = 20000; // total ceiling; because the search is sliced across frames (below), a
+                              // big budget buys deeper play WITHOUT freezing — it just spreads over
+                              // more frames. Pathological boards abort here and play best-so-far.
+// Yield granularity: the search generator pauses every AI_SLICE_NODES nodes so the frame pump can
+// check its time budget. Live play runs slices until ~AI_FRAME_MS of wall time has elapsed, then
+// yields to requestAnimationFrame so the render loop paints — the enemy "thinks" without freezing.
+// This adapts to device speed (a fast machine packs more slices per frame → quicker think; a slow
+// one does fewer → still smooth). Re-sim ignores both and runs every slice back-to-back.
+const AI_SLICE_NODES = 300;
+const AI_FRAME_MS = 8;
+let _aiNodesLeft = Infinity; // remaining budget during an aiBestMove search (Infinity = uncapped, e.g. hint search)
+let _aiAborted = false;      // set true when the budget runs out mid-depth (that depth's result is discarded)
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
 const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 30};
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
@@ -989,20 +999,28 @@ function _encodeMove(m) { return m ? (m[0] * 64 + m[1]) : -1; }
 function _decodeMove(c) { return c < 0 ? null : [(c / 64) | 0, c % 64]; }
 // The one expensive Black decision per turn (full minimax at aiPlay). Live records it; re-sim replays
 // the recorded move (cheap), recomputing only on spot-check turns to verify it matches.
-function _blackMainMove() {
+// Compute Black's main move. `onDone(move)` is invoked when ready; in live play the underlying search
+// is frame-sliced (non-blocking) and onDone fires later, while re-sim resolves synchronously (onDone,
+// if given, is called inline). The recorded move is logged here so it's identical to a server recompute.
+function _blackMainMove(onDone) {
   if (_replayBlack) {
     const rec = _replayBlackIdx < _replayBlack.length ? _replayBlack[_replayBlackIdx] : -1;
     _replayBlackIdx++;
+    let m;
     if (_replaySpotRate > 0 && _replaySpotRand() < _replaySpotRate) { // spot-check: seeded server-side, stream-neutral
-      const m = aiBestMove();
-      if (_encodeMove(m) !== rec) _replaySpotFail = true;
-      return m; // use the authoritative recompute (identical to rec when honest)
+      m = aiBestMove();
+      if (_encodeMove(m) !== rec) _replaySpotFail = true; // authoritative recompute (identical to rec when honest)
+    } else {
+      m = _decodeMove(rec);
     }
-    return _decodeMove(rec);
+    return onDone ? onDone(m) : m;
   }
-  const m = aiBestMove();
-  if (gamePhase === 'playing' && !replayMode && !_instant) _blackMoveLog.push(_encodeMove(m));
-  return m;
+  const finish = (m) => {
+    if (gamePhase === 'playing' && !replayMode && !_instant) _blackMoveLog.push(_encodeMove(m));
+    return onDone ? onDone(m) : m;
+  };
+  if (onDone && !_instant) { aiBestMove(finish); return; } // live: frame-sliced, finish fires when done
+  return finish(aiBestMove());                              // synchronous (re-sim / no callback)
 }
 // Log one player action into the run's input log. Only during real play (not replay,
 // not the setup screen, not headless re-sim). The server replays these against a
@@ -2071,6 +2089,9 @@ function placeWave(row, wave) {
 
 let firstMoveMade = false;
 let resignConfirm = false;
+let _faConfirm = false;     // showing the "Field Advance will crush your Warriors" confirm dialog
+// True if a manual Field Advance would destroy a White piece on the bottom row (crushed by the field).
+function _faWillCrushWhite() { for (let x = 0; x < 8; x++) if (sides[idx(x, 7)] === W) return true; return false; }
 let sellMode = false;       // Merchant sell flow: player is choosing an inventory item to sell
 let sellConfirmSlot = -1;   // inventory slot pending sell confirmation; -1 = none
 // Sell value: half the item's buy price (min 1 for priced items).
@@ -2143,6 +2164,7 @@ function initBoard() {
   stopWhiteTurnTimer();
   _turnStartSnapIndices = [];
   selected = -1; validMoves = []; turn = W;
+  resignConfirm = false; _faConfirm = false;
   gameOver = false; gameMsg = ""; score = 0; gold = 0;
   firstMoveMade = false; positionHistory = []; testMode = false;
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
@@ -2495,90 +2517,6 @@ function airSlidingMoves(moves, x, y, dirs, s, isEarth = false) {
   }
 }
 
-function airKnightMoves(x, y, s, isEarth = false) {
-  const OFFSETS = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
-  const reachable = new Set();
-  for (const [dx, dy] of OFFSETS) {
-    const nx = x + dx, ny = y + dy;
-    if (inB(nx, ny)) reachable.add(idx(nx, ny));
-    // 2-hop: from each 1-hop land, do another Knight jump
-    if (!inB(nx, ny)) continue;
-    for (const [dx2, dy2] of OFFSETS) {
-      const nx2 = nx + dx2, ny2 = ny + dy2;
-      if (inB(nx2, ny2)) reachable.add(idx(nx2, ny2));
-    }
-  }
-  reachable.delete(idx(x, y)); // can't stay in place
-  const moves = [];
-  for (const ni of reachable) {
-    // Land on a vacant OR capturable-enemy square — the same rule a normal Knight uses; never on
-    // own pieces or void/block. A White Air Knight may also land on a Grey (to kill it).
-    if (sides[ni] === s || (sides[ni] === N && s !== W)) continue;
-    if (isVoidSpace(ni) || (!isEarth && isBlockSpace(ni))) continue; // only Earth may land on a block
-    moves.push(ni);
-  }
-  return moves;
-}
-
-// Waypoints for an Air piece's EXTENDED (multi-hop) move — the intermediate square(s) it visibly
-// passes through, so a two-square move animates as two hops in succession rather than one long
-// slide. Returns [firstHop, …, destination] (last element === destination), or null for an ordinary
-// single-hop move (which animates normally). Caller has already confirmed the piece is Air.
-function _airMoveLegs(fx, fy, tx, ty, p) {
-  const dx = tx - fx, dy = ty - fy;
-  if (p === KNIGHT) {
-    const KN = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
-    if (KN.some(([a, b]) => a === dx && b === dy)) return null; // a plain single L-hop
-    let mid = -1;
-    for (const [a, b] of KN) {                     // find a 1-hop square from which another L reaches the dest
-      const mx = fx + a, my = fy + b;
-      if (!inB(mx, my)) continue;
-      const ex = tx - mx, ey = ty - my;
-      if (KN.some(([c, d]) => c === ex && d === ey)) {
-        const mi = idx(mx, my);
-        if (mid < 0) mid = mi;
-        if (board[mi] === NONE) { mid = mi; break; } // prefer hopping through an empty square
-      }
-    }
-    return mid < 0 ? null : [mid, idx(tx, ty)];
-  }
-  if (p === KING) {                                // two king-steps in any combination (may bend)
-    if (Math.max(Math.abs(dx), Math.abs(dy)) <= 1) return null; // single step
-    const mid = _airKingIntermediate(fx, fy, tx, ty);
-    return mid < 0 ? null : [mid, idx(tx, ty)];
-  }
-  if (p === PAWN) {                                // straight line: one leg per unit of travel
-    const steps = Math.max(Math.abs(dx), Math.abs(dy));
-    if (steps <= 1) return null;
-    const sx = Math.sign(dx), sy = Math.sign(dy);
-    const legs = [];
-    for (let k = 1; k <= steps; k++) legs.push(idx(fx + sx * k, fy + sy * k));
-    return legs;
-  }
-  return null;
-}
-
-// A flyable intermediate king-square for an Air King's distance-2 move (fx,fy)→(tx,ty): a square one
-// king-step from BOTH ends that isn't a wall (voids and pieces are flown over). Prefers stepping
-// toward the destination (smoothest hop), then an empty square, then any. Returns its index, or -1 if
-// no path exists (every candidate out of bounds or a block). Shared by move-gen and the animation so
-// the two always agree on reachability.
-function _airKingIntermediate(fx, fy, tx, ty) {
-  const KSTEP = [[0,-1],[0,1],[-1,0],[1,0],[-1,-1],[1,-1],[-1,1],[1,1]];
-  const sgx = Math.sign(tx - fx), sgy = Math.sign(ty - fy);
-  let pref = -1, empty = -1, any = -1;
-  for (const [a, b] of KSTEP) {
-    const mx = fx + a, my = fy + b;
-    if (!inB(mx, my)) continue;
-    if (Math.max(Math.abs(tx - mx), Math.abs(ty - my)) !== 1) continue; // dest must be one king-step away
-    const mi = idx(mx, my);
-    if (isBlockSpace(mi)) continue;                                     // a wall blocks this path
-    if (any < 0) any = mi;
-    if (a === sgx && b === sgy) pref = mi;                              // steps toward the destination
-    if (empty < 0 && board[mi] === NONE && !isVoidSpace(mi)) empty = mi;
-  }
-  return pref >= 0 ? pref : (empty >= 0 ? empty : any);
-}
 
 function isVoidSpace(i) { return specialSpaces[i]?.type === 'void'; }
 function isBlockSpace(i) { return specialSpaces[i]?.type === 'block'; }
@@ -2586,11 +2524,9 @@ function canLandEmpty(i) { return board[i] === NONE && !isVoidSpace(i) && !isBlo
 // Earth-aware landing test: an Earth warrior may also end on a block square (destroying it).
 function canLandEarth(i, isEarth) { return board[i] === NONE && !isVoidSpace(i) && (isEarth || !isBlockSpace(i)); }
 
-// Adds a 2-square checkers move (jump capture or Air slide) to moves[]. Bounds checked by caller.
-function _checkersAddJumpSlide(moves, midI, landI, s, isAir, isEarth = false) {
-  if (isAir && canLandEarth(landI, isEarth)) {
-    moves.push(landI);
-  } else if (sides[midI] !== 0 && sides[midI] !== s && (sides[midI] !== N || s === W)
+// Adds a 2-square checkers jump-capture to moves[]. Bounds checked by caller.
+function _checkersAddJumpSlide(moves, midI, landI, s, isEarth = false) {
+  if (sides[midI] !== 0 && sides[midI] !== s && (sides[midI] !== N || s === W)
       && board[midI] !== NONE && canLandEarth(landI, isEarth)) {
     moves.push(landI); // jump-capture an enemy, or (White only) a Grey
   }
@@ -2599,16 +2535,14 @@ function _checkersAddJumpSlide(moves, midI, landI, s, isAir, isEarth = false) {
 function pseudoMoves(x, y) {
   const moves = [];
   const p = piece(x, y), s = side(x, y), e = enemy(s);
-  const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
+  const isAir = !!(elements[idx(x, y)] & ELEM_AIR); // Air phases through pieces/obstacles (sliders); it grants NO extended range
   const isEarth = !!(elements[idx(x, y)] & ELEM_EARTH); // Earth warriors may land on (and destroy) block squares
-  // Air Knights get their own extended move set
-  if (isAir && p === KNIGHT) return airKnightMoves(x, y, s, isEarth);
   if (p === PAWN) {
     const dir = s === W ? -1 : 1;
     const startY   = s === W ? 6 : 0;
-    const fwdRange = isAir ? 2 : 1;
-    const maxFwd   = isAir ? 4 : 2; // extra distance available from starting row
-    const capRange = isAir ? 2 : 1;
+    const fwdRange = 1;
+    const maxFwd   = 2; // extra distance available from starting row
+    const capRange = 1;
     // Forward steps — path must be clear
     const steps = y === startY ? maxFwd : fwdRange;
     for (let step = 1; step <= steps; step++) {
@@ -2642,35 +2576,21 @@ function pseudoMoves(x, y) {
     }
   } else if (p === CHECKERS) {
     const dir = s === W ? -1 : 1;
-    const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const dx of [-1, 1]) {
       const nx = x + dx, ny = y + dir;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
       if (ni >= 0 && canLandEarth(ni, isEarth)) moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dir;
-      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir, isEarth);
-    }
-    // Air bent-path: (x, y+2*dir) reachable via two zigzag forward steps
-    if (isAir) {
-      const bentI = inB(x, y + 2*dir) ? idx(x, y + 2*dir) : -1;
-      if (bentI >= 0 && canLandEarth(bentI, isEarth)) moves.push(bentI);
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isEarth);
     }
   } else if (p === CHECKERS_KING) {
-    const isAir = !!(elements[idx(x, y)] & ELEM_AIR);
     for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
       const nx = x + dx, ny = y + dy;
       const ni = inB(nx, ny) ? idx(nx, ny) : -1;
       if (ni >= 0 && !isVoidSpace(ni) && (canLandEarth(ni, isEarth) || sides[ni] === N))
         moves.push(ni);
       const jx = x + 2*dx, jy = y + 2*dy;
-      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isAir, isEarth);
-    }
-    // Air bent-path slides: squares reachable via two diagonal steps in different directions
-    if (isAir) {
-      for (const [bdx, bdy] of [[2,0],[-2,0],[0,2],[0,-2]]) {
-        const bx = x + bdx, by = y + bdy;
-        if (inB(bx, by) && canLandEarth(idx(bx, by), isEarth)) moves.push(idx(bx, by));
-      }
+      if (ni >= 0 && inB(jx, jy)) _checkersAddJumpSlide(moves, ni, idx(jx, jy), s, isEarth);
     }
   } else if (p === KNIGHT) {
     for (const [dx, dy] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) {
@@ -2688,28 +2608,11 @@ function pseudoMoves(x, y) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
     if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
   } else if (p === KING) {
-    if (isAir) {
-      // Air King = TWO king-steps in ANY combination (not just a straight line): it reaches every
-      // square within Chebyshev distance 2, flying over whatever's between. Land on vacant / enemy /
-      // (White) neutral — never own/void/block. A distance-2 square needs at least one non-block
-      // king-step square to fly through (a wall stops that path; pieces and voids are flown over).
-      for (let ddy = -2; ddy <= 2; ddy++) for (let ddx = -2; ddx <= 2; ddx++) {
-        if (ddx === 0 && ddy === 0) continue;
-        const nx = x + ddx, ny = y + ddy;
-        if (!inB(nx, ny)) continue;
-        const ni = idx(nx, ny);
-        if (isVoidSpace(ni) || (!isEarth && isBlockSpace(ni))) continue; // can't land on a void; only Earth may land on a block
-        if (side(nx, ny) === s || (s === B && sides[ni] === N)) continue; // can't land on own / (Black) neutral
-        if (Math.max(Math.abs(ddx), Math.abs(ddy)) === 1) { moves.push(ni); continue; } // adjacent: one step
-        if (_airKingIntermediate(x, y, nx, ny) >= 0) moves.push(ni);    // distance 2: needs a flyable path
-      }
-    } else {
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        const nx = x + dx, ny = y + dy;
-        if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && (isEarth || !isBlockSpace(idx(nx, ny)))) {
-          moves.push(idx(nx, ny));
-        }
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx, ny = y + dy;
+      if (inB(nx, ny) && side(nx, ny) !== s && !(s === B && sides[idx(nx, ny)] === N) && !isVoidSpace(idx(nx, ny)) && (isEarth || !isBlockSpace(idx(nx, ny)))) {
+        moves.push(idx(nx, ny));
       }
     }
     if (s === W && !wkMoved && !isAttacked(x, y, s)) {
@@ -3317,12 +3220,12 @@ function canPitchShift() {
   return true;
 }
 
+// Field Advance is always available on White's turn — even when a White piece sits on the bottom
+// row and will be crushed by the advancing field (that's the player's call to make). If the crushed
+// piece is the White King, fieldAdvance's completion triggers Game Over. (The AI eval that also
+// calls this reads the loss correctly: simulateLeap destroys row-7 White pieces in its lookahead.)
 function canManualPitchShift() {
-  if (!canPitchShift()) return false;
-  for (let x = 0; x < 8; x++) {
-    if (sides[idx(x, 7)] === W) return false;
-  }
-  return true;
+  return canPitchShift();
 }
 
 function _placeChestBonus(col) {
@@ -3559,6 +3462,10 @@ function fieldAdvance(playerTriggered = false) {
     }
   }
   startAnim([], -TILE, () => {
+    // The advancing field may have crushed the White King on the bottom row — end the run now
+    // (or offer the Rewinder) instead of continuing with no King. Mirrors the Team Advance path.
+    checkWhiteKingAlive();
+    if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
     if (!playerTriggered) {
       // Auto-advance: White just spent their move triggering the countdown, so Black goes next.
       turn = B;
@@ -3748,6 +3655,7 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
       makeMove(pieceI, to); _simFireDeath(to); recordPosition();
       return _turnContinuation(to, extra - 1, depth, alpha, beta, moverIsMax);
     });
+    if (_aiAborted) break; // over budget — stop chaining extra moves
     if (moverIsMax) { best = Math.max(best, val); if (best >= beta) break; alpha = Math.max(alpha, best); }
     else           { best = Math.min(best, val); if (best <= alpha) break; beta = Math.min(beta, best); }
   }
@@ -3755,6 +3663,10 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
 }
 
 function minimax(depth, alpha, beta, maximizing) {
+  // Hard node cap (see AI_NODE_BUDGET): each minimax call is one examined position. When the budget
+  // runs out, bail cheaply (return a static eval) and flag the abort so the root discards this depth.
+  if (_aiAborted) return evaluate();
+  if (_aiNodesLeft-- <= 0) { _aiAborted = true; return evaluate(); }
   // Dead White king ends the search immediately, scored more negative the
   // sooner it happens (higher remaining depth) — so Black prefers the fastest
   // kill instead of treating "win now" and "win eventually" as equal ties.
@@ -3780,12 +3692,13 @@ function minimax(depth, alpha, beta, maximizing) {
         makeMove(from, to); _simFireDeath(to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, true);
       });
+      if (_aiAborted) break; // over budget — stop iterating (this subtree's result is discarded upstream)
       best = Math.max(best, val);
       alpha = Math.max(alpha, val);
       if (beta <= alpha) break;
     }
     // Field advance is always a White option in the search
-    {
+    if (!_aiAborted) {
       const val = withState(() => { simulateLeap(); recordPosition(); return minimax(depth - 1, alpha, beta, false); });
       best = Math.max(best, val);
     }
@@ -3798,6 +3711,7 @@ function minimax(depth, alpha, beta, maximizing) {
         makeMove(from, to); _simFireDeath(to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, false);
       });
+      if (_aiAborted) break; // over budget — stop iterating
       best = Math.min(best, val);
       beta = Math.min(beta, val);
       if (beta <= alpha) break;
@@ -3819,20 +3733,46 @@ function allPseudoMovesForSide(s) {
   return moves;
 }
 
-// Density-bounded search depth for Black's turn. bMoves is the number of root candidate
-// moves; we pair it with White's reply count to estimate the branching cost and step the
-// depth down on crowded boards. Pure function of the current position → same result live and
-// in re-simulation. See AI_DENSITY_* above.
-function _aiSearchDepth(bMoves) {
-  const product = bMoves * allLegalMovesForSide(W).length;
-  if (product > AI_DENSITY_DEPTH1) return 1;
-  if (product > AI_DENSITY_DEPTH2) return AI_DEPTH - 1;
-  return AI_DEPTH;
+// Iterative-deepening root search as a generator: it `yield`s at frame boundaries (every
+// AI_SLICE_NODES nodes) so the caller can pump it across animation frames without freezing the UI.
+// Searches depth 1, then 2, … up to AI_DEPTH sharing one node budget; the generator's return value
+// is Black's chosen move (deepest depth that finished within budget). Pure/deterministic — the same
+// nodes are examined whether pumped in one synchronous loop (re-sim) or across frames (live play).
+function* _blackSearchGen(moves) {
+  _aiNodesLeft = AI_NODE_BUDGET;
+  _aiAborted = false;
+  let chosen = moves[_detPick(moves.length)]; // safety fallback if even depth 1 can't finish
+  for (let depth = 1; depth <= AI_DEPTH; depth++) {
+    let bestScore = Infinity;
+    let bestMoves = [];
+    let aborted = false;
+    let sliceStart = _aiNodesLeft;
+    for (const [from, to] of moves) {
+      const val = withState(() => {
+        const wasCap = sides[to] === W;
+        makeMove(from, to); _simFireDeath(to); recordPosition();
+        return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, false);
+      });
+      if (_aiAborted) { aborted = true; break; } // total budget ran out mid-depth — discard this depth
+      if (val < bestScore) { bestScore = val; bestMoves = [[from, to]]; }
+      else if (val === bestScore) bestMoves.push([from, to]);
+      if (sliceStart - _aiNodesLeft >= AI_SLICE_NODES) { yield; sliceStart = _aiNodesLeft; } // frame boundary (board is at root here)
+    }
+    if (aborted) break;                          // keep the previous (deepest complete) depth's choice
+    chosen = bestMoves[_detPick(bestMoves.length)];
+    if (_aiNodesLeft <= 0) break;                // budget exactly spent at a clean depth boundary
+  }
+  return chosen;
 }
 
-// Check if a specific Black King (by board index ki) is in checkmate:
+// Best Black move. If `onDone` is given AND we're in live play, the search runs frame-sliced (pumped
+// by requestAnimationFrame) and calls onDone(move) when finished — the game stays responsive while the
+// enemy thinks. Otherwise (no callback, or headless re-sim) it runs synchronously and returns the move.
 // it must be in check AND no Black move leaves it safe.
-function aiBestMove() {
+function aiBestMove(onDone) {
+  // Lift the cap AND clear the abort flag for later searches that share minimax (hint/auto-play's
+  // playerBestMove) — a lingering _aiAborted=true would make them return static evals instantly.
+  const done = (mv) => { _aiNodesLeft = Infinity; _aiAborted = false; if (onDone) onDone(mv); return mv; };
   // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
   let moves = allLegalMovesForSide(B);
   if (moves.length === 0) {
@@ -3845,34 +3785,30 @@ function aiBestMove() {
     const captures = moves.filter(([, to]) => sides[to] === W);
     if (captures.length > 0) moves = captures;
   }
-  if (moves.length === 0) return null;
+  if (moves.length === 0) return done(null);
   // Compelled: any move that directly attacks a white King (kill or damage) must be taken
   const kingAttacks = moves.filter(([, to]) => (board[to] === KING || board[to] === CHECKERS_KING) && sides[to] === W);
-  if (kingAttacks.length > 0) return kingAttacks[_detPick(kingAttacks.length)];
+  if (kingAttacks.length > 0) return done(kingAttacks[_detPick(kingAttacks.length)]);
   // Also compelled: Checkers jumps whose chain will reach a White King
   const chainKingAttacks = moves.filter(([from, to]) => {
     if ((board[from] !== CHECKERS && board[from] !== CHECKERS_KING) || Math.abs(xy(to)[0] - xy(from)[0]) !== 2) return false;
     return withState(() => { makeMove(from, to); return _checkersChainCanKillKing(to); });
   });
-  if (chainKingAttacks.length > 0) return chainKingAttacks[_detPick(chainKingAttacks.length)];
-  if (moves.length === 0) return null;
-  const searchDepth = _aiSearchDepth(moves.length);
-  let bestScore = Infinity;
-  let bestMoves = [];
-  for (const [from, to] of moves) {
-    const val = withState(() => {
-      const wasCap = sides[to] === W;
-      makeMove(from, to); _simFireDeath(to); recordPosition();
-      return _turnContinuation(to, _extraMoveBudget(to, wasCap), searchDepth, -Infinity, Infinity, false);
-    });
-    if (val < bestScore) {
-      bestScore = val;
-      bestMoves = [[from, to]];
-    } else if (val === bestScore) {
-      bestMoves.push([from, to]);
-    }
-  }
-  return bestMoves[_detPick(bestMoves.length)];
+  if (chainKingAttacks.length > 0) return done(chainKingAttacks[_detPick(chainKingAttacks.length)]);
+  const gen = _blackSearchGen(moves);
+  if (!onDone || _instant) { let r; do { r = gen.next(); } while (!r.done); return done(r.value); } // synchronous
+  // Live: run slices until this frame's time budget is used, then paint and continue next frame.
+  const _gen0 = _runGen; // if a new run starts mid-think (Start Over), kill the stale pump — its moves
+                         // belong to the old board, and letting it run would corrupt the budget globals
+                         // for (and interleave garbage searches with) the new run's own Black search.
+  const pump = () => {
+    if (_runGen !== _gen0) { _aiNodesLeft = Infinity; _aiAborted = false; return; } // stale — stop silently
+    const t0 = performance.now();
+    let r;
+    do { r = gen.next(); } while (!r.done && performance.now() - t0 < AI_FRAME_MS);
+    if (r.done) done(r.value); else requestAnimationFrame(pump);
+  };
+  pump();
 }
 
 let hintMove = null; // {from, to} or "leap"
@@ -3942,6 +3878,7 @@ function isCheckmated(s) {
   return allLegalMovesForSide(s).length === 0;
 }
 
+const AI_MOVE_DELAY_MS = 250; // enemy "thinking" pause before Black moves (live only; _instant re-sim runs it inline)
 function aiPlay() {
   if (gameOver || turn !== B) return;
   aiThinking = true;
@@ -3951,7 +3888,8 @@ function aiPlay() {
     if (_gen !== _runGen) return;                              // stale — a new run owns the board now
     if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
     _clearTempBlocks(B); // Black's own temp blocks expire as its next turn begins
-    const move = _blackMainMove();
+    _blackMainMove((move) => {
+    if (_gen !== _runGen) return; // a new run began while the enemy was thinking (async) — abandon
     if (move) {
       lastActingSide = B;
       const [mfx, mfy] = xy(move[0]), [mtx, mty] = xy(move[1]);
@@ -4012,7 +3950,7 @@ function aiPlay() {
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
         const _aiWasCapture = sides[move[1]] === W
           || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2);
-        const _aiLegs = (_aiFromElems & ELEM_AIR) ? _airMoveLegs(mfx, mfy, mtx, mty, _aiFromPiece0) : null;
+        const _aiLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
         makeMove(move[0], move[1], true);
         if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
         if (move[1] === merchantIdx) respawnMerchant();
@@ -4070,7 +4008,8 @@ function aiPlay() {
         });
       });
     }
-  }, 50);
+    }); // end _blackMainMove callback
+  }, AI_MOVE_DELAY_MS);
 }
 
 function findKing(s) {
@@ -5528,7 +5467,7 @@ const KING_LINES = {
   capBishop:       ["O seer, have you not indeed seen our enemy fall!"],
   capKnight:       ["Yes, rider! And so we ride to victory!"],
   capKing:         ["A White King does not sit idle on his throne when his people are so ravaged!"],
-  capQueen:        ["Is this kingdom not blessed to have such a warrior as this Queen!"],
+  capQueen:        ["Is a kingdom not blessed to have such a warrior as Queen!"],
   capCheckers:     ["Even your martial moves are strange, foreign one, but I am no less grateful for them!"],
   capCheckersKing: ["Foreign King, I do not understand your form, but your strength is seen!"],
   // ── First Grey sighting (one-shot) ──
@@ -5759,6 +5698,36 @@ if (!gameOver && resignConfirm) {
   ctx.restore();
 }
 
+}
+
+// Shared geometry for the "crush your Warriors?" confirm (centered on the board).
+function _faConfirmBtns() {
+  const boardCX = MARGIN + 4 * TILE, boardCY = BOARD_Y + MARGIN + 4 * TILE;
+  const w = Math.min(BOARD_PX - 40, 560), h = 250;
+  const y = boardCY - h / 2;
+  const btnW = 168, btnH = 62, gap = 32, by = y + h - btnH - 26;
+  return { boardCX, boardCY, w, h, y,
+    yes: { x: boardCX - gap / 2 - btnW, y: by, w: btnW, h: btnH },
+    no:  { x: boardCX + gap / 2,        y: by, w: btnW, h: btnH } };
+}
+function drawFieldAdvanceConfirm() {
+  if (!_faConfirm) return;
+  const g = _faConfirmBtns();
+  ctx.save();
+  const x = g.boardCX - g.w / 2;
+  ctx.fillStyle = "rgba(30,16,16,0.96)";
+  ctx.beginPath(); ctx.roundRect(x, g.y, g.w, g.h, 14); ctx.fill();
+  ctx.strokeStyle = "rgba(220,120,120,0.75)"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(x, g.y, g.w, g.h, 14); ctx.stroke();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ff8888"; ctx.font = "40px Canterbury";
+  ctx.fillText("Advance the Field?", g.boardCX, g.y + 50);
+  ctx.fillStyle = "#fff"; ctx.font = "30px Canterbury";
+  ctx.fillText("This will crush your own Warriors", g.boardCX, g.y + 100);
+  ctx.fillText("on the bottom row.", g.boardCX, g.y + 134);
+  drawUIButton(g.yes, { color: "#8a2a2a", label: "Advance", font: "32px Canterbury" });
+  drawUIButton(g.no,  { color: "#2a6e3f", label: "Cancel",  font: "32px Canterbury" });
+  ctx.restore();
 }
 
 function drawRewinderSaveOffer() {
@@ -6634,6 +6603,31 @@ function _drawVersionLabel() {
   ctx.fillText("v" + VERSION, 8, canvas.height - 6);
   ctx.restore();
 }
+// "Your Move" indicator: a persistent label above the board plus a gold border that pulses (flashes)
+// continuously the whole time it's the player's move, and vanishes while Black is going. Without it,
+// a paralyzed Black King (Black passes instantly) reads as "the enemy is still thinking" and the
+// player sits waiting. Both ride the always-on idle repaint loop, so no extra RAF loop is needed.
+function drawTurnIndicator() {
+  if (gamePhase !== 'playing' || gameOver || replayMode || _rewinderSaveOffer || _conquestGifActive) return;
+  if (turn !== W || aiThinking || anim || waveAnim) return;
+  ctx.save();
+  // Continuously-flashing gold border hugging the board (only ever shown on the player's turn).
+  ctx.strokeStyle = `rgba(232, 201, 106, ${(0.45 + 0.35 * Math.sin(performance.now() / 400)).toFixed(3)})`;
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(MARGIN - 4, BOARD_Y + MARGIN - 4, BOARD_PX + 8, BOARD_PX + 8, 8); ctx.stroke();
+  // "Your Move" label above the board — styled like the status labels (drop-shadowed, no chip).
+  // In Timed mode it sits above the countdown timer.
+  ctx.font = "42px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+  // Pulse the label white ↔ gold, in sync with the board border so its gold peak (232,201,106 —
+  // the border's colour) lands as the border is at its strongest.
+  const _p = 0.5 - 0.5 * Math.sin(performance.now() / 400); // 0 = gold (border peak), 1 = white
+  ctx.fillStyle = `rgb(${Math.round(232 + 23 * _p)}, ${Math.round(201 + 54 * _p)}, ${Math.round(106 + 149 * _p)})`;
+  ctx.fillText("Your Move", MARGIN + BOARD_PX / 2, timedMode ? (LOGO_H / 2 - 50) : (LOGO_H / 2));
+  ctx.restore();
+}
+
 function _drawScene() {
   if (!spritesLoaded) { _drawSplash(); return; }
   if (!_continued) { drawStartScreen(); return; }
@@ -6665,6 +6659,7 @@ function _drawScene() {
   drawBoardArea(_animT, _animToSet, _fieldAnim);
   ctx.restore();
   drawFogWindow();
+  drawTurnIndicator();
   if (_conquestGifActive) {
     ctx.fillStyle = "rgba(0,0,0,0.20)";
     ctx.fillRect(MARGIN, BOARD_Y + MARGIN, BOARD_PX, BOARD_PX);
@@ -6677,6 +6672,7 @@ function _drawScene() {
   drawReplayControls();
   drawKingDialogue();
   drawResignConfirm();
+  drawFieldAdvanceConfirm();
   drawRewinderSaveOffer();
   drawShieldPops();
   drawExplosion();
@@ -7184,6 +7180,12 @@ function handleVampireFangClick(cx, cy) { _handleStatItemClick(cx, cy, ITEM_VAMP
 function handleSwordClick(cx, cy)       { _handleStatItemClick(cx, cy, ITEM_SWORD, () => { swordMode = false; }); }
 function handleSpeedClick(cx, cy)       { _handleStatItemClick(cx, cy, ITEM_BOOTS, () => { speedMode = false; }); }
 
+function handleFieldAdvanceConfirmClick(cx, cy) {
+  const g = _faConfirmBtns();
+  if (_inRect(cx, cy, g.yes)) { playSfx('button'); _faConfirm = false; fieldAdvance(true); }
+  else if (_inRect(cx, cy, g.no)) { playSfx('button'); _faConfirm = false; draw(); }
+}
+
 function handleResignConfirmClick(cx, cy) {
   const confirmY = GRAVE_Y + GRAVE_H + 12;
   const panelH = 72, btnW = 100, btnH = 52, gap = 16;
@@ -7402,7 +7404,7 @@ function handleBoardClick(cx, cy) {
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
       const _wasCapture = sides[clicked] === B || sides[clicked] === N || _isCheckersJump; // a Grey kill also counts (Bloodthirsty)
       // Extended Air move (Knight/Pawn/King second hop) → animate hop-by-hop. Computed pre-move.
-      const _airLegs = (_fromElems & ELEM_AIR) ? _airMoveLegs(pfx, pfy, ptx, pty, _fromPiece) : null;
+      const _airLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
       makeMove(selected, clicked, true);
       if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece, _fromSide);
       const wAnimPieces = [{
@@ -7523,6 +7525,7 @@ canvas.addEventListener("click", (e) => {
   if (replayMode) { handleReplayClick(cx, cy); return; }
   if (_rewinderSaveOffer) { handleRewinderSaveOfferClick(cx, cy); return; }
   if (gameOver) { handleGameOverClick(cx, cy); return; }
+  if (_faConfirm) { handleFieldAdvanceConfirmClick(cx, cy); return; } // modal: capture all clicks
   if (_turnBusy()) return;
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (sellConfirmSlot >= 0) { handleSellConfirmClick(cx, cy); return; }
@@ -7578,7 +7581,14 @@ canvas.addEventListener("click", (e) => {
     return;
   }
   if (_inRect(cx, cy, LEAP_BTN))  { playSfx('button'); hintMove = null; teamAdvance(); return; }
-  if (_inRect(cx, cy, PITCH_BTN)) { playSfx('button'); hintMove = null; if (canManualPitchShift()) fieldAdvance(true); return; }
+  if (_inRect(cx, cy, PITCH_BTN)) {
+    playSfx('button'); hintMove = null;
+    if (canManualPitchShift()) {
+      if (_faWillCrushWhite()) { _faConfirm = true; draw(); } // confirm before crushing your own pieces
+      else fieldAdvance(true);
+    }
+    return;
+  }
   handleBoardClick(cx, cy);
 });
 
