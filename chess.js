@@ -1,4 +1,4 @@
-﻿const VERSION = "661";
+﻿const VERSION = "662";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2041,9 +2041,17 @@ function applyRiverFlow(onDone) {
         animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, spriteKey: 'merchant' });
         merchantIdx = di; continue;
       }
-      // Drift item space (only if no piece/merchant is occupying it)
-      if (itemSpaces[i] !== ITEM_NONE && itemSpaces[di] === ITEM_NONE) {
-        itemSpaces[di] = itemSpaces[i]; itemSpaces[i] = ITEM_NONE;
+      // Drift item space. If the current carries it into a piece standing downstream, that piece
+      // takes the item on contact — the mirror of the branch above where the river pushes a piece
+      // onto an item. Without this the item slides UNDER the piece and sits there inert (nothing
+      // re-activates an item beneath a stationary piece until a Team Advance pass — Griffindohr's
+      // King straddled a Water Elementalizer for a full turn with no effect). Merchant squares
+      // block the drift instead (he holds no items).
+      if (itemSpaces[i] !== ITEM_NONE && itemSpaces[di] === ITEM_NONE && di !== merchantIdx) {
+        const _drift = itemSpaces[i];
+        itemSpaces[i] = ITEM_NONE;
+        if (board[di] !== NONE) _applyItemAuto(_drift, di);
+        else itemSpaces[di] = _drift;
       }
     }
   }
@@ -3324,6 +3332,8 @@ function _placeChestBonus(col) {
     const _ci = _randomItem();
     const [_cx, _cy] = xy(ci);
     startItemFlyAnim(_ci, MARGIN + _cx * TILE + TILE / 2, BOARD_Y + MARGIN + _cy * TILE + TILE / 2, findInventorySlot());
+  } else if (sides[ci] === B || sides[ci] === N) {
+    // Enemy/Grey already here (a remapped wave piece slipped in) — never bury a chest under it.
   } else {
     chestSpaces.add(ci);
   }
@@ -3516,15 +3526,23 @@ function fieldAdvance(playerTriggered = false) {
     merchantQueuedCol = randInt(8);
   }
   // If merchant is queued, pre-remap any wave piece that conflicts with his column
-  // so the preview already shows final spawn positions
+  // so the preview already shows final spawn positions. The new column must avoid BONUS
+  // columns too — remapping onto one buried a chest under the relocated pawn (chest bonuses
+  // only special-case White occupants), and could likewise overwrite the piece with a Grey
+  // or drop it onto a fresh void. Falls back to the bonus-blind pick only if every clean
+  // column is taken (then the bonus at the collision column is dropped instead).
   if (merchantQueued && merchantQueuedCol >= 0) {
     const usedCols = new Set(nextWave.map(w => w.x).filter(x => x !== merchantQueuedCol));
+    const bonusCols = new Set(nextBonuses.map(b => b.col));
     for (const w of nextWave) {
       if (w.x === merchantQueuedCol) {
-        for (let x = 0; x < 8; x++) {
-          if (x !== merchantQueuedCol && !usedCols.has(x) && specialSpaces[idx(x, 0)]?.type !== 'block') {
-            usedCols.add(x); w.x = x; break;
-          }
+        const ok = (x, blind) => x !== merchantQueuedCol && !usedCols.has(x) && (blind || !bonusCols.has(x)) && specialSpaces[idx(x, 0)]?.type !== 'block';
+        let picked = -1;
+        for (let x = 0; x < 8 && picked < 0; x++) if (ok(x, false)) picked = x;
+        for (let x = 0; x < 8 && picked < 0; x++) if (ok(x, true)) picked = x;
+        if (picked >= 0) {
+          usedCols.add(picked); w.x = picked;
+          if (bonusCols.has(picked)) nextBonuses = nextBonuses.filter(b => b.col !== picked); // blind fallback: the piece wins, the bonus is dropped
         }
       }
     }

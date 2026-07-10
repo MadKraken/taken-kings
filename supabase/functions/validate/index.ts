@@ -107,6 +107,16 @@ export function loadEngine(chessSource: string): Engine {
 // predict will be checked — so even ~10% catches meaningful cheating with high probability while
 // keeping re-sim ~10x cheaper than full recompute (the whole point: 100+ king runs fit one call).
 const SPOT_CHECK_RATE = 0.1;
+// Absolute ceiling on spot-checked turns per run. Late-game minimax recomputes are the expensive
+// part of validation — on very long runs a flat 10% can still blow the worker's CPU budget
+// (Griffindohr's 30-king run drew a 546 before succeeding on retry). Capping the COUNT bounds the
+// worst case while keeping the per-turn catch probability meaningful; the seeded selection already
+// prevents resubmit-until-lucky, so a smaller sample on long runs doesn't open a cheap cheat.
+const SPOT_CHECK_MAX_TURNS = 20;
+// Effective rate for a run with n recorded Black turns.
+function spotRateFor(n: number): number {
+  return n > 0 ? Math.min(SPOT_CHECK_RATE, SPOT_CHECK_MAX_TURNS / n) : SPOT_CHECK_RATE;
+}
 
 // Seed for the spot-check turn selection: SHA-256(server secret + the run's semantic content).
 // Deterministic per run — a rejected cheater who hits Retry gets the SAME turns re-checked, so
@@ -216,7 +226,7 @@ export async function handler(req: Request): Promise<Response> {
   // Legacy runs (no blackMoves) fall back to full recompute inside the engine (may be slow/time out,
   // handled separately). spotRate is harmless (0 effective) when there are no recorded moves.
   let result: { score: number; gameOver: boolean; spotFail?: boolean };
-  try { result = engine.replayRun(run, { spotRate: SPOT_CHECK_RATE, spotSeed: await spotSeedFor(run) }); }
+  try { result = engine.replayRun(run, { spotRate: spotRateFor((run.blackMoves ?? []).length), spotSeed: await spotSeedFor(run) }); }
   catch (e) { return json({ ok: false, error: "resim failed: " + (e as Error).message }, 400); }
   // A recorded Black move disagreed with what the AI would actually play → tampered run, reject.
   if (result.spotFail) return json({ ok: false, ranked: false, error: "spot-check failed" }, 400);
