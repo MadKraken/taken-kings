@@ -1,4 +1,4 @@
-﻿const VERSION = "667";
+﻿const VERSION = "669";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1304,6 +1304,23 @@ function _explosionTick() {
   }
 }
 
+// Flame-engulf death when a burning piece's timer runs out. Non-blocking cosmetic overlay (the piece
+// is already removed from the board by _burnUp) — several can play at once. Skipped in re-sim/replay.
+const FIRE_DEATH_MS = 680;
+let fireDeaths = []; // [{cx, cy, piece, side, startMs}]
+function startFireDeath(cx, cy, piece, side) {
+  if (_instant || replayMode) return; // headless/replay: the death is already applied, no animation
+  playSfx('torch'); if (piece && piece !== QUEEN) playSfx('man'); // whoosh of flame + a scream (Queen doesn't)
+  fireDeaths.push({ cx, cy, piece, side, startMs: performance.now() });
+  if (fireDeaths.length === 1) requestAnimationFrame(_fireDeathTick);
+}
+function _fireDeathTick() {
+  draw();
+  const now = performance.now();
+  fireDeaths = fireDeaths.filter(fd => now - fd.startMs < FIRE_DEATH_MS);
+  if (fireDeaths.length > 0) requestAnimationFrame(_fireDeathTick);
+}
+
 function startShieldPop(cx, cy) {
   shieldPops.push({ cx, cy, startMs: performance.now(), dur: 350 });
   if (flyAnims.length === 0 && shieldPops.length === 1) requestAnimationFrame(_flyTick);
@@ -1548,18 +1565,41 @@ function drawBlockTile(gctx, tx, ty, tileSize, temp = false) {
   gctx.restore();
 }
 
+// Animated flames covering a fire-trail square. `side` tints them: Black-laid fire (dangerous to the
+// player) burns orange; White-laid fire (safe — only opposing pieces ignite) burns blue. Phase is
+// offset by tile position so neighbouring fires flicker independently.
+function _drawFireTile(gctx, dx, dy, side) {
+  const t = performance.now() / 130 + dx * 0.7 + dy * 0.4;
+  const flick = 0.55 + 0.25 * Math.sin(t) + 0.12 * Math.sin(t * 2.7);
+  const blue = side === W;
+  gctx.save();
+  // Flat tinted wash (no per-frame gradient — that was the frame-rate killer with long trails).
+  gctx.fillStyle = blue ? `rgba(55,140,255,${(0.2 + 0.12 * flick).toFixed(2)})` : `rgba(255,105,10,${(0.2 + 0.12 * flick).toFixed(2)})`;
+  gctx.fillRect(dx, dy, TILE, TILE);
+  const base = dy + TILE * 0.9;
+  for (let k = 0; k < 4; k++) {
+    const fx = dx + TILE * 0.22 + k * TILE * 0.19;
+    const h = TILE * (0.2 + 0.14 * Math.sin(t * 1.9 + k * 1.7));
+    const g = 140 + Math.floor(70 * flick);
+    gctx.fillStyle = blue ? `rgba(70,${g + 40},255,0.82)` : `rgba(255,${g},20,0.82)`;
+    gctx.beginPath();
+    gctx.moveTo(fx - TILE * 0.055, base);
+    gctx.quadraticCurveTo(fx - TILE * 0.06, base - h * 0.6, fx, base - h);
+    gctx.quadraticCurveTo(fx + TILE * 0.06, base - h * 0.6, fx + TILE * 0.055, base);
+    gctx.closePath(); gctx.fill();
+  }
+  gctx.restore();
+}
+
 // Burning overlay for an on-fire piece: a flickering orange aura, licking flames along the base, and
 // a small badge with the rounds it has left before it burns up (unless it crosses water first).
 function _drawBurningOverlay(gctx, dx, dy, rounds) {
   const t = performance.now() / 130;
-  const cx = dx + TILE / 2, cy = dy + TILE / 2;
   const flick = 0.55 + 0.25 * Math.sin(t) + 0.12 * Math.sin(t * 2.7);
   gctx.save();
-  const grad = gctx.createRadialGradient(cx, cy + TILE * 0.18, TILE * 0.08, cx, cy, TILE * 0.6);
-  grad.addColorStop(0, `rgba(255,150,20,${(0.5 * flick).toFixed(2)})`);
-  grad.addColorStop(1, 'rgba(255,60,0,0)');
-  gctx.fillStyle = grad;
-  gctx.fillRect(dx - 6, dy - 6, TILE + 12, TILE + 12);
+  // Flat tinted wash (no per-frame gradient).
+  gctx.fillStyle = `rgba(255,120,10,${(0.16 + 0.14 * flick).toFixed(2)})`;
+  gctx.fillRect(dx, dy, TILE, TILE);
   // licking flames along the bottom edge
   const base = dy + TILE * 0.92;
   for (let k = 0; k < 3; k++) {
@@ -2805,6 +2845,8 @@ function _burnTick() {
 }
 function _burnUp(i) {
   const p = board[i], s = sides[i];
+  const [bx, by] = xy(i);
+  startFireDeath(MARGIN + bx * TILE + TILE / 2, BOARD_Y + MARGIN + by * TILE + TILE / 2, p, s); // flame-engulf animation (live only)
   if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
   if (s === W) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior burned to death
@@ -2834,11 +2876,19 @@ function isAttacked(tx, ty, bySide) {
       if (p === BISHOP) dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
       else if (p === ROOK) dirs = [[1,0],[-1,0],[0,1],[0,-1]];
       else dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+      // A slider's attack reach must match its movement (pseudoMoves): Air phases through pieces AND
+      // blocks; Earth phases through blocks (but stops at pieces); a plain slider stops at either.
+      const isAir = !!(elements[i] & ELEM_AIR);
+      const isEarth = !!(elements[i] & ELEM_EARTH);
       for (const [dx, dy] of dirs) {
         let nx = ax + dx, ny = ay + dy;
         while (inB(nx, ny)) {
           if (nx === tx && ny === ty) return true;
-          if (board[idx(nx, ny)] !== NONE) break;
+          if (!isAir) {
+            const bi = idx(nx, ny);
+            if (isBlockSpace(bi) && !isEarth) break; // a block stops a non-Earth, non-Air slider
+            if (board[bi] !== NONE) break;           // any piece stops a non-Air slider
+          }
           nx += dx; ny += dy;
         }
       }
@@ -4984,15 +5034,11 @@ if (waveAnim) {
   }
 }
 
-// Fire squares: orange overlay
-for (const fi of fireSquares.keys()) {
+// Fire squares: animated flames. Black-laid fire (dangerous to White) burns orange; White-laid fire
+// (safe for the player — only opposing pieces catch fire) burns blue, so the player reads it as safe.
+for (const [fi, f] of fireSquares) {
   const [fx, fy] = xy(fi);
-  ctx.fillStyle = 'rgba(255,80,0,0.38)';
-  ctx.fillRect(MARGIN + fx * TILE, MARGIN + fy * TILE, TILE, TILE);
-  // Flicker edge
-  ctx.strokeStyle = 'rgba(255,160,0,0.6)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(MARGIN + fx * TILE + 1, MARGIN + fy * TILE + 1, TILE - 2, TILE - 2);
+  _drawFireTile(ctx, MARGIN + fx * TILE, MARGIN + fy * TILE, f.side);
 }
 
 // Pieces and chests
@@ -5994,6 +6040,43 @@ if (voidDeathAnim) {
 
 }
 
+function drawFireDeaths() {
+  if (fireDeaths.length === 0) return;
+  const now = performance.now();
+  for (const fd of fireDeaths) {
+    const t = Math.min(1, (now - fd.startMs) / FIRE_DEATH_MS);
+    ctx.save();
+    // the doomed piece, shrinking and fading as it's consumed
+    const img = fd.piece != null ? spriteImages[`${W}_${fd.piece}`] : null;
+    if (img && img.complete) {
+      const sz = TILE * 0.78 * (1 - 0.25 * t);
+      ctx.globalAlpha = Math.max(0, 1 - t * 1.25);
+      if (fd.side === W) ctx.drawImage(img, fd.cx - sz / 2, fd.cy - sz / 2, sz, sz);
+      else _drawTinted(ctx, img, fd.side, fd.cx - sz / 2, fd.cy - sz / 2, sz, sz);
+      ctx.globalAlpha = 1;
+    }
+    // flames engulf: rise, peak, then burst into fading embers
+    const flame = Math.sin(t * Math.PI); // 0 -> 1 -> 0
+    // Flat glow (only a handful of these ever run at once, but keep it allocation-free too).
+    ctx.fillStyle = `rgba(255,120,20,${(0.4 * flame).toFixed(2)})`;
+    ctx.fillRect(fd.cx - TILE * 0.6, fd.cy - TILE * 0.6, TILE * 1.2, TILE * 1.2);
+    // licking flame tongues
+    for (let k = 0; k < 6; k++) {
+      const spread = TILE * (0.05 + 0.34 * flame);
+      const fx = fd.cx + Math.sin(k * 1.9 + t * 5) * spread;
+      const baseY = fd.cy + TILE * 0.36;
+      const h = TILE * (0.35 + 0.45 * Math.abs(Math.sin(t * 9 + k * 1.3))) * flame;
+      ctx.fillStyle = `rgba(255,${130 + Math.floor(90 * flame)},25,${(0.85 * flame).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.moveTo(fx - TILE * 0.075, baseY);
+      ctx.quadraticCurveTo(fx - TILE * 0.085, baseY - h * 0.55, fx, baseY - h);
+      ctx.quadraticCurveTo(fx + TILE * 0.085, baseY - h * 0.55, fx + TILE * 0.075, baseY);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 function drawPromoDialog() {}
 
 function drawShopDialog() {
@@ -6760,6 +6843,7 @@ function _drawScene() {
   drawShieldPops();
   drawExplosion();
   drawVoidDeath();
+  drawFireDeaths();
   drawPromoDialog();
   drawShopDialog();
   if (shopMode && sellMode) drawInventoryPanel(); // lift inventory above the shop backdrop while selling
