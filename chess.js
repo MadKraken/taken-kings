@@ -1,4 +1,4 @@
-﻿const VERSION = "665";
+﻿const VERSION = "666";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -822,7 +822,10 @@ let elements = new Array(64).fill(0); // elemental bitmask per board square, tra
 let statuses = new Array(64).fill(0); // status bitmask per board square (e.g. STATUS_BLOODTHIRSTY)
 let attacks = new Array(64).fill(1);  // attack power per board square; starts at 1, Attack Up adds +1
 let speeds = new Array(64).fill(1);   // move count per turn; starts at 1, Speed Up adds +1
-let fireSquares = new Map(); // Map<boardIdx, side> — squares on fire; kills pieces of the opposing side
+let burning = new Array(64).fill(0);  // rounds a piece has left before it burns up (0 = not on fire). Set to
+                                      // 3 when a piece crosses opposing fire; ticks down once per round; a
+                                      // crossed river extinguishes it. Travels with the piece.
+let fireSquares = new Map(); // Map<boardIdx, {side, age}> — fire trail; ignites opposing pieces that cross it
 let elementizerMode = false;
 let elementizerElem = 0; // resolved element flag for current elementalizer activation
 let elementizerMystery = false; // true if the active elementalizer is Mystery (resolve on apply, not on activate)
@@ -899,8 +902,8 @@ function piece(x, y) { return inB(x, y) ? board[idx(x, y)] : NONE; }
 function side(x, y) { return inB(x, y) ? sides[idx(x, y)] : 0; }
 function set(x, y, p, s) { board[idx(x, y)] = p; sides[idx(x, y)] = s; }
 function enemy(s) { return s === W ? B : W; }
-function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; effectOrders[i] = []; }
-function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; effectOrders[dst] = [...effectOrders[src]]; }
+function clearSquare(i) { board[i] = NONE; sides[i] = 0; health[i] = 1; elements[i] = 0; statuses[i] = 0; attacks[i] = 1; speeds[i] = 1; burning[i] = 0; effectOrders[i] = []; }
+function copyPiece(src, dst) { board[dst] = board[src]; sides[dst] = sides[src]; health[dst] = health[src]; elements[dst] = elements[src]; statuses[dst] = statuses[src]; attacks[dst] = attacks[src]; speeds[dst] = speeds[src]; burning[dst] = burning[src]; effectOrders[dst] = [...effectOrders[src]]; }
 
 // ─── Board-rebuild helpers ────────────────────────────────────────────────────
 // The advance/shift operations (Team Advance, Field Advance, and their AI
@@ -914,7 +917,7 @@ function _blankSquares(withOrders = true) {
     board: new Array(64).fill(NONE), sides: new Array(64).fill(0),
     health: new Array(64).fill(1), elements: new Array(64).fill(0),
     statuses: new Array(64).fill(0), attacks: new Array(64).fill(1),
-    speeds: new Array(64).fill(1),
+    speeds: new Array(64).fill(1), burning: new Array(64).fill(0),
     effectOrders: withOrders ? Array.from({ length: 64 }, () => []) : null,
   };
 }
@@ -922,7 +925,7 @@ function _blankSquares(withOrders = true) {
 function _copySquareTo(n, i, ni) {
   n.board[ni] = board[i]; n.sides[ni] = sides[i]; n.health[ni] = health[i];
   n.elements[ni] = elements[i]; n.statuses[ni] = statuses[i];
-  n.attacks[ni] = attacks[i]; n.speeds[ni] = speeds[i];
+  n.attacks[ni] = attacks[i]; n.speeds[ni] = speeds[i]; n.burning[ni] = burning[i];
   if (n.effectOrders) n.effectOrders[ni] = [...effectOrders[i]];
 }
 // Commit a _blankSquares() set into the live arrays.
@@ -930,7 +933,7 @@ function _commitSquares(n) {
   board.splice(0, 64, ...n.board); sides.splice(0, 64, ...n.sides);
   health.splice(0, 64, ...n.health); elements.splice(0, 64, ...n.elements);
   statuses.splice(0, 64, ...n.statuses); attacks.splice(0, 64, ...n.attacks);
-  speeds.splice(0, 64, ...n.speeds);
+  speeds.splice(0, 64, ...n.speeds); burning.splice(0, 64, ...n.burning);
   if (n.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = n.effectOrders[i];
 }
 function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
@@ -1545,6 +1548,41 @@ function drawBlockTile(gctx, tx, ty, tileSize, temp = false) {
   gctx.restore();
 }
 
+// Burning overlay for an on-fire piece: a flickering orange aura, licking flames along the base, and
+// a small badge with the rounds it has left before it burns up (unless it crosses water first).
+function _drawBurningOverlay(gctx, dx, dy, rounds) {
+  const t = performance.now() / 130;
+  const cx = dx + TILE / 2, cy = dy + TILE / 2;
+  const flick = 0.55 + 0.25 * Math.sin(t) + 0.12 * Math.sin(t * 2.7);
+  gctx.save();
+  const grad = gctx.createRadialGradient(cx, cy + TILE * 0.18, TILE * 0.08, cx, cy, TILE * 0.6);
+  grad.addColorStop(0, `rgba(255,150,20,${(0.5 * flick).toFixed(2)})`);
+  grad.addColorStop(1, 'rgba(255,60,0,0)');
+  gctx.fillStyle = grad;
+  gctx.fillRect(dx - 6, dy - 6, TILE + 12, TILE + 12);
+  // licking flames along the bottom edge
+  const base = dy + TILE * 0.92;
+  for (let k = 0; k < 3; k++) {
+    const fx = dx + TILE * 0.3 + k * TILE * 0.2;
+    const h = TILE * (0.18 + 0.1 * Math.sin(t * 1.9 + k * 1.7));
+    gctx.fillStyle = `rgba(255,${140 + Math.floor(70 * flick)},20,0.9)`;
+    gctx.beginPath();
+    gctx.moveTo(fx - TILE * 0.05, base);
+    gctx.quadraticCurveTo(fx - TILE * 0.06, base - h * 0.6, fx, base - h);
+    gctx.quadraticCurveTo(fx + TILE * 0.06, base - h * 0.6, fx + TILE * 0.05, base);
+    gctx.closePath(); gctx.fill();
+  }
+  // rounds-left badge, top-right
+  const bx = dx + TILE - 13, by = dy + 13;
+  gctx.fillStyle = 'rgba(30,6,0,0.85)';
+  gctx.beginPath(); gctx.arc(bx, by, 10, 0, Math.PI * 2); gctx.fill();
+  gctx.strokeStyle = 'rgba(255,140,0,0.9)'; gctx.lineWidth = 1.5;
+  gctx.beginPath(); gctx.arc(bx, by, 10, 0, Math.PI * 2); gctx.stroke();
+  gctx.fillStyle = '#ffd24a'; gctx.font = 'bold 15px sans-serif'; gctx.textAlign = 'center'; gctx.textBaseline = 'middle';
+  gctx.fillText(String(rounds), bx, by + 1);
+  gctx.restore();
+}
+
 function drawShopTile(gctx, tx, ty, tileSize) {
   const cx = tx + tileSize / 2, cy = ty + tileSize / 2;
   const sz = tileSize * 0.60;
@@ -1600,14 +1638,14 @@ function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 function _snapReplayCommon() {
   return {
     board: [...board], sides: [...sides], health: [...health],
-    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds],
+    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], burning: [...burning],
     effectOrders: effectOrders.map(a => [...a]),
     specialSpaces: specialSpaces.map(s => s ? JSON.parse(JSON.stringify(s)) : null),
     itemSpaces: [...itemSpaces],
     inventory: [...inventory],
     score, gold, leapCount, shiftCountdown, merchantIdx,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
-    fireSquares: [...fireSquares],
+    fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
   };
 }
@@ -1749,7 +1787,8 @@ function takeReplaySnapshot() {
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
-    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], fireSquares: [...fireSquares],
+    elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], burning: [...burning],
+    fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
     effectOrders: effectOrders.map(a => [...a]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b}))
   });
@@ -1771,7 +1810,8 @@ function applyReplaySnapshot(snap) {
   if (snap.statuses) statuses.splice(0, 64, ...snap.statuses); else statuses.fill(0);
   if (snap.attacks) attacks.splice(0, 64, ...snap.attacks); else attacks.fill(1);
   if (snap.speeds) speeds.splice(0, 64, ...snap.speeds); else speeds.fill(1);
-  fireSquares = snap.fireSquares ? new Map(snap.fireSquares) : new Map();
+  if (snap.burning) burning.splice(0, 64, ...snap.burning); else burning.fill(0);
+  fireSquares = snap.fireSquares ? new Map(snap.fireSquares.map(([k, v]) => [k, { ...v }])) : new Map();
   chestSpaces = snap.chestSpaces ? new Set(snap.chestSpaces) : new Set();
   _shadowSpaces = snap.shadowSpaces ? new Map(snap.shadowSpaces) : new Map();
   if (snap.effectOrders) { for (let i = 0; i < 64; i++) effectOrders[i] = snap.effectOrders[i] ? [...snap.effectOrders[i]] : []; } else { for (let i = 0; i < 64; i++) effectOrders[i] = []; }
@@ -1851,8 +1891,9 @@ function _playReplayTransition(snapIdx, onDone) {
     if (ev.statuses) statuses.splice(0, 64, ...ev.statuses); else statuses.fill(0);
     if (ev.attacks) attacks.splice(0, 64, ...ev.attacks); else attacks.fill(1);
     if (ev.speeds) speeds.splice(0, 64, ...ev.speeds); else speeds.fill(1);
+    if (ev.burning) burning.splice(0, 64, ...ev.burning); else burning.fill(0);
     if (ev.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = ev.effectOrders[i] ? [...ev.effectOrders[i]] : []; // badges follow the piece mid-transition (older buffers lack this -> keep current)
-    fireSquares = ev.fireSquares ? new Map(ev.fireSquares) : new Map();
+    fireSquares = ev.fireSquares ? new Map(ev.fireSquares.map(([k, v]) => [k, { ...v }])) : new Map();
     if (ev.nextWave) nextWave = ev.nextWave.map(w => ({...w}));
     if (ev.nextBonuses) nextBonuses = ev.nextBonuses.map(b => ({...b}));
     if (ev.chestSpaces) chestSpaces = new Set(ev.chestSpaces);
@@ -2050,7 +2091,7 @@ function applyRiverFlow(onDone) {
           // Pushed onto an item space — activate it (e.g. a Bomb detonates on whoever
           // the river shoves onto it), same as a piece landing on the item by moving.
           if (itemSpaces[di] !== ITEM_NONE) _applyItemAuto(itemSpaces[di], di);
-          checkFireDeath(di); // river pushed the piece onto enemy fire
+          _igniteOnLand(di); // river pushed the piece onto enemy fire → it catches fire
         }
         continue;
       }
@@ -2194,7 +2235,7 @@ function initBoard() {
   merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
   sellMode = false; sellConfirmSlot = -1;
-  elements.fill(0); speeds.fill(1); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
+  elements.fill(0); speeds.fill(1); burning.fill(0); fireSquares = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
@@ -2238,7 +2279,7 @@ function _randomEnemyPiece(waveCount = spawnCount) {
 function rollSetup() {
   _startedClassic = false;
   // Clear all pieces and regenerate enemy wave
-  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1); burning.fill(0);
   for (let i = 0; i < 64; i++) effectOrders[i] = [];
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
@@ -2285,7 +2326,7 @@ function rollSetup() {
 
 function classicSetup() {
   _startedClassic = true;
-  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1);
+  board.fill(NONE); sides.fill(0); health.fill(1); elements.fill(0); statuses.fill(0); attacks.fill(1); speeds.fill(1); burning.fill(0);
   spawnCount = 1;
   const firstWave = generateWave(spawnCount);
   placeWave(0, firstWave);
@@ -2450,7 +2491,7 @@ function greyMovesFor(i) {
 }
 
 function greyPlay(onDone) {
-  _clearTempBlocks(N); // Greys' own temp blocks expire as their next turn begins (before any early-out)
+  _ageTrails(N); // Greys' own trails (blocks/fire) age as their next turn begins (before any early-out)
   const greys = [];
   for (let i = 0; i < 64; i++) if (sides[i] === N) greys.push(i);
   if (greys.length === 0) { onDone(); return; }
@@ -2469,7 +2510,7 @@ function greyPlay(onDone) {
     movePiece(i, dest); // preserves statuses/elements/attacks/speeds/effectOrders (e.g. Bloodthirsty)
     if (elements[dest] & ELEM_EARTH) _applyEarthLanding(i, dest, N, true); // Earth Grey: destroy a block landed on, else drop a temp block along its move direction
     if (itemSpaces[dest] !== ITEM_NONE) _applyItemAuto(itemSpaces[dest], dest);
-    checkFireDeath(dest);
+    _igniteFromCrossing(i, dest); // a Grey that crossed opposing fire catches fire
     startAnim([{
       toIdx: dest,
       fromCX: MARGIN + fx * TILE, fromCY: BOARD_Y + MARGIN + fy * TILE,
@@ -2488,9 +2529,8 @@ function slidingMoves(moves, x, y, dirs, s, isEarth = false) {
       const ni = idx(nx, ny);
       if (sides[ni] === N) { if (s === W) moves.push(ni); break; } // White captures a Grey (Kings recruit); a Grey stops all sliders either way
       if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth may land on the block (destroying it) but not slide past
-      // Enemy fire: normal sliders can land here but can't slide through. A Fire Warrior
-      // ignores fire entirely and slides through it (handled by the normal checks below).
-      if (fireSquares.has(ni) && fireSquares.get(ni) !== s && !(elements[idx(x, y)] & ELEM_FIRE)) { moves.push(ni); break; }
+      // Fire no longer blocks movement — a piece slides straight through it and catches fire on the
+      // way (handled by _igniteFromCrossing after the move); it just can't be *set* on a river.
       const isVoid = specialSpaces[ni]?.type === 'void';
       if (!isVoid) moves.push(ni);
       if (piece(nx, ny) !== NONE) break;
@@ -2553,10 +2593,7 @@ function pseudoMoves(x, y) {
       if (isBlockSpace(ni)) { if (isEarth) moves.push(ni); break; } // Earth pawn may step onto the block (destroying it), but not past
       if (piece(x, ny) !== NONE) break;
       moves.push(ni);
-      // Enemy fire stops the forward march: a pawn may step ONTO it (and burn on landing) but can't
-      // slide PAST it — same rule as normal sliders (slidingMoves). Fire Warriors and Air pawns are
-      // unaffected: they slide through / fly over fire (matching airSlidingMoves' fire handling).
-      if (fireSquares.has(ni) && fireSquares.get(ni) !== s && !(elements[idx(x, y)] & ELEM_FIRE) && !isAir) break;
+      // Fire no longer stops the pawn's march — it steps through and catches fire on the way.
     }
     // Diagonal captures — can reach up to capRange squares; stop on any occupied square
     for (const dx of [-1, 1]) {
@@ -2628,9 +2665,9 @@ function pseudoMoves(x, y) {
 // --- Elemental effect functions ---
 
 function applyFireTrail(fromI, toI, p, s) {
-  const _lay = (i) => { if (specialSpaces[i]?.type !== 'river') fireSquares.set(i, s); }; // rivers can't be set on fire
+  const _lay = (i) => { if (specialSpaces[i]?.type !== 'river') fireSquares.set(i, { side: s, age: 0 }); }; // rivers can't be set on fire
   _lay(fromI);
-  _lay(toI); // destination also burns — enemies that capture here are killed
+  _lay(toI); // destination also burns
   // Checkers pieces don't touch intermediate squares (they jump over them), and Knights have no path
   if (p === KNIGHT || p === CHECKERS || p === CHECKERS_KING) return;
   const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
@@ -2638,13 +2675,6 @@ function applyFireTrail(fromI, toI, p, s) {
   const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
   let cx = fx + dx, cy = fy + dy;
   while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
-}
-
-// Remove all fire owned by side s (fireSquares maps square -> the side that laid it,
-// which is the side immune to it). Used at turn boundaries: a fire has done its job
-// threatening the opponent during their turn, so it clears when they finish moving.
-function _clearFireOfSide(s) {
-  for (const [i, fs] of [...fireSquares]) if (fs === s) fireSquares.delete(i);
 }
 
 function _shoveMerchant(dx, dy) {
@@ -2691,7 +2721,7 @@ function shovePiece(srcI, dx, dy) {
     if (_destBomb && _shovedSide === B && _waterShoveActive) _pushedBlackIntoBombByWater = true;
     _applyItemAuto(itemSpaces[destI], destI);
   }
-  if (!replayMode) checkFireDeath(destI); // shoved onto enemy fire burns (consistent with voids/bombs)
+  if (!replayMode) _igniteOnLand(destI); // shoved onto enemy fire → catches fire
 }
 
 function applyWaterWave(fromI, toI, p) {
@@ -2727,33 +2757,54 @@ function applyWaterWave(fromI, toI, p) {
   _waterShoveActive = false;
 }
 
-function checkFireDeath(i) {
-  if (!fireSquares.has(i)) return false;
-  if (board[i] === NONE || fireSquares.get(i) === sides[i]) return false; // own-faction fire is harmless
-  if (elements[i] & (ELEM_FIRE | ELEM_WATER)) return false; // Fire & Water Warriors are immune to fire (own or enemy)
+// A piece that moved fromI→toI catches fire if its path crossed OPPOSING fire (set burning=3), and
+// is extinguished if its path crossed a river/water (burning=0) — later wins, so a move that crosses
+// fire then water ends up safe. Fire & Water warriors never burn. Runs in BOTH real play and minimax
+// (burning is rolled back by saveState), so the AI treats crossing fire as the delayed loss it is.
+// A death itself is resolved later by the once-per-round _burnTick, not here.
+function _igniteFromCrossing(fromI, toI) {
+  if (board[toI] === NONE) return;
+  const s = sides[toI];
+  if (elements[toI] & (ELEM_FIRE | ELEM_WATER)) { burning[toI] = 0; return; } // immune — never on fire
+  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
+  const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
+  // Squares newly ENTERED this move (never the origin). A straight slide walks its whole path; a
+  // jump/teleport (non-straight, or from===to) only touches the landing square. Jumpers leap OVER
+  // their midpoint (same rule as applyFireTrail lays by), so they too are landing-square-only.
+  const lp = board[toI];
+  const isJumper = lp === KNIGHT || lp === CHECKERS || lp === CHECKERS_KING;
+  const path = [];
+  if (!isJumper && fromI !== toI && (dx === 0 || dy === 0 || Math.abs(tx - fx) === Math.abs(ty - fy))) {
+    let cx = fx + dx, cy = fy + dy;
+    while (true) { path.push(idx(cx, cy)); if (cx === tx && cy === ty) break; cx += dx; cy += dy; }
+  } else {
+    path.push(toI);
+  }
+  let burn = burning[toI]; // any fire it was already carrying
+  for (const sq of path) {
+    const f = fireSquares.get(sq);
+    if (f && f.side !== s) burn = 3;                    // crossed opposing fire → ignite
+    if (specialSpaces[sq]?.type === 'river') burn = 0;  // crossed water → extinguished
+  }
+  burning[toI] = burn;
+}
+// Land-only ignite for relocations without a slide path (shove, teleport, clone, river-push).
+function _igniteOnLand(i) { _igniteFromCrossing(i, i); }
+// Resolve one round of burning: every on-fire piece ticks down; a piece that reaches 0 burns up.
+// Real-only (called once per round at the turn hand-back), so score/gold/graveyard/Game-Over are safe.
+function _burnTick() {
+  for (let i = 0; i < 64; i++) {
+    if (burning[i] <= 0 || board[i] === NONE) continue;
+    if (--burning[i] <= 0) { burning[i] = 0; _burnUp(i); }
+  }
+}
+function _burnUp(i) {
   const p = board[i], s = sides[i];
   if ((p === KING || p === CHECKERS_KING) && s === B) score++;
   if (s === B) { gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
   if (s === W) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior burned to death
   clearSquare(i);
-  // A burning White King ends the game (was: silently deleted, leaving a kingless zombie game)
   if ((p === KING || p === CHECKERS_KING) && s === W && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
-  return true;
-}
-
-// Sim-only fire death for the AI lookahead (minimax/eval). Mirrors checkFireDeath's board +
-// score/gold effects but touches ONLY state that saveState/restoreState roll back — no enemyDead,
-// no _lostWhiteThisRun, no _triggerGameOver — so it's safe inside withState. Applied after each
-// simulated move so the search sees a piece land on enemy fire and burn; that lets the Black King
-// avoid suicidally capturing a Fire/Water Warrior (self-preservation) unless it's Desperate.
-function _simFireDeath(i) {
-  if (!fireSquares.has(i)) return;
-  if (board[i] === NONE || fireSquares.get(i) === sides[i]) return; // own-faction fire is harmless
-  if (elements[i] & (ELEM_FIRE | ELEM_WATER)) return;               // Fire & Water Warriors are immune
-  const p = board[i], s = sides[i];
-  if ((p === KING || p === CHECKERS_KING) && s === B) score++;      // matches checkFireDeath; restored by withState
-  if (s === B) gold += GOLD_VALUE[p] ?? 0;                          // gold is restored too
-  clearSquare(i);
 }
 
 function isAttacked(tx, ty, bySide) {
@@ -2869,11 +2920,7 @@ function makeMove(fromI, toI, visual = false) {
   }
   const captured = board[toI];
   const capSide = sides[toI];
-  // "Unless White moves again": a fresh White piece move expires White's own lingering fire.
-  // (A Field Advance isn't a piece move, so fire survives it — that's the persistence case.) Fire
-  // this move lays via applyFireTrail, which runs after the move, is unaffected. Gated to the turn's
-  // first move so Speed/Bloodthirsty extra moves and Checkers chains don't wipe fire laid this turn.
-  if (visual && s === W && _speedIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0) _clearFireOfSide(W);
+  // (Fire no longer clears on a fresh move — it ages out over two rounds via _ageTrails.)
 
   // Checkers / Checkers King jump: leaps 2 diagonally — remove the piece in the middle square (only if it's an enemy, not an Air slide)
   if ((p === CHECKERS || p === CHECKERS_KING) && Math.abs(tx - fx) === 2 && Math.abs(ty - fy) === 2) {
@@ -2987,14 +3034,17 @@ function makeMove(fromI, toI, visual = false) {
   const movedStatus = statuses[fromI];
   const movedAtk = attacks[fromI];
   const movedSpd = speeds[fromI];
+  const movedBurn = burning[fromI];
   let landPiece = p;
   // Checkers Man promotion: reaches the far back rank
   if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
   board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
   elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
+  burning[toI] = movedBurn;
   effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
   if (movedElem & ELEM_EARTH) _applyEarthLanding(fromI, toI, s, visual); // Earth: destroy a block landed on, else drop a temp block along the move direction
+  _igniteFromCrossing(fromI, toI); // catch fire crossing opposing fire (or extinguish on a river) — real + sim (rolled back in sim)
 
   // Ground items (sky drops): in simulation, bank the item so the search values
   // landing on item squares (via the inventory eval term). Real pickups run
@@ -3014,7 +3064,7 @@ function makeMove(fromI, toI, visual = false) {
 // past the landing square along the move's direction (the sign of each axis). Moving up puts the
 // wall above, down below, sideways beside, diagonals diagonal — and a Knight's L (e.g. +1,-2 →
 // +1,-1) lands its wall on the approximate diagonal. Temp blocks obstruct exactly like normal
-// blocks and are cleared right before their owner's next turn (see _clearTempBlocks). The spawn is a
+// blocks and age out over two of their owner's turns (see _ageTrails). The spawn is a
 // real-move effect (visual): it runs identically in live play and headless re-sim — which drive every
 // real move through makeMove(visual=true) — but is kept out of minimax so lookahead stays cheap. The
 // block-destruction runs in sim too (it changes legality), which is why saveState covers specialSpaces.
@@ -3043,16 +3093,20 @@ function _applyEarthLanding(fromI, landI, side, visual) {
     while (cx !== tx || cy !== ty) { _lay(idx(cx, cy)); cx += dx; cy += dy; }
   }
 }
-// Age a side's temporary blocks — called right before that side acts again. Each temp block survives
-// TWO of the owner's turns (age 0 when laid, cleared once it reaches age 2), so the owner gets a turn
-// to make use of its own trail. Deterministic (runs identically in live + re-sim).
-function _clearTempBlocks(side) {
+// Age the trails a side laid — its temporary Earth blocks AND its Fire — called right before that
+// side acts again. Each survives TWO of the owner's turns (age 0 when laid, cleared once it reaches
+// age 2), so the owner gets a turn to make use of its own trail. Deterministic (live + re-sim).
+function _ageTrails(side) {
   for (let i = 0; i < 64; i++) {
     const sp = specialSpaces[i];
     if (sp && sp.type === 'block' && sp.temp && sp.owner === side) {
       sp.age = (sp.age || 0) + 1;
       if (sp.age >= 2) specialSpaces[i] = null;
     }
+  }
+  for (const [i, f] of [...fireSquares]) {
+    if (f.side !== side) continue;
+    if (++f.age >= 2) fireSquares.delete(i);
   }
 }
 
@@ -3070,7 +3124,6 @@ function endWhiteTurn() {
   stopWhiteTurnTimer();
   lastActingSide = W;
   _turnBoundaryUpdate(); // fold this turn's activity into streaks, clear per-turn counters
-  _clearFireOfSide(B);   // White moved a piece — enemy fire has done its job; clear it
   shiftCountdown--;
   if (shiftCountdown <= 0) {
     fieldAdvance(); // auto-advance ends the turn AND counts it (via fieldAdvance's _kingCountTurn)
@@ -3141,7 +3194,6 @@ function teamAdvance() {
   _logInput({ t: 'ta' });
   _kingLastMovedType = NONE; // an Advance moved no single piece — the King's line falls back to random
   _turnBoundaryUpdate(); // Team Advance ends the White turn — update streaks, clear per-turn counters
-  _clearFireOfSide(B);   // Team Advance counts as a White move — enemy fire clears (Field Advance never does)
   _resetTurnState(); // Team Advance ends the turn — forfeit any pending Speed/Bloodthirsty extra move
   playSfx('torch');  // Team Advance
 
@@ -3217,6 +3269,14 @@ function teamAdvance() {
   }
 
   _commitSquares(nsq);
+
+  // Advancing onto live opposing fire ignites — fire persists across turns now, so a Team Advance
+  // step is a landing like any other (land-only: each piece entered exactly one new square).
+  for (let i = 0; i < 64; i++) {
+    if (!canMoveUp[i]) continue;
+    const [ax3, ay3] = xy(i);
+    _igniteOnLand(idx(ax3, ay3 - 1));
+  }
 
   epTarget = -1;
   selected = -1;
@@ -3506,7 +3566,7 @@ function fieldAdvance(playerTriggered = false) {
 // --- AI ---
 
 // Per-square flat arrays — add new ones here and save/restore picks them up automatically.
-const _squareArrays = () => [board, sides, health, elements, statuses, attacks, speeds];
+const _squareArrays = () => [board, sides, health, elements, statuses, attacks, speeds, burning];
 
 function saveState() {
   return {
@@ -3628,6 +3688,10 @@ function evaluate() {
     } else {
       val -= effectiveV;
     }
+    if (burning[i] > 0) { // on fire → likely to burn up; discount its value toward 0 as the timer runs down
+      const lost = effectiveV * (4 - burning[i]) / 3; // rounds 3→2→1 : lose 1/3, 2/3, all of it
+      val += (sides[i] === W) ? -lost : lost;
+    }
   }
   if (!whiteKing) return -99999;
   // Taken Kings is the win condition — value it directly, not just as the
@@ -3671,7 +3735,7 @@ function _turnContinuation(pieceI, extra, depth, alpha, beta, moverIsMax) {
   for (const to of legalMoves(px, py)) {
     if (s === B && to === merchantIdx) continue;
     const val = withState(() => {
-      makeMove(pieceI, to); _simFireDeath(to); recordPosition();
+      makeMove(pieceI, to); recordPosition();
       return _turnContinuation(to, extra - 1, depth, alpha, beta, moverIsMax);
     });
     if (_aiAborted) break; // over budget — stop chaining extra moves
@@ -3708,7 +3772,7 @@ function minimax(depth, alpha, beta, maximizing) {
     for (const [from, to] of moves) {
       const val = withState(() => {
         const wasCap = sides[to] === B;
-        makeMove(from, to); _simFireDeath(to); recordPosition();
+        makeMove(from, to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, true);
       });
       if (_aiAborted) break; // over budget — stop iterating (this subtree's result is discarded upstream)
@@ -3727,7 +3791,7 @@ function minimax(depth, alpha, beta, maximizing) {
     for (const [from, to] of moves) {
       const val = withState(() => {
         const wasCap = sides[to] === W;
-        makeMove(from, to); _simFireDeath(to); recordPosition();
+        makeMove(from, to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, alpha, beta, false);
       });
       if (_aiAborted) break; // over budget — stop iterating
@@ -3769,7 +3833,7 @@ function* _blackSearchGen(moves) {
     for (const [from, to] of moves) {
       const val = withState(() => {
         const wasCap = sides[to] === W;
-        makeMove(from, to); _simFireDeath(to); recordPosition();
+        makeMove(from, to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, false);
       });
       if (_aiAborted) { aborted = true; break; } // total budget ran out mid-depth — discard this depth
@@ -3844,8 +3908,7 @@ function playerBestMove(depth = HINT_DEPTH, forcedAdvance = false) {
     const captureBonus = (board[to] !== NONE && sides[to] !== W) ? PIECE_VALUE[board[to]] : 0;
     const val = withState(() => {
       const wasCap = sides[to] === B;
-      makeMove(from, to); _simFireDeath(to);
-      if (forcedAdvance) { simulateLeap(false); recordPosition(); return minimax(depth - 1, -Infinity, Infinity, false); }
+      makeMove(from, to);      if (forcedAdvance) { simulateLeap(false); recordPosition(); return minimax(depth - 1, -Infinity, Infinity, false); }
       recordPosition();
       return _turnContinuation(to, _extraMoveBudget(to, wasCap), depth, -Infinity, Infinity, true);
     }) + captureBonus;
@@ -3906,7 +3969,7 @@ function aiPlay() {
   setTimeout(() => {
     if (_gen !== _runGen) return;                              // stale — a new run owns the board now
     if (gameOver || turn !== B) { aiThinking = false; draw(); return; }
-    _clearTempBlocks(B); // Black's own temp blocks expire as its next turn begins
+    _ageTrails(B); // Black's own trails (blocks/fire) age as its next turn begins
     _blackMainMove((move) => {
     if (_gen !== _runGen) return; // a new run began while the enemy was thinking (async) — abandon
     if (move) {
@@ -3921,11 +3984,12 @@ function aiPlay() {
         greyPlay(() => {
           merchantPlay(() => {
             applyRiverFlow(() => {
-              _clearFireOfSide(W); // Black's turn is over — White (player) fire has had its chance to burn Black
               _doSkyDropPhase(() => {
                 turn = W;
                 aiThinking = false;
-                _clearTempBlocks(W); // White's temp blocks expire as its next turn begins
+                _ageTrails(W);  // White's trails (blocks/fire) age as its next turn begins
+                _burnTick();    // a full round elapsed — burning pieces tick down (and may burn up)
+                if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
                 _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
                 takeReplaySnapshot();
                 _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -3985,7 +4049,6 @@ function aiPlay() {
         playMoveSfx(_aiPiece0, move[1]);
         _startMoveAnim(_aiAnimPieces, _aiLegs, () => {
           _drainCaptureAnims();
-          checkFireDeath(move[1]);
           if (board[move[1]] !== NONE && itemSpaces[move[1]] !== ITEM_NONE) _applyItemAuto(itemSpaces[move[1]], move[1]);
           recordPosition();
           const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () =>
@@ -4008,15 +4071,12 @@ function aiPlay() {
       greyPlay(() => {
         merchantPlay(() => {
           applyRiverFlow(() => {
-            // Black had no move. White's fire only expires once an enemy/neutral has had a turn to
-            // face it — with no Black or Grey pieces on the board, nothing could be threatened, so
-            // it persists (it'll block the wave the player Field Advances in, and clears once that
-            // wave moves or White moves a piece again). If enemies/greys remain, clear as usual.
-            if (board.some((pc, ii) => pc !== NONE && (sides[ii] === B || sides[ii] === N))) _clearFireOfSide(W);
             _doSkyDropPhase(() => {
               turn = W;
               aiThinking = false;
-              _clearTempBlocks(W); // White's temp blocks expire as its next turn begins
+              _ageTrails(W);  // White's trails (blocks/fire) age as its next turn begins
+              _burnTick();    // a full round elapsed — burning pieces tick down (and may burn up)
+              if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
               _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
               takeReplaySnapshot();
               _turnStartSnapIndices.push(replaySnapshots.length - 1);
@@ -4096,7 +4156,6 @@ function _aiExtraMove(dest, onDone) {
   _appendCaptureGhosts(anims);
   startAnim(anims, 0, () => {
     _drainCaptureAnims();
-    checkFireDeath(best);
     if (board[best] !== NONE && itemSpaces[best] !== ITEM_NONE) _applyItemAuto(itemSpaces[best], best);
     recordPosition();
     if (waveData) { waveData.shoveParams.toI = best; startWaveAnim(waveData.squares, waveData.shoveParams, () => onDone(best)); }
@@ -4141,7 +4200,6 @@ function _aiTryChainJump(landI, wasJump, onDone) {
   _appendCaptureGhosts(chainAnims);
   startAnim(chainAnims, 0, () => {
     _drainCaptureAnims();
-    checkFireDeath(nextTo);
     recordPosition();
     const isFinalJump = _checkersJumpsFrom(nextTo).length === 0;
     const afterChain = () => _aiTryChainJump(nextTo, true, onDone);
@@ -4175,7 +4233,7 @@ function _autoTeleport(i) {
   playSfx('teleport');
   const _tDest = dests[randInt(dests.length)];
   movePiece(i, _tDest); // preserves side/stats/effects
-  checkFireDeath(_tDest); // teleported onto enemy fire — burns
+  _igniteOnLand(_tDest); // teleported onto enemy fire — catches fire
 }
 
 // Auto-clone: drop a same-side copy of the piece at i onto a random adjacent empty square.
@@ -4185,7 +4243,7 @@ function _autoClone(i) {
   playSfx('clone');
   const _cDest = dests[randInt(dests.length)];
   copyPiece(i, _cDest); // clone keeps the same side/stats/effects
-  checkFireDeath(_cDest); // clone dropped onto enemy fire — burns
+  _igniteOnLand(_cDest); // clone dropped onto enemy fire — catches fire
 }
 
 function countKings(s) {
@@ -4945,6 +5003,7 @@ for (let i = 0; i < 64; i++) {
   const _isActivePiece = (i === selected);
   _drawPieceSprite(ctx, sides[i], board[i], _drawX + pad, _drawY + pad, TILE - pad * 2, TILE - pad * 2, _isActivePiece);
   _drawPieceEffectIcons(ctx, _drawX, _drawY, effectOrders[i]);
+  if (burning[i] > 0) _drawBurningOverlay(ctx, _drawX, _drawY, burning[i]); // on fire — flames + rounds-left badge
 }
 
 // Draw ghost sprites for void-bound wave pieces (already removed from board)
@@ -7070,7 +7129,7 @@ function handleClonerClick(cx, cy) {
         _logItemUse(_s, _fs, [clonerSelected, i]);
         if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         copyPiece(clonerSelected, i); sides[i] = W; playSfx('clone');
-        checkFireDeath(i); // clone dropped onto enemy fire — burns
+        _igniteOnLand(i); // clone dropped onto enemy fire — catches fire
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const clonerFromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
@@ -7122,7 +7181,7 @@ function handleTeleporterClick(cx, cy) {
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
         const _tPiece = board[i] || _tPiece0, _tHlth = health[i] || _tHlth0;
-        checkFireDeath(i); // teleported onto enemy fire — burns (checkWhiteKingAlive below covers the King)
+        _igniteOnLand(i); // teleported onto enemy fire — catches fire (checkWhiteKingAlive below covers the King)
         const _tFinish = () => {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
@@ -7440,7 +7499,6 @@ function handleBoardClick(cx, cy) {
       const _wPiece0 = board[clickedDest], _wSide0 = sides[clickedDest], _wHlth0 = health[clickedDest];
       const _wContinue = (movedTo) => {
         pendingCaptures = {};
-        checkFireDeath(movedTo); // landing on enemy fire burns (same as the AI/auto paths)
         checkWhiteKingAlive();
         if (!gameOver) {
           if (_isCheckersJump && (board[movedTo] === CHECKERS || board[movedTo] === CHECKERS_KING) && sides[movedTo] === W) {
@@ -7876,7 +7934,7 @@ function _aiWhiteStep() {
     for (const to of validMoves) {
       const val = withState(() => {
         const wasCap = sides[to] === B;
-        makeMove(from, to); _simFireDeath(to); recordPosition();
+        makeMove(from, to); recordPosition();
         return _turnContinuation(to, _extraMoveBudget(to, wasCap), AUTO_DEPTH, -Infinity, Infinity, true);
       });
       if (val > bestVal) { bestVal = val; bestTo = to; }
