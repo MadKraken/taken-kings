@@ -1,4 +1,4 @@
-﻿const VERSION = "681";
+﻿const VERSION = "682";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5963,6 +5963,28 @@ const _TERRAIN_DESC = {
 const _MERCHANT_DESC = "This man doesn't seem like he's here for war -- only coin. And if his wares indeed aid, perhaps he'll get it.";
 const _CHEST_DESC    = "Here lies one of the collected treasures of the Black Kings. Let us see what's inside...";
 const _SHADOW_DESC   = "By the magic surrounding the Black Kings materializing in the air, strange spells are falling from the sky. We shall see what thus befalls there in a moment.";
+// Authored inspect line per item (Promoters are dynamic — see _itemInspectLine).
+const _ITEM_DESC = {
+  [ITEM_TELEPORTER]:   "This is a Teleporter, coalesced teleporting magic. We can use it to reposition a Warrior anywhere.",
+  [ITEM_CLONER]:       "A Cloner can make one two. All their traits are duplicated.",
+  [ITEM_BOMB]:         "A Bomb, explosive magic barely contained. Wherever it detonates, adjacent squares are also affected.",
+  [ITEM_REWINDER]:     "A Rewinder can be a lifesaver. Mistakes are a part of life, but Rewinders can mitigate them.",
+  [ITEM_SHIELD]:       "A Shield can take a hit that would normally kill a man. However, it can only take one.",
+  [ITEM_SWORD]:        "Not all arms are created equal, and a wielder of a Mighty Blade can cut even through Shields.",
+  [ITEM_BOOTS]:        "Fast Boots, footwear enchanted for speed. One thus shod can make blinding movements.",
+  [ITEM_VAMPIRE_FANG]: "In any other arena I would disallow the use of a Vampire Fang on my men, but the advantages of being Bloodthirsty here are too great.",
+  [ITEM_ELEM_FIRE]:    "Fire Essence imbues a Warrior with the Fire Element. Their footsteps cause scorching flames.",
+  [ITEM_ELEM_WATER]:   "Water Essence imbues a Warrior with the Water Element. Such a one draws forth a River in their wake.",
+  [ITEM_ELEM_EARTH]:   "Earth Essence imbues a Warrior with the Earth Element. Such one is followed by Blocks of hardened stone.",
+  [ITEM_ELEM_AIR]:     "Air Essence imbues a Warrior with the Air Element. Such a one can pass through any obstacle like a rushing wind.",
+  [ITEM_ELEM_MYSTERY]: "Not all magics wear their nature. Who knows what Element a Mystery Essence might imbue.",
+};
+function _itemInspectLine(item) {
+  if (item === ITEM_PROMOTER_CKING) return "Only Checkers Men can become Kings on the battlefield. A Promoter Checkers King does just that.";
+  if (item === ITEM_PROMOTER_WILD)  return "A Mystery Promoter hastens years of training, but into what, only usage can tell.";
+  if (isPromoterItem(item)) return `A Promoter to ${_kingPieceName(promoterTo(item))} is a transforming magic for a Pawn, years of training in a bottle.`;
+  return _ITEM_DESC[item] || `This is a ${itemName(item)}`;
+}
 // Authored line for a non-Warrior board square: Void/Block/Fire/River terrain, else "No one's here".
 // (Merchant/Chest/Item/shadow are handled by the caller — not authored yet.)
 function _terrainInspectLine(i) {
@@ -6033,7 +6055,7 @@ function _kingInspect(i) {
   } else if (chestSpaces.has(i)) {
     line = _CHEST_DESC;
   } else if (itemSpaces[i] !== ITEM_NONE) {
-    line = `This is a ${itemName(itemSpaces[i])}`; // field item — per-item descriptions forthcoming
+    line = _itemInspectLine(itemSpaces[i]); // field item
   } else if (_shadowSpaces && _shadowSpaces.has(i)) {
     line = _SHADOW_DESC;
   } else {
@@ -6048,7 +6070,7 @@ function _kingInspect(i) {
 function _kingInspectItem(item) {
   if (_instant || replayMode || item === ITEM_NONE) return;
   _inspectIdx = -1; _inspectPreviewCol = -1;
-  _kingRemark = `This is a ${itemName(item)}`; // placeholder text — author real descriptions later
+  _kingRemark = _itemInspectLine(item); // selected inventory item
   _kingRemarkPri = _KING_PRI.inspect || 5;
   _kingRemarkMs = performance.now(); _kingPage = 0;
 }
@@ -6085,7 +6107,7 @@ function _kingInspectPreview(col) {
     else if (b && b.type === 'river') line = _TERRAIN_DESC.river;
     else if (merchantQueued && merchantQueuedCol === col) line = _MERCHANT_DESC;
     else if (b && b.type === 'chest') line = _CHEST_DESC;
-    else if (b && b.type === 'item') line = `This is a ${itemName(b.item)}`; // field item — descriptions forthcoming
+    else if (b && b.type === 'item') line = _itemInspectLine(b.item); // incoming field item
     else line = _TERRAIN_DESC.empty; // empty fog
   }
   _kingRemark = line;
