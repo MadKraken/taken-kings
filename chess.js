@@ -1,4 +1,4 @@
-﻿const VERSION = "679";
+﻿const VERSION = "680";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -777,6 +777,18 @@ function isPromoterItem(item) { return item >= ITEM_PROMOTER_BASE && item < 200;
 function promoterTo(item) { return item - ITEM_PROMOTER_BASE; }
 function makePromoterItem(to) { return ITEM_PROMOTER_BASE + to; }
 const ITEM_PROMOTER_WILD = makePromoterItem(PROMOTER_WILD);
+// Promoter to Checkers King: a distinct id (avoids the PROMOTER_WILD===CHECKERS_KING===9 collision) that
+// promotes a Checkers MAN (not a Pawn) into a Checkers King. Only sold when a Checkers Man is on the team.
+const ITEM_PROMOTER_CKING = ITEM_PROMOTER_BASE + 50; // 150
+// What a promoter turns its target into (resolving Wild → random; CK-promoter → Checkers King).
+function promoterResult(item) {
+  if (item === ITEM_PROMOTER_CKING) return CHECKERS_KING;
+  const to = promoterTo(item);
+  return to === PROMOTER_WILD ? _rollWildTo() : to;
+}
+// The piece type a promoter is applied to: a Pawn, except the CK promoter which targets a Checkers Man.
+function promoterTarget(item) { return item === ITEM_PROMOTER_CKING ? CHECKERS : PAWN; }
+function _hasWhiteCheckersMan() { for (let i = 0; i < 64; i++) if (board[i] === CHECKERS && sides[i] === W) return true; return false; }
 
 // Elemental system — bitmask flags, stackable per piece
 const ELEM_FIRE  = 1;
@@ -814,6 +826,7 @@ const ITEM_NAMES = {
   [ITEM_VAMPIRE_FANG]: "Vampire Fang", [ITEM_SWORD]: "Mighty Blade", [ITEM_BOOTS]: "Fast Boots"
 };
 function itemName(item) {
+  if (item === ITEM_PROMOTER_CKING) return "Promoter to Checkers King";
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
   if (isElementalizerItem(item)) return elementizerItemName(item);
   return ITEM_NAMES[item] || "?";
@@ -832,7 +845,7 @@ let explosionAnim = null; // {cx, cy, startMs}
 let waveAnim = null; // {squares:[idx...], startMs, dur, onDone} — water wave sweep
 let pendingCaptures = {}; // boardIdx -> {piece, side} — removed from board but still rendered until hop arrives
 let piecePromoterMode = false;
-let piecePromoterTo = NONE;
+let piecePromoterItem = NONE;
 let teleporterMode = false;
 let teleporterSelected = -1;
 let bombMode = false;
@@ -994,7 +1007,7 @@ function cellIdxFromCoords(cx, cy) {
 
 // Promote the pawn at i to a promoter item's target (rolling for wild).
 function _promotePawnTo(item, i) {
-  board[i] = promoterTo(item) === PROMOTER_WILD ? _rollWildTo() : promoterTo(item);
+  board[i] = promoterResult(item);
 }
 
 // Apply an elementalizer item to i: resolve element (mystery→random), OR-in flag + badge.
@@ -1779,7 +1792,9 @@ function _rollWildTo() {
 
 function _randomPromoterItem() {
   const pool = [ROOK, ROOK, KNIGHT, KNIGHT, BISHOP, BISHOP, QUEEN, PROMOTER_WILD];
+  if (_hasWhiteCheckersMan()) pool.push(-1); // -1 = Checkers-King promoter; only offered with a Checkers Man on the team
   const pick = pool[randInt(pool.length)];
+  if (pick === -1) return ITEM_PROMOTER_CKING;
   return pick === PROMOTER_WILD ? ITEM_PROMOTER_WILD : makePromoterItem(pick);
 }
 
@@ -2346,7 +2361,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _inspectIdx = -1; _inspectPreviewCol = -1; _resetTurnState();
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterItem = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _inspectIdx = -1; _inspectPreviewCol = -1; _resetTurnState();
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   _lostWhiteThisRun = false; _king20TakenBy = NONE;
   _recruitedCManThisRun = false; _recruitedCKingThisRun = false; _maxGoldThisRun = 0;
@@ -3299,7 +3314,7 @@ function cancelItemMode() {
   // paths inside the per-item click handlers.
   const fromSpace = activeItemSpaceIdx >= 0;
   activeItemSpaceIdx = -1;
-  piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
+  piecePromoterMode = false; piecePromoterItem = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   vampireFangMode = false; swordMode = false; speedMode = false;
@@ -3315,7 +3330,7 @@ function trashActiveItem() {
   }
   const fromSpace = activeItemSpaceIdx >= 0; // same queue-drain duty as cancelItemMode above
   activeItemSpaceIdx = -1;
-  piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false;
+  piecePromoterMode = false; piecePromoterItem = NONE; teleporterMode = false;
   clonerMode = false; shieldMode = false; bombMode = false; bombHoverIdx = -1;
   elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
   teleporterSelected = -1; clonerSelected = -1;
@@ -4425,7 +4440,7 @@ function checkWhiteKingAlive() {
 
 function canItemAffectPiece(item, i) {
   const p = board[i];
-  if (isPromoterItem(item)) { return p === PAWN && sides[i] === W; }
+  if (isPromoterItem(item)) { return p === promoterTarget(item) && sides[i] === W; }
   switch (item) {
     case ITEM_SHIELD: return health[i] < 2;
     case ITEM_TELEPORTER: return true;
@@ -4450,7 +4465,7 @@ function _applyItemAuto(item, i) {
     case ITEM_CLONER: _autoClone(i); break;
     default:
       if (isElementalizerItem(item)) _applyElementItem(item, i);
-      else if (isPromoterItem(item) && board[i] === PAWN) _promotePawnTo(item, i);
+      else if (isPromoterItem(item) && board[i] === promoterTarget(item)) _promotePawnTo(item, i);
       break;
   }
 }
@@ -4572,7 +4587,7 @@ function activateItemSpace(item, i) {
       return true;
     default:
       if (isPromoterItem(item)) {
-        piecePromoterMode = true; piecePromoterTo = promoterTo(item);
+        piecePromoterMode = true; piecePromoterItem = item;
         draw(); return false;
       }
       if (isElementalizerItem(item)) {
@@ -5208,7 +5223,7 @@ for (const [idxStr, cap] of Object.entries(pendingCaptures)) {
 // Piece promoter highlight
 if (piecePromoterMode) {
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W && board[i] === PAWN) {
+    if (sides[i] === W && board[i] === promoterTarget(piecePromoterItem)) {
       const [px, py] = xy(i);
       ctx.fillStyle = "rgba(200,150,50,0.5)";
       ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
@@ -5429,12 +5444,13 @@ function _drawItemInSlot(ctx, item, sx, sy, size) {
   const pad = 4;
   if (isPromoterItem(item)) {
     const half = (size - pad * 2) / 2;
-    const fromImg = spriteImages[`${W}_${PAWN}`];
+    const _ck = item === ITEM_PROMOTER_CKING;
+    const fromImg = spriteImages[`${W}_${_ck ? CHECKERS : PAWN}`]; // CK promoter shows a Checkers Man -> King
     if (fromImg && fromImg.complete) ctx.drawImage(fromImg, sx + pad, sy + pad, half, half);
-    if (promoterTo(item) === PROMOTER_WILD) {
+    if (!_ck && promoterTo(item) === PROMOTER_WILD) {
       _drawPromoterStar(ctx, sx + pad + half + half / 2, sy + pad + half + half / 2, half * 0.42);
     } else {
-      const toImg = spriteImages[`${W}_${promoterTo(item)}`];
+      const toImg = spriteImages[`${W}_${_ck ? CHECKERS_KING : promoterTo(item)}`];
       if (toImg && toImg.complete) ctx.drawImage(toImg, sx + pad + half, sy + pad + half, half, half);
     }
     ctx.fillStyle = "#ffdd88";
@@ -5502,7 +5518,7 @@ ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.
 ctx.strokeStyle = "#5a5a8e";
 ctx.lineWidth = 3;
 ctx.stroke();
-const invStatus = sellMode ? "Select an item to sell" : piecePromoterMode ? `Select a Pawn to promote to ${PIECE_NAMES[piecePromoterTo] || "?"}` : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : shieldMode ? "Select a piece to shield" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
+const invStatus = sellMode ? "Select an item to sell" : piecePromoterMode ? (piecePromoterItem === ITEM_PROMOTER_CKING ? "Select a Checkers Man to promote to Checkers King" : `Select a Pawn to promote to ${(PIECE_NAMES[promoterTo(piecePromoterItem)]||"?")[0].toUpperCase()+(PIECE_NAMES[promoterTo(piecePromoterItem)]||"?").slice(1)}`) : clonerMode ? (clonerSelected >= 0 ? "Select adjacent empty space" : "Select a piece to clone") : shieldMode ? "Select a piece to shield" : teleporterMode ? (teleporterSelected >= 0 ? "Select destination" : "Select a piece to teleport") : bombMode ? "Select blast center" : elementizerMode ? `Select a piece to apply ${elementizerMystery ? "Mystery" : ELEM_NAMES[elementizerElem]} element` : "";
 ctx.fillStyle = invStatus ? "#ffdd88" : "#fff";
 ctx.font = "42px Canterbury";
 ctx.textAlign = "center";
@@ -5927,6 +5943,13 @@ const _KING_INSPECT_LINES = {
   black:      "That is a Black King, one of those responsible for the ruin of my people. They move as I do, one square in any direction. Taking them is the cause of our conquest!",
   grey:       "That is a Grey King. One of the foul ones, but it seems they yet wrestle with the darkness. Perhaps diplomacy might prevail there.",
 };
+// The Checkers Man line (with [Color]); the Checkers King is per-allegiance.
+const _CHECKERS_MAN_DESC = ", one from a land very far away. Rumor has it their true origin, though, is from the stars. In any case, no one really understands what they are.";
+const _CHECKERS_KING_LINES = {
+  white: "That's a White Checkers King. A strange being, but a King all the same. Should I fall and he remain, our charge will not discontinue!",
+  black: "That's a Black Checkers King, a ruler from Checkers. It seems even their number can be found among the accursed. We shall take them all the same.",
+  grey:  "The curse upon that strange King from Checkers is weakening. Perhaps a word from myself can gain us another King's alliance, regardless of form.",
+};
 const _TERRAIN_DESC = {
   empty:      "No one's here.",
   void:       "A strange hole in the world, a Void. The magic of the Black Kings tears at all that is seen. They can be safely passed over, but landing on one is certain death.",
@@ -5967,6 +5990,8 @@ function _pieceInspectLine(piece, side, mods) {
     if (side === W) return _countWhiteChessKings() > 1 ? _KING_INSPECT_LINES.whiteClone : _KING_INSPECT_LINES.whiteSolo;
     return side === B ? _KING_INSPECT_LINES.black : _KING_INSPECT_LINES.grey;
   }
+  if (piece === CHECKERS_KING) return side === W ? _CHECKERS_KING_LINES.white : side === B ? _CHECKERS_KING_LINES.black : _CHECKERS_KING_LINES.grey;
+  if (piece === CHECKERS) return `That's a ${_COLOR_WORD[side] || 'Grey'} ${mods || ''}Checkers Man${_CHECKERS_MAN_DESC}`;
   const desc = _PIECE_DESC[piece];
   if (!desc) return null;
   return `This is a ${_COLOR_WORD[side] || 'Grey'} ${mods || ''}${_kingPieceName(piece)}${desc}${_COLOR_APPEND[side] || ''}`;
@@ -7403,11 +7428,11 @@ canvas.addEventListener("mouseup", (e) => {
     const i = idx(gx, gy);
     inventory._activeSlot = slot;
 
-    if (isPromoterItem(item) && sides[i] === W && board[i] === PAWN) {
+    if (isPromoterItem(item) && sides[i] === W && board[i] === promoterTarget(item)) {
       _logItemUse(slot, false, [i]);
       _promotePawnTo(item, i);
       removeFromInventory(slot); delete inventory._activeSlot;
-      piecePromoterMode = false; piecePromoterTo = NONE;
+      piecePromoterMode = false; piecePromoterItem = NONE;
       dragConsumed = true; draw(); return;
     }
     if (item === ITEM_SHIELD && sides[i] === W) {
@@ -7564,19 +7589,19 @@ function handleSellConfirmClick(cx, cy) {
 function handlePiecePromoterClick(cx, cy) {
   const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i2 = cellIdxFromCoords(cx, cy);
-  const eligible = i2 >= 0 && sides[i2] === W && board[i2] === PAWN;
+  const eligible = i2 >= 0 && sides[i2] === W && board[i2] === promoterTarget(piecePromoterItem);
   if (eligible) {
     _logItemUse(_s, _fs, [i2]);
-    board[i2] = piecePromoterTo === PROMOTER_WILD ? _rollWildTo() : piecePromoterTo;
+    board[i2] = promoterResult(piecePromoterItem);
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
     activeItemSpaceIdx = -1;
-    piecePromoterMode = false; piecePromoterTo = NONE;
+    piecePromoterMode = false; piecePromoterItem = NONE;
     if (fromSpace) { processNextQueuedItem(); } else { draw(); }
     return;
   }
   _logItemUse(_s, _fs, null);
-  piecePromoterMode = false; piecePromoterTo = NONE;
+  piecePromoterMode = false; piecePromoterItem = NONE;
   if (inventory._activeSlot !== undefined) delete inventory._activeSlot;
   draw();
 }
@@ -7813,7 +7838,7 @@ function handleInventoryClick(cx, cy) {
         [ITEM_SHIELD]:     () => { shieldMode = true; },
         [ITEM_BOMB]:         () => { bombMode = true; bombHoverIdx = -1; },
       };
-      if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterTo = promoterTo(item); };
+      if (isPromoterItem(item)) modeMap[item] = () => { piecePromoterMode = true; piecePromoterItem = item; };
       if (isElementalizerItem(item)) modeMap[item] = () => { elementizerMode = true; elementizerMystery = (item === ITEM_ELEM_MYSTERY); elementizerElem = elementizerMystery ? 0 : elemFromItem(item, false); };
       if (item === ITEM_VAMPIRE_FANG) modeMap[item] = () => { vampireFangMode = true; };
       if (item === ITEM_SWORD) modeMap[item] = () => { swordMode = true; };
@@ -8276,17 +8301,18 @@ function _aiUseShield() {
 }
 
 function _aiUsePromoter(slot, promoteTo) {
-  // Find best pawn (highest y = closest to being pushed off; promote soonest)
+  // Find the best target (a Pawn, or a Checkers Man for the CK promoter) — highest y = promote soonest
+  const want = promoterTarget(inventory[slot]);
   let bestI = -1, bestY = -1;
   for (let i = 0; i < 64; i++) {
-    if (sides[i] === W && board[i] === PAWN) {
+    if (sides[i] === W && board[i] === want) {
       const [, py] = xy(i);
       if (py > bestY) { bestY = py; bestI = i; }
     }
   }
   if (bestI < 0) return false;
   inventory._activeSlot = slot;
-  piecePromoterMode = true; piecePromoterTo = promoterTo(inventory[slot]);
+  piecePromoterMode = true; piecePromoterItem = inventory[slot];
   const [px, py] = xy(bestI);
   setTimeout(() => handlePiecePromoterClick(MARGIN + px * TILE + TILE / 2, BOARD_Y + MARGIN + py * TILE + TILE / 2), 150);
   return true;
