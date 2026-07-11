@@ -1,4 +1,4 @@
-﻿const VERSION = "676";
+﻿const VERSION = "679";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -688,6 +688,8 @@ let sides = new Array(64).fill(0);
 let health = new Array(64).fill(1);
 let selected = -1;
 let validMoves = [];
+let _inspectIdx = -1; // last square the player tapped this turn — drawn as a marker ring (render-only)
+let _inspectPreviewCol = -1; // last preview-row (fog) column the player tapped — its own marker ring (render-only)
 let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
 let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
@@ -799,8 +801,8 @@ function elemFromItem(item, rng = true) {
   return flag === 0 ? (rng ? ELEM_ALL[randInt(4)] : ELEM_FIRE) : flag;
 }
 function elementizerItemName(item) {
-  if (item === ITEM_ELEM_MYSTERY) return 'Mystery Elementalizer';
-  return ELEM_NAMES[item - 200] + ' Elementalizer';
+  if (item === ITEM_ELEM_MYSTERY) return 'Mystery Essence';
+  return ELEM_NAMES[item - 200] + ' Essence';
 }
 
 const ITEM_VAMPIRE_FANG = 300;
@@ -808,8 +810,8 @@ const ITEM_SWORD = 301;
 const ITEM_BOOTS = 302;
 
 const ITEM_NAMES = {
-  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Defense Up", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
-  [ITEM_VAMPIRE_FANG]: "Vampire Fang", [ITEM_SWORD]: "Attack Up", [ITEM_BOOTS]: "Speed Up"
+  [ITEM_TELEPORTER]: "Teleporter", [ITEM_CLONER]: "Cloner", [ITEM_SHIELD]: "Shield", [ITEM_BOMB]: "Bomb", [ITEM_REWINDER]: "Rewinder",
+  [ITEM_VAMPIRE_FANG]: "Vampire Fang", [ITEM_SWORD]: "Mighty Blade", [ITEM_BOOTS]: "Fast Boots"
 };
 function itemName(item) {
   if (isPromoterItem(item)) return promoterTo(item) === PROMOTER_WILD ? "Mystery Promoter" : `Promoter to ${(PIECE_NAMES[promoterTo(item)] || "?")[0].toUpperCase() + (PIECE_NAMES[promoterTo(item)] || "?").slice(1)}`;
@@ -2344,7 +2346,7 @@ function initBoard() {
   replaySnapshots = []; replayMode = false; replayIdx = 0; replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
-  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _resetTurnState();
+  inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterTo = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _inspectIdx = -1; _inspectPreviewCol = -1; _resetTurnState();
   playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   _lostWhiteThisRun = false; _king20TakenBy = NONE;
   _recruitedCManThisRun = false; _recruitedCKingThisRun = false; _maxGoldThisRun = 0;
@@ -3257,6 +3259,7 @@ function _ageTrails(side) {
 }
 
 function endWhiteTurn() {
+  _inspectIdx = -1; _inspectPreviewCol = -1; // the tap-marker rings are a player-turn thing; clear as control leaves the player
   // If a Speed piece has remaining extra moves, show them before actually ending the turn
   if (_speedIdx >= 0) {
     const [_spx, _spy] = xy(_speedIdx);
@@ -4959,6 +4962,9 @@ for (const m of validMoves) {
   ctx.fillStyle = MOVE_COLOR;
   ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
 }
+// (The tap-marker ring for _inspectIdx is drawn near the end of this function, on TOP of every board
+//  element — Blocks, pieces, items, terrain — so the frame is never hidden. The fog-cell ring is in
+//  drawFogWindow(), after the fog wash.)
 
 // Chest spaces (floor markers — rendered before pieces so pieces show on top)
 { const _cp = 6;
@@ -5295,6 +5301,19 @@ if (teleporterMode) {
   }
 }
 
+// Tap-marker ring: LAST board draw (still inside the board translate) so it sits on top of every
+// element — Blocks, pieces, items, terrain. Only on the player's turn.
+if (_inspectIdx >= 0 && turn === W && !aiThinking && gamePhase === 'playing' && !replayMode) {
+  const [ix, iy] = xy(_inspectIdx);
+  ctx.save();
+  ctx.strokeStyle = "rgba(244, 226, 150, 0.95)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(MARGIN + ix * TILE + 3, MARGIN + iy * TILE + 3, TILE - 6, TILE - 6, 6);
+  ctx.stroke();
+  ctx.restore();
+}
+
 if (_fieldAnim) ctx.restore(); // remove clip + field-advance shift
 ctx.restore(); // remove board translate
 
@@ -5331,6 +5350,17 @@ ctx.textBaseline = "middle";
 ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
 ctx.fillStyle = "#fff";
 ctx.fillText(previewRowNum, MARGIN - 26, BOARD_Y + MARGIN - TILE + TILE / 2);
+// Tap-marker ring for an inspected fog cell — drawn here, AFTER the fog wash, so the frame reads
+// over the darkening instead of being dimmed by it (absolute coords: this fn isn't board-translated).
+if (_inspectPreviewCol >= 0 && turn === W && !aiThinking && gamePhase === 'playing' && !replayMode) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(244, 226, 150, 0.95)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(MARGIN + _inspectPreviewCol * TILE + 3, BOARD_Y + MARGIN - TILE + 3, TILE - 6, TILE - 6, 6);
+  ctx.stroke();
+  ctx.restore();
+}
 }
 
 
@@ -5483,7 +5513,7 @@ for (let r = 0; r < INV_ROWS; r++) {
     const slotIdx = r * INV_COLS + c;
     const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
     const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
-    const isActive = (piecePromoterMode || teleporterMode || clonerMode || shieldMode) && inventory._activeSlot === slotIdx;
+    const isActive = isItemActive() && inventory._activeSlot === slotIdx; // any item mode (was missing Sword/Speed/Bomb/etc.)
     ctx.fillStyle = isActive ? "#4a3a1e" : "#1a1a3e";
     ctx.beginPath();
     ctx.roundRect(sx, sy, INV_SLOT, INV_SLOT, 4);
@@ -5761,7 +5791,7 @@ const _KING_PRI = {
   capPawn: 20, capRook: 20, capBishop: 20, capKnight: 20, capQueen: 20, capKing: 20,
   capCheckers: 20, capCheckersKing: 20,
   fieldAdvance: 15, teamAdvance: 15,
-  start: 10, idle: 1,
+  start: 10, inspect: 5, idle: 1,
 };
 // Which capture line each White piece type speaks (victim must be a non-King Black warrior —
 // King takes are the tookKing/king10/20/25 family's turf).
@@ -5777,6 +5807,9 @@ const _KING_RECRUIT_KEY = {
 let _kingRemark = "";        // current line shown in the dialogue box ('' = just the portrait)
 let _kingRemarkPri = 0;      // priority of the current line
 let _kingRemarkMs = 0;       // performance.now() when it was set
+let _kingPage = 0;           // which page of a long remark is showing (tap the box's arrow to advance)
+let _kingDialogPages = 1;    // total pages the current remark spans (set during draw)
+let _kingDialogRect = null;  // {x,y,w,h} of the dialogue box (set during draw) for tap hit-testing
 let _kingTurnNum = 0;        // White turns completed this run — drives the firstMove/secondMove lines
 let _kingLastMovedType = NONE; // type of the player's most recent piece MOVE (NONE after an Advance) — the second-move line's subject
 const _kingLastIdx = {};     // last line index shown per key — avoids back-to-back repeats
@@ -5786,7 +5819,7 @@ const KING_HOLD_MS = 3800;   // a line holds at least this long before a LOWER-p
 function _kingSetRemark(text, pri) {
   if (!text) return;
   if (_kingRemark && pri < _kingRemarkPri && (performance.now() - _kingRemarkMs) < KING_HOLD_MS) return;
-  _kingRemark = text; _kingRemarkPri = pri; _kingRemarkMs = performance.now();
+  _kingRemark = text; _kingRemarkPri = pri; _kingRemarkMs = performance.now(); _kingPage = 0; // new line → back to page 1
 }
 // Fire the King's reaction to a situation. Live play only (no-op in headless re-sim / replay).
 function _kingSay(key) {
@@ -5845,6 +5878,185 @@ function _kingSayShop() {
   } else {
     _kingSay('shopReopen');
   }
+}
+// ── Tap-to-inspect authored descriptions ─────────────────────────────────────
+const _COLOR_WORD = { [W]: 'White', [B]: 'Black', [N]: 'Grey' };
+// The remark for each standard piece, following "This is a {Color} {mods}{Name}".
+const _PIECE_DESC = {
+  [PAWN]:   ", the least experienced unit. Pawns can't move far, but their diagonal attacks mean they can form defensive pyramids.",
+  [ROOK]:   ". He likes to move in straight lines to smash his opponents.",
+  [BISHOP]: ". They are oracles of war, and they only move at diagonal angles.",
+  [KNIGHT]: ". They ride upon their mighty horses, which leap at strange angles. They can confront foes from positions no one else can.",
+  [QUEEN]:  ". She is well trained in all manner of movement and can dominate the field with her tactical options.",
+};
+// Appended to a standard-piece line based on the warrior's allegiance.
+const _COLOR_APPEND = {
+  [W]: " They are loyal to me and the cause of taking these Black Kings for judgment.",
+  [B]: " They are loyal to the Black Kings, darkened also by their masters' greed, and they shall fall alongside them.",
+  [N]: " Their curse falters at some remnant of honor within them. They do not seem ready to attack. Perhaps a word from myself might change the heart.",
+};
+// Appended to any burning Warrior's inspect line (board only — burning is a board state).
+const _BURNING_APPEND = {
+  white: " They are alight! Let us get them to Water quickly!",
+  black: " They are engulfed in flames! Let them be eaten by their tongues!",
+};
+// One clause per effect the highlighted Warrior carries, appended after the loyalty line (keyed by the
+// effect badge names, so elements reuse _ELEM_BADGE). Stacked in mods order: element, shield, mighty, fast, bt.
+const _EFFECT_DESC = {
+  fire:  " This Warrior is imbued with Fire magic. They leave a burning trail wherever they go. They may pass through Fire unharmed.",
+  water: " This Warrior is imbued with Water magic. Rivers spring from the ground upon their step. They may pass through Fire safely.",
+  earth: " This Warrior is imbued with Earth magic. Blocks of Earth form in their wake. They also may destroy Blocks by landing on them.",
+  air:   " This Warrior is imbued with Air magic. They may pass through all objects.",
+  shielded:     " This Warrior has extra shielding. Unless a Mighty Warrior strikes them, this shield will take any blow.",
+  mighty:       " This Warrior wields a might above others. They may strike a Shielded foe and take them at once.",
+  fast:         " This Warrior possesses a blinding speed, able to move two steps for each one of their comrades.",
+  bloodthirsty: " This Warrior has a hunger in their eyes for the blood of their enemies. Upon taking a foe, they are reinvigorated to move again.",
+};
+function _effectAppends(element, hlth, atk, spd, status) {
+  let s = '';
+  for (const e of ELEM_ALL) if (element & e) { s += _EFFECT_DESC[_ELEM_BADGE[e]]; break; }
+  if (hlth >= 2) s += _EFFECT_DESC.shielded;
+  if (atk >= 2) s += _EFFECT_DESC.mighty;
+  if (spd >= 2) s += _EFFECT_DESC.fast;
+  if (status & STATUS_BLOODTHIRSTY) s += _EFFECT_DESC.bloodthirsty;
+  return s;
+}
+const _KING_INSPECT_LINES = {
+  whiteSolo:  "That is myself! The White King. I am not as mighty as my loyal guardsmen, but I have freedom of movement and can support an assault from any angle. However, if I am taken, our conquest fails.",
+  whiteClone: "That is a White King. Is it myself? Cloning magic is mysterious. I have not the mind to ponder such lofty things.",
+  black:      "That is a Black King, one of those responsible for the ruin of my people. They move as I do, one square in any direction. Taking them is the cause of our conquest!",
+  grey:       "That is a Grey King. One of the foul ones, but it seems they yet wrestle with the darkness. Perhaps diplomacy might prevail there.",
+};
+const _TERRAIN_DESC = {
+  empty:      "No one's here.",
+  void:       "A strange hole in the world, a Void. The magic of the Black Kings tears at all that is seen. They can be safely passed over, but landing on one is certain death.",
+  block:      "A Block of condensed dark magic. It prevents all passage except for those maybe of the magics of Air or Earth.",
+  tempBlock:  "An Earth Warrior has manifested a Block here. It should disappear in short order, though.",
+  whiteFire:  "Literally friendly Fire, on account of one of our own Fire Warriors. We may pass through safely, but a Black passerby will soon meet a terrible end.",
+  blackFire:  "Burning flames a la a Black Fire Warrior. Avoid at all cost, unless there is Water nearby to stop the burning.",
+  river:      "A flowing River. Its currents can drag units and items alike.",
+  tempRiverAppend: " This Water follows a Water Warrior. It shall dry up soon.",
+};
+// Authored line for a non-Warrior board square: Void/Block/Fire/River terrain, else "No one's here".
+// (Merchant/Chest/Item/shadow are handled by the caller — not authored yet.)
+function _terrainInspectLine(i) {
+  const sp = specialSpaces[i];
+  if (sp && sp.type === 'void') return _TERRAIN_DESC.void;
+  if (sp && sp.type === 'block') return sp.temp ? _TERRAIN_DESC.tempBlock : _TERRAIN_DESC.block;
+  const f = fireSquares.get(i);
+  if (f) return f.side === W ? _TERRAIN_DESC.whiteFire : _TERRAIN_DESC.blackFire;
+  if (isRiverSpace(i)) return _TERRAIN_DESC.river;
+  if (waterTrails.has(i)) return _TERRAIN_DESC.river + _TERRAIN_DESC.tempRiverAppend;
+  return _TERRAIN_DESC.empty;
+}
+function _countWhiteChessKings() { let n = 0; for (let i = 0; i < 64; i++) if (board[i] === KING && sides[i] === W) n++; return n; }
+// Buff/element modifier prefix ("Water Shielded ") from a stat set, or '' if none.
+function _buffMods(element, hlth, atk, spd, status) {
+  const mods = []; // each effect is an adjective in the inspect line
+  for (const e of ELEM_ALL) if (element & e) { mods.push(ELEM_NAMES[e] + ' Elemental'); break; } // Fire -> "Fire Elemental"
+  if (hlth >= 2) mods.push('Shielded');
+  if (atk >= 2) mods.push('Mighty');
+  if (spd >= 2) mods.push('Fast');
+  if (status & STATUS_BLOODTHIRSTY) mods.push('Bloodthirsty');
+  return mods.length ? mods.join(' ') + ' ' : '';
+}
+// Full authored inspect sentence for a Warrior, or null for pieces with no line yet (Checkers folk) —
+// callers fall back to the generic "This is a …" descriptor. `mods` is the _buffMods prefix.
+function _pieceInspectLine(piece, side, mods) {
+  if (piece === KING) {
+    if (side === W) return _countWhiteChessKings() > 1 ? _KING_INSPECT_LINES.whiteClone : _KING_INSPECT_LINES.whiteSolo;
+    return side === B ? _KING_INSPECT_LINES.black : _KING_INSPECT_LINES.grey;
+  }
+  const desc = _PIECE_DESC[piece];
+  if (!desc) return null;
+  return `This is a ${_COLOR_WORD[side] || 'Grey'} ${mods || ''}${_kingPieceName(piece)}${desc}${_COLOR_APPEND[side] || ''}`;
+}
+// Name of whatever occupies square i, for the generic tap-to-inspect line (non-Warrior things, and the
+// Checkers-folk fallback). Warriors get their authored sentence via _pieceInspectLine instead.
+function _squareDescriptor(i) {
+  if (board[i] !== NONE) {
+    return `${_COLOR_WORD[sides[i]] || 'Grey'} ${_buffMods(elements[i], health[i], attacks[i], speeds[i], statuses[i])}${_kingPieceName(board[i])}`;
+  }
+  if (i === merchantIdx) return 'Merchant';
+  if (chestSpaces.has(i)) return 'Chest';
+  if (itemSpaces[i] !== ITEM_NONE) return itemName(itemSpaces[i]);
+  if (_shadowSpaces && _shadowSpaces.has(i)) return 'looming shadow';
+  const sp = specialSpaces[i];
+  if (sp && sp.type === 'void') return 'Void';
+  if (sp && sp.type === 'block') return sp.temp ? 'Temporary Block' : 'Block';
+  if (isRiverSpace(i)) return 'River';
+  if (fireSquares.has(i)) return 'patch of Fire';
+  if (waterTrails.has(i)) return 'River current';
+  return 'vacant space';
+}
+// Tap-to-inspect: the King remarks on the square the player tapped. Force-set (bypasses the priority
+// hold) so a deliberate tap always responds, but at low priority so real event reactions override it.
+// Live-only and RNG-free, so it never perturbs the sim.
+function _kingInspect(i) {
+  if (_instant || replayMode) return;
+  const p = board[i];
+  let line;
+  if (p !== NONE) {
+    line = _pieceInspectLine(p, sides[i], _buffMods(elements[i], health[i], attacks[i], speeds[i], statuses[i])) || `This is a ${_squareDescriptor(i)}`;
+    line += _effectAppends(elements[i], health[i], attacks[i], speeds[i], statuses[i]); // a clause per effect
+    if (burning[i] > 0) line += (sides[i] === W ? _BURNING_APPEND.white : _BURNING_APPEND.black); // on fire
+  } else if (i === merchantIdx || chestSpaces.has(i) || itemSpaces[i] !== ITEM_NONE || (_shadowSpaces && _shadowSpaces.has(i))) {
+    line = `This is a ${_squareDescriptor(i)}`; // Merchant / Chest / field Item / shadow — not authored yet
+  } else {
+    line = _terrainInspectLine(i); // Void / Block / Fire / River terrain, or "No one's here"
+  }
+  _kingRemark = line;
+  _kingRemarkPri = _KING_PRI.inspect || 5;
+  _kingRemarkMs = performance.now(); _kingPage = 0;
+}
+// Same, for an inventory item the player just selected. An item selection isn't a board square, so
+// it also drops the board/preview marker rings.
+function _kingInspectItem(item) {
+  if (_instant || replayMode || item === ITEM_NONE) return;
+  _inspectIdx = -1; _inspectPreviewCol = -1;
+  _kingRemark = `This is a ${itemName(item)}`; // placeholder text — author real descriptions later
+  _kingRemarkPri = _KING_PRI.inspect || 5;
+  _kingRemarkMs = performance.now(); _kingPage = 0;
+}
+// Name of whatever is incoming in the fog (preview) row at column `col`: a Black Warrior (with its
+// rolled element/buffs), the queued Merchant, or a bonus (Chest/Item/Void/Block/River/Grey), else fog.
+function _previewDescriptor(col) {
+  const w = nextWave.find(w => w.x === col);
+  if (w) { const e = w.eff || {}; return `Black ${_buffMods(e.element || 0, e.hlth || 1, e.atk || 1, e.spd || 1, e.status || 0)}${_kingPieceName(w.piece)}`; }
+  if (merchantQueued && merchantQueuedCol === col) return 'Merchant';
+  const b = nextBonuses.find(b => b.col === col);
+  if (b) {
+    if (b.type === 'chest') return 'Chest';
+    if (b.type === 'item') return itemName(b.item);
+    if (b.type === 'void') return 'Void';
+    if (b.type === 'block') return 'Block';
+    if (b.type === 'river') return 'River';
+    if (b.type === 'grey') return `Grey ${_kingPieceName(b.piece)}`;
+  }
+  return 'fog';
+}
+// Tap-to-inspect for the fog (preview) row above the board.
+function _kingInspectPreview(col) {
+  if (_instant || replayMode) return;
+  _inspectIdx = -1;
+  const w = nextWave.find(w => w.x === col);
+  const grey = !w && nextBonuses.find(b => b.col === col && b.type === 'grey');
+  const src = w || grey; // an incoming Warrior (Black wave piece, or a Grey spawn) gets its authored line
+  let line = null;
+  if (src) { const e = src.eff || {}; line = _pieceInspectLine(src.piece, w ? B : N, _buffMods(e.element || 0, e.hlth || 1, e.atk || 1, e.spd || 1, e.status || 0)); }
+  if (!line) {
+    const b = nextBonuses.find(b => b.col === col);
+    if (b && b.type === 'void') line = _TERRAIN_DESC.void;               // incoming terrain shares the terrain lines
+    else if (b && b.type === 'block') line = _TERRAIN_DESC.block;        // spawned blocks are permanent
+    else if (b && b.type === 'river') line = _TERRAIN_DESC.river;
+    else if (merchantQueued && merchantQueuedCol === col) line = `This is a Merchant`; // not authored yet
+    else if (b && b.type === 'chest') line = `This is a Chest`;
+    else if (b && b.type === 'item') line = `This is a ${itemName(b.item)}`;
+    else line = _TERRAIN_DESC.empty; // empty fog
+  }
+  _kingRemark = line;
+  _kingRemarkPri = _KING_PRI.inspect || 5;
+  _kingRemarkMs = performance.now(); _kingPage = 0;
 }
 // Spell a small count as words ("one", "two", …). Falls back to the numeral past 99 (absurd armies).
 function _numWord(n) {
@@ -5930,7 +6142,9 @@ function _kingOnPlayerTurn() {
 }
 
 function drawKingDialogue() {
-  if (isItemActive() || gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) return;
+  // Shown during item-targeting too, so the King's remark on a just-selected item is visible. Its box
+  // (COUNTDOWN_Y+30 downward) sits below the item mode's Cancel/Discard buttons — no overlap.
+  if (gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) return;
   const x = PLAYER_GRAVE_X, w = ENEMY_GRAVE_X + GRAVE_W - PLAYER_GRAVE_X;
   // Taller box: raise the top to sit just under the "Field Auto-Advances" label; keep the bottom
   // where the graveyard ended so the Resign/Auto buttons below don't shift.
@@ -5970,8 +6184,22 @@ function drawKingDialogue() {
     else cur = test;
   }
   if (cur) lines.push(cur);
-  let ty = y + (h - lines.length * lineH) / 2 + 2;
-  for (const ln of lines) { ctx.fillText(ln, textX, ty); ty += lineH; }
+  // Paginate: only so many lines fit in the box. Long remarks page through via a tap on the box.
+  const maxLines = Math.max(1, Math.floor((h - 12) / lineH));
+  const totalPages = Math.max(1, Math.ceil(lines.length / maxLines));
+  _kingDialogPages = totalPages;
+  _kingDialogRect = { x, y, w, h };
+  if (_kingPage >= totalPages) _kingPage = 0;
+  const pageLines = lines.slice(_kingPage * maxLines, _kingPage * maxLines + maxLines);
+  let ty = y + (h - pageLines.length * lineH) / 2 + 2;
+  for (const ln of pageLines) { ctx.fillText(ln, textX, ty); ty += lineH; }
+  // Blinking "continue" arrow at the bottom-right when there's another page to read.
+  if (_kingPage < totalPages - 1) {
+    const a = 0.35 + 0.55 * Math.abs(Math.sin(performance.now() / 320));
+    const ax = x + w - 22, ay = y + h - 16;
+    ctx.fillStyle = `rgba(255, 235, 150, ${a.toFixed(2)})`;
+    ctx.beginPath(); ctx.moveTo(ax - 9, ay - 6); ctx.lineTo(ax + 9, ay - 6); ctx.lineTo(ax, ay + 7); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -7125,6 +7353,7 @@ function _activatePendingDrag() {
   dragSlot = _pendingDrag.slot;
   dragX = _pendingDrag.startX; dragY = _pendingDrag.startY; dragOverTrash = false;
   _pendingDrag = null;
+  _kingInspectItem(inventory[dragSlot]); // dragging an item out also counts as selecting it
   draw();
 }
 
@@ -7551,6 +7780,17 @@ function handleResignConfirmClick(cx, cy) {
   }
 }
 
+// Inventory slot (holding an item) under a tap, or -1. Geometry mirrors handleInventoryClick's grid.
+function _invSlotAt(cx, cy) {
+  const invY = INV_PANEL_TOP + 50;
+  for (let r = 0; r < INV_ROWS; r++) for (let c = 0; c < INV_COLS; c++) {
+    const slotIdx = r * INV_COLS + c;
+    const sx = INV_X + INV_PAD + c * (INV_SLOT + INV_PAD);
+    const sy = invY + INV_PAD + r * (INV_SLOT + INV_PAD);
+    if (cx >= sx && cx <= sx + INV_SLOT && cy >= sy && cy <= sy + INV_SLOT && inventory[slotIdx] !== ITEM_NONE) return slotIdx;
+  }
+  return -1;
+}
 function handleInventoryClick(cx, cy) {
   // anim/waveAnim guard: the click dispatcher already blocks mid-animation taps, but direct
   // callers (replay driver, autoplay) bypass it — using an item mid-slide silently corrupts
@@ -7566,6 +7806,7 @@ function handleInventoryClick(cx, cy) {
       const item = inventory[slotIdx];
       if (item === ITEM_NONE) continue;
       playSfx('pickup'); // player selected an inventory item
+      _kingInspectItem(item); // the King remarks on the selected item (also drops the board marker ring)
       const modeMap = {
         [ITEM_TELEPORTER]:   () => { teleporterMode = true; teleporterSelected = -1; },
         [ITEM_CLONER]:       () => { clonerMode = true; clonerSelected = -1; },
@@ -7618,8 +7859,18 @@ function handleBoardClick(cx, cy) {
   hintMove = null;
   const mx = cx - MARGIN, my = cy - BOARD_Y - MARGIN;
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
-  if (!inB(gx, gy)) { selected = -1; validMoves = []; draw(); return; }
+  // Fog (preview) row — the virtual row directly above the board (gy === -1): inspect what's incoming.
+  if (gy === -1 && gx >= 0 && gx < 8) {
+    selected = -1; validMoves = []; _inspectIdx = -1; _inspectPreviewCol = gx;
+    _kingInspectPreview(gx);
+    draw(); return;
+  }
+  if (!inB(gx, gy)) { selected = -1; validMoves = []; _inspectIdx = -1; _inspectPreviewCol = -1; draw(); return; }
   const clicked = idx(gx, gy);
+  _inspectIdx = clicked; _inspectPreviewCol = -1; // mark the tapped square (a ring is drawn around it)
+  // Tap-to-inspect: on any tap that ISN'T a move (select, deselect, empty square, out-of-range piece,
+  // a feature), the King remarks on what's there. A move tap is left to the move's own commentary.
+  if (!(selected >= 0 && validMoves.includes(clicked))) _kingInspect(clicked);
   if (selected < 0) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
   } else {
@@ -7867,6 +8118,8 @@ canvas.addEventListener("click", (e) => {
   if (gameOver) { handleGameOverClick(cx, cy); return; }
   if (_faConfirm) { handleFieldAdvanceConfirmClick(cx, cy); return; } // modal: capture all clicks
   if (_turnBusy()) return;
+  // Long King remark: tap the dialogue box to page through it (arrow shown while more remains).
+  if (_kingDialogPages > 1 && _kingDialogRect && _inRect(cx, cy, _kingDialogRect)) { _kingPage = (_kingPage + 1) % _kingDialogPages; draw(); return; }
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (sellConfirmSlot >= 0) { handleSellConfirmClick(cx, cy); return; }
   if (shopMode) {
@@ -7876,6 +8129,14 @@ canvas.addEventListener("click", (e) => {
     }
     handleShopClick(cx, cy);
     return;
+  }
+  // Switch items in one tap: tapping a DIFFERENT inventory item while an inventory item's mode is
+  // active cancels the current mode and falls through to select the tapped one (so it gets its own
+  // King comment) — instead of the active handler swallowing the tap as a plain cancel. Board-space
+  // item queues (activeItemSpaceIdx >= 0) are excluded so their resolution order isn't disturbed.
+  if (isItemActive() && activeItemSpaceIdx < 0) {
+    const _swSlot = _invSlotAt(cx, cy);
+    if (_swSlot >= 0 && _swSlot !== inventory._activeSlot) cancelItemMode(); // now all modes are off → handleInventoryClick below selects the new item
   }
   if (piecePromoterMode) { handlePiecePromoterClick(cx, cy); return; }
   if (shieldMode) { handleShieldClick(cx, cy); return; }
