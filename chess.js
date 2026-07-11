@@ -1,4 +1,4 @@
-﻿const VERSION = "680";
+﻿const VERSION = "681";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5960,6 +5960,9 @@ const _TERRAIN_DESC = {
   river:      "A flowing River. Its currents can drag units and items alike.",
   tempRiverAppend: " This Water follows a Water Warrior. It shall dry up soon.",
 };
+const _MERCHANT_DESC = "This man doesn't seem like he's here for war -- only coin. And if his wares indeed aid, perhaps he'll get it.";
+const _CHEST_DESC    = "Here lies one of the collected treasures of the Black Kings. Let us see what's inside...";
+const _SHADOW_DESC   = "By the magic surrounding the Black Kings materializing in the air, strange spells are falling from the sky. We shall see what thus befalls there in a moment.";
 // Authored line for a non-Warrior board square: Void/Block/Fire/River terrain, else "No one's here".
 // (Merchant/Chest/Item/shadow are handled by the caller — not authored yet.)
 function _terrainInspectLine(i) {
@@ -6025,8 +6028,14 @@ function _kingInspect(i) {
     line = _pieceInspectLine(p, sides[i], _buffMods(elements[i], health[i], attacks[i], speeds[i], statuses[i])) || `This is a ${_squareDescriptor(i)}`;
     line += _effectAppends(elements[i], health[i], attacks[i], speeds[i], statuses[i]); // a clause per effect
     if (burning[i] > 0) line += (sides[i] === W ? _BURNING_APPEND.white : _BURNING_APPEND.black); // on fire
-  } else if (i === merchantIdx || chestSpaces.has(i) || itemSpaces[i] !== ITEM_NONE || (_shadowSpaces && _shadowSpaces.has(i))) {
-    line = `This is a ${_squareDescriptor(i)}`; // Merchant / Chest / field Item / shadow — not authored yet
+  } else if (i === merchantIdx) {
+    line = _MERCHANT_DESC;
+  } else if (chestSpaces.has(i)) {
+    line = _CHEST_DESC;
+  } else if (itemSpaces[i] !== ITEM_NONE) {
+    line = `This is a ${itemName(itemSpaces[i])}`; // field item — per-item descriptions forthcoming
+  } else if (_shadowSpaces && _shadowSpaces.has(i)) {
+    line = _SHADOW_DESC;
   } else {
     line = _terrainInspectLine(i); // Void / Block / Fire / River terrain, or "No one's here"
   }
@@ -6074,9 +6083,9 @@ function _kingInspectPreview(col) {
     if (b && b.type === 'void') line = _TERRAIN_DESC.void;               // incoming terrain shares the terrain lines
     else if (b && b.type === 'block') line = _TERRAIN_DESC.block;        // spawned blocks are permanent
     else if (b && b.type === 'river') line = _TERRAIN_DESC.river;
-    else if (merchantQueued && merchantQueuedCol === col) line = `This is a Merchant`; // not authored yet
-    else if (b && b.type === 'chest') line = `This is a Chest`;
-    else if (b && b.type === 'item') line = `This is a ${itemName(b.item)}`;
+    else if (merchantQueued && merchantQueuedCol === col) line = _MERCHANT_DESC;
+    else if (b && b.type === 'chest') line = _CHEST_DESC;
+    else if (b && b.type === 'item') line = `This is a ${itemName(b.item)}`; // field item — descriptions forthcoming
     else line = _TERRAIN_DESC.empty; // empty fog
   }
   _kingRemark = line;
