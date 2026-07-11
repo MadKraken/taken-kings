@@ -1,4 +1,4 @@
-﻿const VERSION = "675";
+﻿const VERSION = "676";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -7579,10 +7579,12 @@ function handleInventoryClick(cx, cy) {
       if (item === ITEM_BOOTS) modeMap[item] = () => { speedMode = true; };
       // Rewinder: immediate action, no board-interaction mode
       if (item === ITEM_REWINDER) {
-        if (_turnStartSnapIndices.length < 2) return true; // nothing to undo yet
-        _logInput({ t: 'rw' }); // Phase-3 validator rewinds its sim + RNG to the prior turn-start, dropping the aborted turn's inputs
-        _turnStartSnapIndices.pop(); // discard current turn start
-        const targetIdx = _turnStartSnapIndices[_turnStartSnapIndices.length - 1];
+        if (_turnStartSnapIndices.length < 1) return true; // nothing to undo yet
+        _logInput({ t: 'rw' }); // Phase-3 validator rewinds its sim + RNG to THIS turn's start, dropping the aborted turn's inputs
+        // Restore the START OF THE CURRENT TURN — undo just this turn's actions (matches the death-save
+        // Rewinder). Popping to the PRIOR turn start over-rewound a full round: it brought back pieces
+        // the bomb had killed but dropped anything acquired since (e.g. a Bomb bought/found last turn).
+        const targetIdx = _turnStartSnapIndices.pop();
         const targetSnap = replaySnapshots[targetIdx];
         replaySnapshots.splice(targetIdx + 1);
         _replayTransitions.splice(targetIdx + 1);
