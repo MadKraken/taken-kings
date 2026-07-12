@@ -1,4 +1,4 @@
-﻿const VERSION = "682";
+﻿const VERSION = "684";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -753,8 +753,8 @@ function _turnBoundaryUpdate() {
 function _trackWhiteTake(pieceMoved, fromI, capturedPiece) {
   if (_turnActorTakes === 0) { _turnActorType = pieceMoved; _turnActorBuffed = (speeds[fromI] > 1) || !!(statuses[fromI] & STATUS_BLOODTHIRSTY); }
   _turnActorTakes++;
-  if (capturedPiece === KING || capturedPiece === CHECKERS_KING) _turnKingsTaken++;
-  // The King praises the taker (non-King victims only — King takes belong to the tookKing lines).
+  if (capturedPiece === KING || capturedPiece === CHECKERS_KING) { _turnKingsTaken++; _kingQueue('tookKing'); }
+  // The King praises the taker (non-King victims only — King takes get their own tookKing lines).
   else if (_KING_CAP_KEY[pieceMoved]) _kingQueue(_KING_CAP_KEY[pieceMoved]);
 }
 let spawnCount = 1;
@@ -4524,7 +4524,7 @@ function detonateBomb(centerI, _alreadyDetonated) {
       const _bp = board[i], _bs = sides[i];
       if (_bs === W && (_bp === KING || _bp === CHECKERS_KING)) _triggerGameOver(`Game Over! Score: ${score}`);
       else if (_bs === W) _kingQueue('bombDeath'); // a White Warrior lost to the Bomb
-      if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) { score++; if (!replayMode) _turnKingsTaken++; }
+      if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) { score++; if (!replayMode) { _turnKingsTaken++; _kingQueue('tookKing'); } }
       if (_bs === B) {
         gold += GOLD_VALUE[_bp] ?? 0;
         if (!replayMode) { // replayed explosions must not pollute live achievement counters
@@ -5729,7 +5729,24 @@ const KING_LINES = {
   start:         ["Behold! The monsters who took our kingdom and burned our homes! Let us come upon them as a fire of judgment!"],  // a new run begins (after Go / the Begin Conquest intro)
   firstMove:     ["There is but the first of the Black Kings before us, marching on like ants. Only ants have more of a mind. This one shall be first of many to fall."],  // after the player's 1st turn
   // secondMove is DYNAMIC (built from the army composition) — see _kingSecondMoveLine(); no pool here.
-  tookKing:      [],  // took a Black King this turn
+  tookKing: [ // took a Black King this turn
+    "Fall, scum!",
+    "O Black King, your end is our joy!",
+    "One of many! Take them all!",
+    "You scoured my people; may your soul only see torment!",
+    "Your greed has brought you to this!",
+    "You crossed the sea only to fall by our blade!",
+    "And thus you shall terrorize no more nations!",
+    "This end was your fate the moment you turned to greed!",
+    "How many innocents have you slaughtered! Your death is not enough!",
+    "Your Black curse has only led you to this!",
+    "This is why I am the White King!",
+    "Taken!",
+    "Your demise was written the moment we appeared!",
+    "May the worms eat your flesh, King!",
+    "King in name only, Black one! Die!",
+    "You bring disgrace to our station! It is our honor to end you!",
+  ],
   tookKingMulti: [],  // took 2+ Black Kings in a single turn
   king10:        [],  // reached 10 Taken Kings
   king20:        [],  // reached 20 Taken Kings
@@ -5979,11 +5996,15 @@ const _ITEM_DESC = {
   [ITEM_ELEM_AIR]:     "Air Essence imbues a Warrior with the Air Element. Such a one can pass through any obstacle like a rushing wind.",
   [ITEM_ELEM_MYSTERY]: "Not all magics wear their nature. Who knows what Element a Mystery Essence might imbue.",
 };
-function _itemInspectLine(item) {
-  if (item === ITEM_PROMOTER_CKING) return "Only Checkers Men can become Kings on the battlefield. A Promoter Checkers King does just that.";
-  if (item === ITEM_PROMOTER_WILD)  return "A Mystery Promoter hastens years of training, but into what, only usage can tell.";
-  if (isPromoterItem(item)) return `A Promoter to ${_kingPieceName(promoterTo(item))} is a transforming magic for a Pawn, years of training in a bottle.`;
-  return _ITEM_DESC[item] || `This is a ${itemName(item)}`;
+// `inField` = the item is sitting on the board (not held in inventory), so a Warrior can bump it.
+function _itemInspectLine(item, inField) {
+  let line;
+  if (item === ITEM_PROMOTER_CKING) line = "Only Checkers Men can become Kings on the battlefield. A Promoter Checkers King does just that.";
+  else if (item === ITEM_PROMOTER_WILD) line = "A Mystery Promoter hastens years of training, but into what, only usage can tell.";
+  else if (isPromoterItem(item)) line = `A Promoter to ${_kingPieceName(promoterTo(item))} is a transforming magic for a Pawn, years of training in a bottle.`;
+  else line = _ITEM_DESC[item] || `This is a ${itemName(item)}`;
+  if (inField) line += " If a Warrior encounters this Item in the field, it will affect them immediately.";
+  return line;
 }
 // Authored line for a non-Warrior board square: Void/Block/Fire/River terrain, else "No one's here".
 // (Merchant/Chest/Item/shadow are handled by the caller — not authored yet.)
@@ -6055,7 +6076,7 @@ function _kingInspect(i) {
   } else if (chestSpaces.has(i)) {
     line = _CHEST_DESC;
   } else if (itemSpaces[i] !== ITEM_NONE) {
-    line = _itemInspectLine(itemSpaces[i]); // field item
+    line = _itemInspectLine(itemSpaces[i], true); // field item (on the board — add the "encounters" clause)
   } else if (_shadowSpaces && _shadowSpaces.has(i)) {
     line = _SHADOW_DESC;
   } else {
