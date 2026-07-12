@@ -87,7 +87,7 @@ export interface RunRecord {
 }
 
 export interface Engine {
-  replayRun: (run: RunRecord, opts?: { spotRate?: number; spotSeed?: number }) => { score: number; gameOver: boolean; spotFail?: boolean };
+  replayRun: (run: RunRecord, opts?: { spotRate?: number; spotSeed?: number; spotMs?: number }) => { score: number; gameOver: boolean; spotFail?: boolean; spotChecks?: number };
   VERSION: string;
 }
 
@@ -107,12 +107,17 @@ export function loadEngine(chessSource: string): Engine {
 // predict will be checked — so even ~10% catches meaningful cheating with high probability while
 // keeping re-sim ~10x cheaper than full recompute (the whole point: 100+ king runs fit one call).
 const SPOT_CHECK_RATE = 0.1;
-// Absolute ceiling on spot-checked turns per run. Late-game minimax recomputes are the expensive
-// part of validation — on very long runs a flat 10% can still blow the worker's CPU budget
-// (Griffindohr's 30-king run drew a 546 before succeeding on retry). Capping the COUNT bounds the
-// worst case while keeping the per-turn catch probability meaningful; the seeded selection already
-// prevents resubmit-until-lucky, so a smaller sample on long runs doesn't open a cheap cheat.
+// Soft ceiling on spot-checked turns (thins candidates on long runs so we don't waste selection draws).
 const SPOT_CHECK_MAX_TURNS = 20;
+// HARD cap: total CPU-ms the engine may spend on spot-check minimax recomputes across the whole run.
+// This is the real 546 guard. One recompute is a full minimax (~130-165ms on a dense late-game board),
+// so a count cap alone is unbounded in ms: 20 dense checks ≈ 3s, over the worker's ~2s CPU limit.
+// A ms budget bounds validation CPU at ANY king count (spot-check cost is count-capped and plateaus,
+// so 24 kings and 240 kings cost about the same ~3s uncapped — this makes both fit). ~1200ms leaves
+// headroom under 2s for the fetch/parse/replay/insert around it. Anti-cheat cost: on the heaviest runs
+// we verify fewer turns (whatever fits the budget), but the seeded selection still blocks resubmit-
+// until-lucky and each checked turn still catches a thrown game with meaningful probability.
+const SPOT_CHECK_MS_BUDGET = 1200;
 // Effective rate for a run with n recorded Black turns.
 function spotRateFor(n: number): number {
   return n > 0 ? Math.min(SPOT_CHECK_RATE, SPOT_CHECK_MAX_TURNS / n) : SPOT_CHECK_RATE;
@@ -225,9 +230,10 @@ export async function handler(req: Request): Promise<Response> {
   // v644+ runs carry recorded Black moves → re-sim applies them (cheap) with a random spot-check.
   // Legacy runs (no blackMoves) fall back to full recompute inside the engine (may be slow/time out,
   // handled separately). spotRate is harmless (0 effective) when there are no recorded moves.
-  let result: { score: number; gameOver: boolean; spotFail?: boolean };
-  try { result = engine.replayRun(run, { spotRate: spotRateFor((run.blackMoves ?? []).length), spotSeed: await spotSeedFor(run) }); }
+  let result: { score: number; gameOver: boolean; spotFail?: boolean; spotChecks?: number };
+  try { result = engine.replayRun(run, { spotRate: spotRateFor((run.blackMoves ?? []).length), spotSeed: await spotSeedFor(run), spotMs: SPOT_CHECK_MS_BUDGET }); }
   catch (e) { return json({ ok: false, error: "resim failed: " + (e as Error).message }, 400); }
+  console.log(`validated: score=${result.score} turns=${(run.blackMoves ?? []).length} spotChecks=${result.spotChecks ?? 0}`); // ops: watch spotChecks vs run length
   // A recorded Black move disagreed with what the AI would actually play → tampered run, reject.
   if (result.spotFail) return json({ ok: false, ranked: false, error: "spot-check failed" }, 400);
 

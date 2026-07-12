@@ -1,4 +1,4 @@
-﻿const VERSION = "686";
+﻿const VERSION = "689";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1049,7 +1049,14 @@ let _blackMoveLog = [];      // live: this run's recorded main Black moves (enco
 let _replayBlack = null;     // re-sim: recorded log to apply (null => recompute Black, e.g. legacy runs)
 let _replayBlackIdx = 0;
 let _replaySpotRate = 0;     // re-sim: fraction of Black turns to recompute-and-verify (server sets ~0.1)
+let _replaySpotMsLeft = Infinity; // re-sim: CPU-ms budget for spot-checks. Each recompute (a full minimax)
+// costs ~150ms on a dense late-game board; without a bound, a long/high-king run's 20 checks spend ~3s
+// and blow the Supabase worker's ~2s CPU limit (the 546). Spending from a fixed budget instead caps
+// validation CPU at any king count. Safe for determinism: _detPick (aiBestMove's only tie-break) hashes
+// the board, never the RNG stream, so WHICH turns get checked never changes the replayed score — only
+// how many tampered turns we can catch. Infinity = unbounded (local tools that don't pass a budget).
 let _replaySpotFail = false; // re-sim: a spot-checked move disagreed with the recorded one -> reject
+let _replaySpotChecks = 0;   // re-sim: how many recomputes actually ran (diagnostic; the ms budget caps it)
 let _replaySpotRand = Math.random; // re-sim: spot-selection source. The server passes opts.spotSeed —
 // derived from a SERVER SECRET + the run's semantic content — making the checked subset (a) fixed per
 // run, so a rejected cheater can't just resubmit until the tampered turns dodge the sample, and
@@ -1066,9 +1073,14 @@ function _blackMainMove(onDone) {
     const rec = _replayBlackIdx < _replayBlack.length ? _replayBlack[_replayBlackIdx] : -1;
     _replayBlackIdx++;
     let m;
-    if (_replaySpotRate > 0 && _replaySpotRand() < _replaySpotRate) { // spot-check: seeded server-side, stream-neutral
-      m = aiBestMove();
-      if (_encodeMove(m) !== rec) _replaySpotFail = true; // authoritative recompute (identical to rec when honest)
+    // Spot-check when this turn is seeded-selected AND the CPU budget still has room. Order matters:
+    // gate on the budget BEFORE drawing _replaySpotRand so an exhausted budget stops all further checks.
+    if (_replaySpotRate > 0 && _replaySpotMsLeft > 0 && _replaySpotRand() < _replaySpotRate) {
+      const _t0 = performance.now();
+      m = aiBestMove(); // authoritative recompute (identical to rec when honest)
+      _replaySpotMsLeft -= (performance.now() - _t0); // spend the search's cost from the budget
+      _replaySpotChecks++;
+      if (_encodeMove(m) !== rec) _replaySpotFail = true;
     } else {
       m = _decodeMove(rec);
     }
@@ -1240,17 +1252,20 @@ function _applyReplayInput(a) {
 
 // run = { seed, classic, timed, secs, inputs:[...], blackMoves?:[...] } -> { score, gameOver, spotFail }
 // opts.spotRate (0..1): fraction of recorded Black turns to recompute-and-verify (server anti-cheat).
+// opts.spotMs (number): CPU-ms budget for those recomputes (server anti-cheat / 546 guard). Omit = unbounded.
 // If run.blackMoves is absent (legacy run), Black is recomputed every turn (the old, costly path).
 function _replayRun(run, opts) {
   const _savedTimeout = window.setTimeout, _savedRAF = window.requestAnimationFrame;
   const _prevInstant = _instant, _prevTimed = timedMode, _prevSecs = timedModeSecs;
-  const _prevBlack = _replayBlack, _prevIdx = _replayBlackIdx, _prevRate = _replaySpotRate, _prevFail = _replaySpotFail, _prevSpotRand = _replaySpotRand;
+  const _prevBlack = _replayBlack, _prevIdx = _replayBlackIdx, _prevRate = _replaySpotRate, _prevFail = _replaySpotFail, _prevSpotRand = _replaySpotRand, _prevMs = _replaySpotMsLeft;
   try {
     window.setTimeout = (fn) => { if (typeof fn === 'function') fn(); return 0; }; // run deferred turn-flow steps inline
     window.requestAnimationFrame = () => 0;                                        // skip all cosmetic frames
     _instant = true;
     _replayBlack = Array.isArray(run.blackMoves) ? run.blackMoves : null; // apply recorded Black moves when present
     _replayBlackIdx = 0; _replaySpotRate = (opts && opts.spotRate) || 0; _replaySpotFail = false;
+    _replaySpotChecks = 0;
+    _replaySpotMsLeft = (opts && typeof opts.spotMs === 'number') ? opts.spotMs : Infinity;
     if (opts && opts.spotSeed != null) { // deterministic spot selection (own mulberry32; never touches the gameplay stream)
       let s = opts.spotSeed >>> 0;
       _replaySpotRand = () => { s = (s + 0x6D2B79F5) | 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -1264,10 +1279,10 @@ function _replayRun(run, opts) {
     startGame(); turn = W;
     for (const a of run.inputs) { if (gameOver) break; _applyReplayInput(a); }
     if (shopMode && !gameOver) closeShop(); // finalize a run that ended with the shop open
-    return { score, gameOver, spotFail: _replaySpotFail };
+    return { score, gameOver, spotFail: _replaySpotFail, spotChecks: _replaySpotChecks };
   } finally {
     _instant = _prevInstant; timedMode = _prevTimed; timedModeSecs = _prevSecs;
-    _replayBlack = _prevBlack; _replayBlackIdx = _prevIdx; _replaySpotRate = _prevRate; _replaySpotFail = _prevFail; _replaySpotRand = _prevSpotRand;
+    _replayBlack = _prevBlack; _replayBlackIdx = _prevIdx; _replaySpotRate = _prevRate; _replaySpotFail = _prevFail; _replaySpotRand = _prevSpotRand; _replaySpotMsLeft = _prevMs;
     window.setTimeout = _savedTimeout; window.requestAnimationFrame = _savedRAF;
   }
 }
@@ -1326,6 +1341,11 @@ function startVoidDeath(cx, cy, piece, side, onDone) {
   // while live play continues — desyncing every run whose turn routed through a void death
   // (root cause of the run-16 live-vs-server mismatch at the Team Advance into a void).
   if (_instant) { if (onDone) onDone(); return; }
+  if (!replayMode) _replayAnimBuffer.push({ type: 'voiddeath', cx, cy, piece, side }); // so the fall replays during Last Move
+  _voidDeathVisual(cx, cy, piece, side, onDone);
+}
+// The fall visual alone (no achievement/king-line side effects) — shared by live play and replay.
+function _voidDeathVisual(cx, cy, piece, side, onDone) {
   if (piece && piece !== QUEEN) playSfx('man'); // male piece screams falling into the void (Queen doesn't)
   voidDeathAnim = { cx, cy, piece, side, startMs: performance.now(), onDone };
   requestAnimationFrame(_voidDeathTick);
@@ -1366,6 +1386,11 @@ const FIRE_DEATH_MS = 680;
 let fireDeaths = []; // [{cx, cy, piece, side, startMs}]
 function startFireDeath(cx, cy, piece, side) {
   if (_instant || replayMode) return; // headless/replay: the death is already applied, no animation
+  _replayAnimBuffer.push({ type: 'firedeath', cx, cy, piece, side }); // so the engulf replays during Last Move
+  _fireDeathVisual(cx, cy, piece, side);
+}
+// The engulf visual alone — shared by live play and replay playback.
+function _fireDeathVisual(cx, cy, piece, side) {
   playSfx('torch'); if (piece && piece !== QUEEN) playSfx('man'); // whoosh of flame + a scream (Queen doesn't)
   fireDeaths.push({ cx, cy, piece, side, startMs: performance.now() });
   if (fireDeaths.length === 1) requestAnimationFrame(_fireDeathTick);
@@ -1378,6 +1403,8 @@ function _fireDeathTick() {
 }
 
 function startShieldPop(cx, cy) {
+  if (_instant) return; // cosmetic only — nothing to do headless
+  if (!replayMode) _replayAnimBuffer.push({ type: 'pop', cx, cy }); // so the pop replays during Last Move
   shieldPops.push({ cx, cy, startMs: performance.now(), dur: 350 });
   if (flyAnims.length === 0 && shieldPops.length === 1) requestAnimationFrame(_flyTick);
 }
@@ -1409,6 +1436,8 @@ function _flyTick() {
 // Land a single sky-dropped item at its target square: apply to a piece there, else drop as an item space.
 function _landSkyDrop(f) {
   playSfx('thud'); // sky-dropped item hits the ground
+  if (f.cosmetic) return; // replayed drop: visual + thud only — the board splice delivers the item, and
+                          // a landing after the mini replay restores live state must never write the board
   if (board[f.i] !== NONE) {
     if (sides[f.i] === W) {
       activateItemSpace(f.item, f.i); // proper activation on White piece — instant or interactive mode
@@ -1747,7 +1776,7 @@ function _snapReplayCommon() {
   };
 }
 
-function startAnim(pieces, boardDy, onDone, exitRow) {
+function startAnim(pieces, boardDy, onDone, exitRow, sfx) {
   if (_instant) { if (onDone) onDone(); return; } // headless re-sim: skip the animation, run its completion now
   if (!replayMode) {
     _replayAnimBuffer.push({
@@ -1757,6 +1786,7 @@ function startAnim(pieces, boardDy, onDone, exitRow) {
       pieces: pieces.map(p => ({...p})),
       boardDy: boardDy || 0,
       exitRow: exitRow ? exitRow.map(r => ({...r})) : null,
+      sfx: sfx || null, // overrides the generic move sound during Last Move (e.g. 'shield', 'recruit')
       pendingItemFlies: _pendingCaptureAnims.filter(c => c.type === 'item').map(c => ({...c})),
       pendingShopFlies: [..._pendingShopFlies],
     });
@@ -1959,6 +1989,7 @@ function _replaySfx(ev) {
     return;
   }
   if (ev.type === 'wave') { playSfx('water'); return; }
+  if (ev.sfx) { playSfx(ev.sfx); return; } // authored cue (shield clang, recruit horn) beats the generic move sound
   if (ev.exitRow) { // Field Advance
     playSfx('whoosh');
     if (ev.exitRow.some(r => r.piece && r.piece !== NONE)) playSfx('crunch');
@@ -1972,10 +2003,19 @@ function _playReplayTransition(snapIdx, onDone) {
   const events = _replayTransitions[snapIdx] || [];
   let ei = 0;
   const playNext = () => {
-    // Fire all consecutive fly / explosion events (fire-and-forget, no waiting)
-    while (ei < events.length && (events[ei].type === 'fly' || events[ei].type === 'explosion')) {
+    // Fire all consecutive cosmetic events (fire-and-forget, no waiting)
+    while (ei < events.length && (events[ei].type === 'fly' || events[ei].type === 'explosion' ||
+           events[ei].type === 'pop' || events[ei].type === 'voiddeath' || events[ei].type === 'firedeath' || events[ei].type === 'skydrop')) {
       const ev = events[ei++];
       if (ev.type === 'explosion') { startExplosion(ev.cx, ev.cy); continue; }
+      if (ev.type === 'pop') { startShieldPop(ev.cx, ev.cy); continue; } // visual only — the approach leg's sfx tag carries the clang
+      if (ev.type === 'voiddeath') { _voidDeathVisual(ev.cx, ev.cy, ev.piece, ev.side, null); continue; }
+      if (ev.type === 'firedeath') { _fireDeathVisual(ev.cx, ev.cy, ev.piece, ev.side); continue; }
+      if (ev.type === 'skydrop') { // cosmetic fall — _landSkyDrop skips board writes for these
+        _skyDropAnims.push({ item: ev.item, i: ev.i, startMs: performance.now(), dur: 380, cosmetic: true });
+        if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
+        continue;
+      }
       _replaySfx(ev);
       startFlyAnim(ev.piece, ev.side, ev.sx, ev.sy, ev.tx, ev.ty, null);
     }
@@ -4304,7 +4344,7 @@ function _animateShieldBounce(atkI, defI, onSettle) {
         onSettle(result.bounceI);
       }
     });
-  });
+  }, undefined, 'shield');
 }
 
 // Perform one greedy extra move for the Black piece at `dest` (capture > advance toward White),
@@ -4491,6 +4531,7 @@ function _doSkyDropPhase(onDone) {
   for (const [i, item] of _shadowSpaces) {
     if (itemSpaces[i] === ITEM_NONE && !isVoidSpace(i) && !isBlockSpace(i)) {
       // Don't place in itemSpaces yet — _flyTick will land it when animation finishes
+      if (!_instant && !replayMode) _replayAnimBuffer.push({ type: 'skydrop', item, i }); // so the fall replays during Last Move
       _skyDropAnims.push({ item, i, startMs: performance.now(), dur: 380 });
       hasDrops = true;
     }
@@ -6981,6 +7022,7 @@ function _lbDoSubmit(name) {
       else if (ok && j.ok && !j.ranked) { _lbSubmitState = 'done'; _lbSubmitMsg = 'Score too low to rank.'; }
       else {
         _lbSubmitState = 'error';
+        _stashRunForReview(payload); // a failed run isn't stored server-side (esp. 546) — capture it so it's recoverable
         const err = (j && j.error) ? String(j.error) : '';
         // Surface enough to diagnose from the player's screen instead of a bare "Submit failed.":
         //  • version mismatch = server can't fetch this release yet (tag still propagating) —
@@ -6989,7 +7031,7 @@ function _lbDoSubmit(name) {
         //  • anything else = show the server's error text, or the raw HTTP status as a fallback.
         if (/version mismatch/.test(err)) _lbSubmitMsg = 'Server updating — retry in a minute.';
         else if (err) _lbSubmitMsg = err.slice(0, 44);
-        else if (status === 546) _lbSubmitMsg = 'Run too heavy to verify (546) — retry.';
+        else if (status === 546) _lbSubmitMsg = 'Too heavy (546) — run copied, retry.';
         else _lbSubmitMsg = `Submit failed (HTTP ${status || '?'}).`;
       }
       draw();
@@ -6997,9 +7039,25 @@ function _lbDoSubmit(name) {
     .catch((e) => {
       clearTimeout(_timeout);
       _lbSubmitState = 'error';
+      _stashRunForReview(payload); // network/timeout: the run never landed — keep it recoverable too
       _lbSubmitMsg = (e && e.name === 'AbortError') ? 'Timed out — check connection, retry.' : 'Network error — retry.';
       draw();
     });
+}
+
+// A failed submission is NOT stored server-side (a 546 dies before the DB insert), so the only copy
+// of the run is here in the client. Capture it three ways so it's recoverable for review:
+//   • window.__tkFailedRun — grab it live from the console in this session
+//   • localStorage 'tk_failed_run' — survives a refresh (dev can read it off the player's machine)
+//   • clipboard — best-effort; lets a remote player paste the exact run into a message. The write is
+//     in an async fetch callback (past the click's activation window), so browsers may block it —
+//     the two stashes above are the reliable path; the clipboard is a bonus when it's allowed.
+function _stashRunForReview(payload) {
+  let s = '';
+  try { s = JSON.stringify(payload); } catch (e) { return; }
+  try { window.__tkFailedRun = payload; } catch (e) {}
+  try { localStorage.setItem('tk_failed_run', s); } catch (e) {} // may throw if the run exceeds quota — ignore
+  try { if (navigator && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s).catch(() => {}); } catch (e) {}
 }
 
 // Shared game-over button geometry (draw + click). A "Submit" button appears above the
@@ -7979,7 +8037,7 @@ function handleBoardClick(cx, cy) {
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
       // suppressFromIdx: if the piece hasn't moved on the board, pass fromI to suppress ghost draw.
-      const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone) => {
+      const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone, sfx) => {
         const [bx, by] = xy(bounceI);
         const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
         const approach = { toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: targetCX, toCY: targetCY, piece, side, hlth };
@@ -7990,7 +8048,7 @@ function handleBoardClick(cx, cy) {
           startAnim([retreat], 0, () => {
             onDone();
           });
-        });
+        }, undefined, sfx); // sfx tags the approach leg so Last Move replays the right cue
       };
       // Recruit a Grey: only a King (or Checkers King) recruits — attacker bounces, the Grey turns white.
       // A non-King White piece targeting a Grey KILLS it instead, and falls through to the normal
@@ -8020,7 +8078,7 @@ function handleBoardClick(cx, cy) {
         } else {
           _speedIdx = -1; _speedMovesUsed = 0;
         }
-        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'recruit');
         return;
       }
       // Attack shielded enemy: bounce attacker, damage enemy
@@ -8043,7 +8101,7 @@ function handleBoardClick(cx, cy) {
           _doBounceAnim(fromI, pToCX, pToCY, result.bounceI, null, attackPiece, W, attackHlth, () => {
             if (kingFell && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`); // only when the LAST White King falls
             startVoidDeath(bvCX + TILE / 2, bvCY + TILE / 2, attackPiece, W, () => { if (gameOver) { takeReplaySnapshot(); draw(); } else endWhiteTurn(); });
-          });
+          }, 'shield');
           return;
         }
         // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
@@ -8055,7 +8113,7 @@ function handleBoardClick(cx, cy) {
           _speedIdx = -1; _speedMovesUsed = 0; // bounce ON the extra move: clear the stale move-1 registration (no third move)
         }
         recordPosition();
-        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn);
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'shield');
         return;
       }
       // Engage merchant: bounce attacker, open shop, then end turn
