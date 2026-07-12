@@ -1,4 +1,4 @@
-﻿const VERSION = "685";
+﻿const VERSION = "686";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4176,32 +4176,9 @@ function aiPlay() {
         });
       };
 
-      // Shield bounce: attacker slides in, then bounces back
+      // Shield bounce: attacker slides in, then bounces back (may still have Speed moves after).
       if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
-        playSfx('shield'); // shield block sound at attack start (pop stays on impact)
-        const attackPiece = board[move[0]], attackHlth = health[move[0]];
-        const wasLastShield = health[move[1]] === 2;
-        const hitCX = mToCX + TILE / 2, hitCY = mToCY + TILE / 2;
-        // Phase 1: slide attacker toward defender's square
-        startAnim([{ toIdx: move[0], fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
-          const result = applyShieldBounceState(move[0], move[1], attackPiece);
-          if (move[1] === merchantIdx) respawnMerchant();
-          recordPosition();
-          if (wasLastShield) startShieldPop(hitCX, hitCY); // shield blocks on impact (sound + pop)
-          {
-            // Animate attacker sliding back
-            const [bx, by] = xy(result.bounceI);
-            const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
-            startAnim([{ toIdx: result.bounceI, fromCX: mToCX, fromCY: mToCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
-              if (result.voidDeath) { // bounced into a Void — it fell in and perished
-                enemyDead[result.deadPiece] = (enemyDead[result.deadPiece] || 0) + 1;
-                startVoidDeath(bounceCX + TILE / 2, bounceCY + TILE / 2, attackPiece, B, _aiFinish);
-              } else {
-                _aiSpeedContinue(result.bounceI, 0, _aiFinish); // attacker bounced back — may still have Speed moves
-              }
-            });
-          }
-        });
+        _animateShieldBounce(move[0], move[1], (restI) => _aiSpeedContinue(restI, 0, _aiFinish));
       } else {
         const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
@@ -4300,6 +4277,36 @@ function _checkersJumpsFrom(i) {
   return jumps;
 }
 
+// A Black attacker at atkI bounces off the shielded piece at defI: slide in, shield pop, slide
+// back (or fall into a Void). Shared by the primary AI move and the Bloodthirsty/Speed follow-up
+// so every bounce animates identically. onSettle(restIdx) resumes the turn from where it landed.
+function _animateShieldBounce(atkI, defI, onSettle) {
+  const attackPiece = board[atkI], attackHlth = health[atkI];
+  const [fx, fy] = xy(atkI), [tx, ty] = xy(defI);
+  const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
+  const toCX = MARGIN + tx * TILE, toCY = BOARD_Y + MARGIN + ty * TILE;
+  const wasLastShield = health[defI] === 2;
+  playSfx('shield'); // shield block sound at attack start (pop stays on impact)
+  // Phase 1: slide the attacker toward the defender (attacker still sits on atkI on the board).
+  startAnim([{ toIdx: atkI, fromCX, fromCY, toCX, toCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
+    const result = applyShieldBounceState(atkI, defI, attackPiece);
+    if (defI === merchantIdx) respawnMerchant();
+    recordPosition();
+    if (wasLastShield) startShieldPop(toCX + TILE / 2, toCY + TILE / 2); // shield blocks on impact
+    const [bx, by] = xy(result.bounceI);
+    const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
+    // Phase 2: slide the attacker back to where it bounced.
+    startAnim([{ toIdx: result.bounceI, fromCX: toCX, fromCY: toCY, toCX: bounceCX, toCY: bounceCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
+      if (result.voidDeath) { // bounced into a Void — it fell in and perished
+        enemyDead[result.deadPiece] = (enemyDead[result.deadPiece] || 0) + 1;
+        startVoidDeath(bounceCX + TILE / 2, bounceCY + TILE / 2, attackPiece, B, () => onSettle(result.bounceI));
+      } else {
+        onSettle(result.bounceI);
+      }
+    });
+  });
+}
+
 // Perform one greedy extra move for the Black piece at `dest` (capture > advance toward White),
 // animating it. Calls onDone(newIdx) once resolved, or onDone(dest) if the piece has no move.
 function _aiExtraMove(dest, onDone) {
@@ -4314,6 +4321,13 @@ function _aiExtraMove(dest, onDone) {
     else if (board[m] !== NONE && sides[m] === W) s = 1000 + (PIECE_VALUE[board[m]] || 0);
     else s = xy(m)[1];
     if (s > bestScore) { bestScore = s; best = m; }
+  }
+  // A shielded target bounces the attacker instead of being captured — animate the two-leg bounce
+  // (same as the primary move) rather than a straight slide, so this Bloodthirsty/Speed follow-up
+  // doesn't render the surviving defender sliding out of the attacker's square.
+  if (board[best] !== NONE && sides[best] === W && health[best] > attacks[dest]) {
+    _animateShieldBounce(dest, best, (restI) => onDone(restI));
+    return;
   }
   const [fx, fy] = xy(dest), [tx, ty] = xy(best);
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
