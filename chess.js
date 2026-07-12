@@ -1,4 +1,4 @@
-﻿const VERSION = "684";
+﻿const VERSION = "685";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2885,10 +2885,10 @@ function shovePiece(srcI, dx, dy) {
   if (board[destI] !== NONE || destI === merchantIdx) return; // occupied: blocked
   if (isVoidSpace(destI)) {
     const p = board[srcI], s = sides[srcI];
-    if ((p === KING || p === CHECKERS_KING) && s === W) _triggerGameOver(`Game Over! Score: ${score}`);
     if (s === B) { if (p === KING || p === CHECKERS_KING) score++; gold += GOLD_VALUE[p] ?? 0; enemyDead[p] = (enemyDead[p] || 0) + 1; }
     if (s === B && _waterShoveActive && !replayMode) _pushedBlackIntoVoidByWater = true; // pushed a Black into a Void with a Water piece
     clearSquare(srcI);
+    if ((p === KING || p === CHECKERS_KING) && s === W && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`); // only when the LAST White King falls
     return;
   }
   const _shovedSide = sides[srcI];
@@ -3421,8 +3421,8 @@ function teamAdvance() {
       const [x, y] = xy(i);
       const ni = idx(x, y - 1);
       if (isVoidSpace(ni)) {
-        // piece falls into void — don't place it
-        if (board[i] === KING || board[i] === CHECKERS_KING) _triggerGameOver(`Game Over! Score: ${score}`);
+        // piece falls into void — don't place it. Game Over is judged after the advance commits,
+        // by checkWhiteKingAlive() in applySpacesAfterAdvance (only when NO White King remains).
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
         if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); playSfx('pickup'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
@@ -4522,8 +4522,7 @@ function detonateBomb(centerI, _alreadyDetonated) {
     if (itemSpaces[i] === ITEM_BOMB && !detonated.has(i)) chainBombs.push(i);
     if (board[i] !== NONE) {
       const _bp = board[i], _bs = sides[i];
-      if (_bs === W && (_bp === KING || _bp === CHECKERS_KING)) _triggerGameOver(`Game Over! Score: ${score}`);
-      else if (_bs === W) _kingQueue('bombDeath'); // a White Warrior lost to the Bomb
+      if (_bs === W && !(_bp === KING || _bp === CHECKERS_KING)) _kingQueue('bombDeath'); // a White Warrior lost to the Bomb (Game Over judged after the blast clears)
       if (_bs === B && (_bp === KING || _bp === CHECKERS_KING)) { score++; if (!replayMode) { _turnKingsTaken++; _kingQueue('tookKing'); } }
       if (_bs === B) {
         gold += GOLD_VALUE[_bp] ?? 0;
@@ -4540,6 +4539,8 @@ function detonateBomb(centerI, _alreadyDetonated) {
     if (i === merchantIdx) { merchantIdx = -1; merchantPendingRespawn = true; } // bomb'd Merchant returns on the next wave (like a void death)
     itemSpaces[i] = ITEM_NONE;
   }
+  // Game Over only once the blast (and any chains) leave no White King standing.
+  if (!gameOver && !_rewinderSaveOffer && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`);
   const _gen = _runGen;
   for (const bi of chainBombs) {
     setTimeout(() => { if (_gen !== _runGen) return; detonateBomb(bi, detonated); }, 350);
@@ -8026,7 +8027,7 @@ function handleBoardClick(cx, cy) {
           const bvCX = MARGIN + bvx * TILE, bvCY = BOARD_Y + MARGIN + bvy * TILE;
           const kingFell = (result.deadPiece === KING || result.deadPiece === CHECKERS_KING);
           _doBounceAnim(fromI, pToCX, pToCY, result.bounceI, null, attackPiece, W, attackHlth, () => {
-            if (kingFell) _triggerGameOver(`Game Over! Score: ${score}`);
+            if (kingFell && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`); // only when the LAST White King falls
             startVoidDeath(bvCX + TILE / 2, bvCY + TILE / 2, attackPiece, W, () => { if (gameOver) { takeReplaySnapshot(); draw(); } else endWhiteTurn(); });
           });
           return;
