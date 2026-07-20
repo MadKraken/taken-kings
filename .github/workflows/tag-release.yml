@@ -1,0 +1,35 @@
+# Auto-tag releases: the leaderboard validator fetches the EXACT engine a client played on from
+# jsDelivr at the immutable git tag (v684, v689, ...). If a release isn't tagged, the moment a newer
+# version deploys, every stale-client submission fails as "version mismatch" ("Server updating" in
+# the client — the Griffindohr incident, 2026-07-20). This workflow makes the tag automatic: on every
+# push to main it reads VERSION from chess.js and creates/pushes the matching tag if it's missing,
+# then purges jsDelivr's negative cache (it caches 404s ~10 min) so a stuck player's Retry works.
+name: Tag release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release tag if missing
+        run: |
+          V=$(grep -m1 -oP 'const VERSION = "\K\d+' chess.js)
+          if [ -z "$V" ]; then echo "::error::no VERSION found in chess.js"; exit 1; fi
+          if git ls-remote --tags origin "refs/tags/v$V" | grep -q .; then
+            echo "tag v$V already exists — nothing to do"
+          else
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git tag "v$V"
+            git push origin "v$V"
+            echo "tagged v$V"
+            # jsDelivr caches 404s ~10 min — purge so a player already stuck on Retry recovers now
+            curl -s "https://purge.jsdelivr.net/gh/MadKraken/taken-kings@v$V/chess.js" || true
+          fi
