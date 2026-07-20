@@ -1,4 +1,4 @@
-﻿const VERSION = "689";
+﻿const VERSION = "690";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3323,8 +3323,12 @@ function endWhiteTurn() {
       selected = _speedIdx; validMoves = _spMoves;
       draw(); return;
     }
-    _resetTurnState();
   }
+  // The turn is truly ending — clear ALL extra-move state, Bloodthirsty included. Several turn-end
+  // paths (shield bounce, merchant engage, recruit, void death, Speed pass, timeout) reset only the
+  // Speed vars; a stale _bloodthirstyUsed=true then leaked across turns and wrongly denied the NEXT
+  // turn's Bloodthirsty extra move (BT Fast Queen: move, Speed-move capture, no third move).
+  _resetTurnState();
   stopWhiteTurnTimer();
   lastActingSide = W;
   _turnBoundaryUpdate(); // fold this turn's activity into streaks, clear per-turn counters
