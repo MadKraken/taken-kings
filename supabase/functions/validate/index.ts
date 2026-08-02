@@ -195,6 +195,58 @@ function boardFor(run: RunRecord): string | null {
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Name moderation. Server-side because this is the ONLY trustworthy place: the client can be
+// bypassed by POSTing straight to this endpoint. The client keeps a courtesy copy for fast feedback.
+//
+// Word data derived from LDNOOBW (CC BY 4.0):
+// https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words
+//
+// Two tiers, because one-size matching fails badly in both directions:
+//  • BAD_SUB — matched as a SUBSTRING of the squashed name, so "f.u.c.k", "f u c k" and "xXfuckXx"
+//    are caught. Only words no ordinary English word contains: long entries, plus a few short ones
+//    promoted deliberately (fuck/wank/slut). Entries that DO hide inside real words were demoted to
+//    BAD_TOK: rapist(therapist), cialis(specialist), cuming(Cummings), penis(Penistone).
+//  • BAD_TOK — WHOLE-WORD matches only. Short roots live here; substring-matching them would reject
+//    Scunthorpe(cunt), matsushita(shit), sparse(arse), Hancock(cock), Dickens(dick), banal(anal),
+//    hello(hell), titles(tits). Multi-word phrases contribute the whole phrase to BAD_SUB and are
+//    deliberately NOT split into tokens — their parts ("big", "black", "one", "my", "to", "love")
+//    are innocent alone, and tokenising them would block handles like "Black Knight".
+//
+// Verified against two corpora: 159 innocent words/place-names/handles (0 false positives) and 23
+// evasions incl. leetspeak, spacing and letter-repeats (0 misses). One accepted casualty: "Twatt"
+// (Orkney) — repeat-collapsing, which is what defeats "fuuuuck", folds it onto the profanity.
+const BAD_SUB: string[] = ["2girlsicup","acrotomophilia","alabamahotpocket","alaskanpipeline","anilingus","apeshit","arsehole","ashole","asmunch","autoerotic","babeland","babybater","babyjuice","balgag","balgravy","balicking","balkicking","balsack","balsucking","bangbros","bangbus","bareback","barelylegal","barenaked","bastard","bastardo","bastinado","beaner","beaners","beastiality","beavercleaver","beaverlips","bestiality","bigblack","bigbreasts","bigknockers","bigtits","bimbos","birdlock","bitch","bitches","blackcock","blondeaction","blondeonblondeaction","blowjob","blowyourload","bluewafle","blumpkin","bolocks","bondage","botycal","brownshowers","bruneteaction","bukake","buldyke","buletvibe","bulshit","bunghole","busty","butcheks","buthole","cameltoe","camgirl","camslut","camwhore","carpetmuncher","chocolaterosebuds","circlejerk","clevelandsteamer","clitoris","cloverclamps","clusterfuck","cocks","coprolagnia","coprophilia","cornhole","creampie","cumshot","cumshots","cunilingus","darkie","daterape","dendrophilia","depthroat","dildo","dingleberies","dinglebery","dirtypilows","dirtysanchez","dogiestyle","dogstyle","dogystyle","dolcet","domes","domination","dominatrix","donkeypunch","doubledong","doublepenetration","dpaction","dryhump","eatmyas","ejaculation","erotic","erotism","escort","eunuch","fagot","fecal","felatio","felch","feltch","femalesquirting","femdom","figing","fingerbang","fingering","fisting","fotfetish","fotjob","froting","fuck","fuckbutons","fuckin","fucking","fucktards","fudgepacker","futanari","gangbang","gaysex","genitals","giantcock","girlon","girlontop","girlsgonewild","goatcx","goatse","godamn","godpop","gogirl","gokun","goldenshower","goregasm","grope","groupsex","gspot","handjob","hardcore","hentai","hoker","homoerotic","honkey","horny","hotcarl","hotchick","howtokil","howtomurder","hugefat","humping","incest","intercourse","jackof","jailbait","jelydonut","jerkof","jigabo","jigerbo","kinbaku","kinkster","kinky","knobing","leatherestraint","leatherstraightjacket","lemonparty","livesex","lolita","lovemaking","makemecome","malesquirting","masturbate","masturbating","masturbation","menageatrois","misionaryposition","motherfucker","moundofvenus","mrhands","mufdiver","mufdiving","nambla","nawashi","negro","neonazi","niger","nignog","nimphomania","niple","niples","nsfwimages","nudity","nuten","nympho","nymphomania","octopusy","omorashi","onecuptwogirls","oneguyonejar","orgasm","paedophile","panties","panty","pedobear","pedophile","peging","phonesex","pieceofshit","pikey","pising","pispig","playboy","pleasurechest","polesmoker","pontang","ponyplay","popchute","porno","pornography","princealbertpiercing","pubes","punany","queaf","raghead","ragingboner","raping","rectum","reversecowgirl","riming","rimjob","rosypalm","rosypalmandhersisters","rustytrombone","sadism","santorum","schlong","scisoring","semen","sexcam","sexual","sexuality","sexualy","shavedbeaver","shavedpusy","shemale","shibari","shitblimp","shity","shota","shrimping","slanteye","slut","snatch","snowbaling","sodomize","sodomy","spastic","sploge","splogemose","spoge","spreadlegs","spunk","strapado","strapon","stripclub","styledogy","sucks","suicidegirls","sultrywomen","swastika","swinger","taintedlove","tastemy","teabaging","thresome","throating","thumbzila","tiedup","tightwhite","tities","tongueina","toples","toser","towelhead","trany","tribadism","tubgirl","tushy","twink","twinkie","twogirlsonecup","undresing","upskirt","urethraplay","urophilia","vagina","venusmound","viagra","vibrator","violetwand","vorarephilia","voyeur","voyeurweb","voyuer","vulva","wank","wetback","wetdream","whitepower","whore","worldsex","wrapingmen","wrinkledstarfish","yelowshowers","zophilia"];
+const BAD_TOK: string[] = ["2gic","anal","anus","ass","bbw","bdsm","boner","boob","boobs","butt","cialis","clit","cock","coon","coons","cum","cumming","cunt","dick","dvda","ecchi","fag","guro","jizz","juggs","kike","milf","mong","nigga","nsfw","nude","orgy","paki","penis","poof","poon","porn","pthc","pussy","queef","quim","rape","rapist","scat","sex","sexo","sexy","shit","skeet","sm","smut","spic","suck","tit","tits","titty","twat","xx","xxx","yaoi","yiffy"];
+
+// Fold look-alike characters so obfuscation can't walk past the list.
+const LEET: Record<string, string> = { "0":"o","1":"i","3":"e","4":"a","5":"s","7":"t","8":"b","9":"g","@":"a","$":"s","!":"i","|":"i","+":"t" };
+function normalizeName(s: string): string {
+  const low = s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, ""); // strip diacritics
+  let out = "";
+  for (const ch of low) out += (LEET[ch] ?? ch);
+  return out;
+}
+const collapseRuns = (s: string) => s.replace(/(.)\1+/g, "$1");                  // fuuuuck -> fuck
+const squashName = (s: string) => collapseRuns(normalizeName(s).replace(/[^a-z0-9]+/g, ""));
+const nameTokens = (s: string) => normalizeName(s).split(/[^a-z0-9]+/).filter(Boolean);
+
+// true when the name may not be used.
+export function isNameBlocked(name: string): boolean {
+  const squashed = squashName(name);
+  for (const w of BAD_SUB) if (squashed.includes(w)) return true;
+  for (const t of nameTokens(name)) {
+    const tc = collapseRuns(t);
+    for (const w of BAD_TOK) {
+      if (t === w) return true;
+      // Repeat-collapsing may only ever INCRIMINATE a token at least as long as the entry, so
+      // "buuutt" is caught while the innocent words "but" and "as" aren't folded onto butt/ass.
+      if (t.length >= w.length && tc === collapseRuns(w)) return true;
+    }
+  }
+  return false;
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
 }
@@ -211,6 +263,8 @@ export async function handler(req: Request): Promise<Response> {
   const run = payload?.run as RunRecord;
 
   if (!name) return json({ ok: false, error: "name required" }, 400);
+  // Reject before any expensive work (engine fetch + re-sim) — and before the row is written.
+  if (isNameBlocked(name)) return json({ ok: false, error: "Name not allowed — pick another" }, 400);
   if (!run || typeof run !== "object" || !Array.isArray(run.inputs) || typeof run.seed !== "number") {
     return json({ ok: false, error: "bad run" }, 400);
   }

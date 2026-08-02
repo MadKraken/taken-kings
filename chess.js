@@ -1,4 +1,4 @@
-﻿const VERSION = "700";
+﻿const VERSION = "701";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -7082,12 +7082,44 @@ function _lbShowNameEntry(prefill, cb) {
   setTimeout(() => { inp.focus(); try { inp.select(); } catch (e) {} }, 0);
 }
 
+// Courtesy profanity pre-filter for the name box — instant feedback only. The SERVER holds the full
+// list and is the authority (this is bypassable by POSTing straight to the endpoint). Deliberately a
+// strict SUBSET of the server's rules: a client stricter than the server would reject a name the
+// server would accept, leaving the player stuck. Data derived from LDNOOBW (CC BY 4.0).
+const _BADSUB = ["apeshit", "arsehole", "ashole", "asmunch", "babeland", "balgag", "balgravy", "balsack", "bangbros", "bangbus", "bareback", "bastard", "bastardo", "beaner", "beaners", "bigblack", "bigtits", "bimbos", "birdlock", "bitch", "bitches", "blowjob", "blumpkin", "bolocks", "bondage", "botycal", "bukake", "buldyke", "bulshit", "bunghole", "busty", "butcheks", "buthole", "cameltoe", "camgirl", "camslut", "camwhore", "clitoris", "cocks", "cornhole", "creampie", "cumshot", "cumshots", "darkie", "daterape", "dildo", "dogstyle", "dolcet", "domes", "dpaction", "dryhump", "eatmyas", "erotic", "erotism", "escort", "eunuch", "fagot", "fecal", "felatio", "felch", "feltch", "femdom", "figing", "fisting", "fotjob", "froting", "fuck", "fuckin", "fucking", "futanari", "gangbang", "gaysex", "genitals", "girlon", "goatcx", "goatse", "godamn", "godpop", "gogirl", "gokun", "goregasm", "grope", "groupsex", "gspot", "handjob", "hardcore", "hentai", "hoker", "honkey", "horny", "hotcarl", "hotchick", "howtokil", "hugefat", "humping", "incest", "jackof", "jailbait", "jerkof", "jigabo", "jigerbo", "kinbaku", "kinkster", "kinky", "knobing", "livesex", "lolita", "mrhands", "mufdiver", "nambla", "nawashi", "negro", "neonazi", "niger", "nignog", "niple", "niples", "nudity", "nuten", "nympho", "octopusy", "omorashi", "orgasm", "panties", "panty", "pedobear", "peging", "phonesex", "pikey", "pising", "pispig", "playboy", "pontang", "ponyplay", "popchute", "porno", "pubes", "punany", "queaf", "raghead", "raping", "rectum", "riming", "rimjob", "rosypalm", "sadism", "santorum", "schlong", "semen", "sexcam", "sexual", "sexualy", "shemale", "shibari", "shity", "shota", "slanteye", "slut", "snatch", "sodomize", "sodomy", "spastic", "sploge", "spoge", "spunk", "strapado", "strapon", "sucks", "swastika", "swinger", "tastemy", "thresome", "tiedup", "tities", "toples", "toser", "trany", "tubgirl", "tushy", "twink", "twinkie", "upskirt", "vagina", "viagra", "vibrator", "voyeur", "voyuer", "vulva", "wank", "wetback", "wetdream", "whore", "worldsex", "zophilia"];
+const _BADTOK = ["2gic", "anal", "anus", "ass", "bbw", "bdsm", "boner", "boob", "boobs", "butt", "cialis", "clit", "cock", "coon", "coons", "cum", "cumming", "cunt", "dick", "dvda", "ecchi", "fag", "guro", "jizz", "juggs", "kike", "milf", "mong", "nigga", "nsfw", "nude", "orgy", "paki", "penis", "poof", "poon", "porn", "pthc", "pussy", "queef", "quim", "rape", "rapist", "scat", "sex", "sexo", "sexy", "shit", "skeet", "sm", "smut", "spic", "suck", "tit", "tits", "titty", "twat", "xx", "xxx", "yaoi", "yiffy"];
+const _LEETMAP = { '0':'o','1':'i','3':'e','4':'a','5':'s','7':'t','8':'b','9':'g','@':'a','$':'s','!':'i','|':'i','+':'t' };
+function _nameNorm(s) {
+  const low = String(s).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  let out = '';
+  for (const ch of low) out += (_LEETMAP[ch] || ch);
+  return out;
+}
+const _runsDown = (s) => s.replace(/(.)\1+/g, '$1');
+function _nameLooksBad(name) {
+  const squashed = _runsDown(_nameNorm(name).replace(/[^a-z0-9]+/g, ''));
+  for (const w of _BADSUB) if (squashed.indexOf(w) >= 0) return true;
+  for (const t of _nameNorm(name).split(/[^a-z0-9]+/)) {
+    if (!t) continue;
+    const tc = _runsDown(t);
+    for (const w of _BADTOK) {
+      if (t === w) return true;
+      if (t.length >= w.length && tc === _runsDown(w)) return true; // "buuutt" yes, "but"/"as" no
+    }
+  }
+  return false;
+}
+
 function _lbSubmit() {
   if (_lbSubmitState === 'submitting' || _lbSubmitState === 'done' || _lbSubmitState === 'naming') return;
   let prev = ''; try { prev = localStorage.getItem('tk_lb_name') || ''; } catch (e) {}
   _lbSubmitState = 'naming'; _lbSubmitMsg = ''; draw(); // label drawn beside the field, not below
   _lbShowNameEntry(prev, (name) => {
     if (!name) { _lbSubmitState = 'idle'; _lbSubmitMsg = ''; draw(); return; } // cancelled / empty
+    // Courtesy pre-filter only — instant feedback so the player retypes without a round trip. The
+    // SERVER is the authority (this can be bypassed by POSTing straight to the endpoint), and it
+    // carries the full list; this client copy is a compact subset of the worst offenders.
+    if (_nameLooksBad(name)) { _lbSubmitState = 'error'; _lbSubmitMsg = 'Name not allowed — pick another'; draw(); return; }
     _lbDoSubmit(name);
   });
 }
