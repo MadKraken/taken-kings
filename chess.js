@@ -1,4 +1,4 @@
-﻿const VERSION = "693";
+﻿const VERSION = "694";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -195,6 +195,7 @@ const INV_X = MARGIN;
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
 const SEL_COLOR = "rgba(50,120,200,0.5)";
+const PASS_COLOR = "rgba(235,205,40,0.55)"; // extra-move offer: the piece's own square (tap = pass/cancel)
 const MOVE_COLOR = "rgba(100,180,60,0.55)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
@@ -5039,7 +5040,10 @@ if (_fieldAnim && anim.exitRow) {
 // Selected
 if (selected >= 0) {
   const [sx, sy] = xy(selected);
-  ctx.fillStyle = SEL_COLOR;
+  // During a Speed/Bloodthirsty extra-move offer, tapping the Warrior's own square passes (ends the
+  // turn) — paint it YELLOW to signal that. Checkers chain jumps can't be passed, so they stay blue.
+  const _passable = selected === _speedIdx || selected === _bloodthirstyIdx;
+  ctx.fillStyle = _passable ? PASS_COLOR : SEL_COLOR;
   ctx.fillRect(MARGIN + sx * TILE, MARGIN + sy * TILE, TILE, TILE);
 }
 
