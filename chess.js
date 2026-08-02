@@ -1,4 +1,4 @@
-﻿const VERSION = "698";
+﻿const VERSION = "699";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -952,6 +952,11 @@ const AI_SLICE_NODES = 300;
 const AI_FRAME_MS = 8;
 let _aiNodesLeft = Infinity; // remaining budget during an aiBestMove search (Infinity = uncapped, e.g. hint search)
 let _aiAborted = false;      // set true when the budget runs out mid-depth (that depth's result is discarded)
+// True only while generating Black's FIRST move of a turn (aiBestMove's root candidate list). A Fast
+// Black King may then TRANSIT a White-attacked square — White never moves between Black's two moves,
+// so passing through is risk-free — provided it can still step to safety (see legalMoves). Off during
+// the extra move itself and inside the search, where the King must land safe.
+let _bKingFirstMove = false;
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
 const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 30};
 const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
@@ -3082,6 +3087,8 @@ function legalMoves(x, y) {
   // NOTE (by design): a Grey blocking a White slider's ray DOES count as cover here, even though
   // greyPlay runs right after Black's move and the Grey may wander off and expose the King. The
   // Grey opening that line is a deliberate opportunity for the player, not an AI blind spot.
+  // A Fast King making the FIRST of its two moves may pass THROUGH danger (see _bKingFirstMove).
+  const mayTransit = _bKingFirstMove && speeds[fromI] > 1;
   return pseudoMoves(x, y).filter(m => {
     if ((board[m] === KING || board[m] === CHECKERS_KING) && sides[m] === W) return true; // taking a White King wins/bounces — never filter
     const [nx, ny] = xy(m);
@@ -3092,8 +3099,23 @@ function legalMoves(x, y) {
     const kp = board[fromI], ksd = sides[fromI], cp = board[m], csd = sides[m];
     board[m] = kp; sides[m] = ksd; board[fromI] = NONE; sides[fromI] = 0;
     const attacked = isAttacked(nx, ny, B);
+    // Transit: allowed only if the King can still reach safety from m with its second move, so it
+    // can never strand itself in check. Tested on the same simulated board (King already on m).
+    let canEscape = false;
+    if (attacked && mayTransit) {
+      for (const m2 of pseudoMoves(nx, ny)) {
+        if (m2 === merchantIdx) continue;                                                   // enemies can't target the merchant
+        if ((board[m2] === KING || board[m2] === CHECKERS_KING) && sides[m2] === W) { canEscape = true; break; } // taking a White King ends it
+        const [ex, ey] = xy(m2);
+        const ep = board[m2], esd = sides[m2];
+        board[m2] = kp; sides[m2] = ksd; board[m] = NONE; sides[m] = 0;
+        const safe = !isAttacked(ex, ey, B);
+        board[m] = kp; sides[m] = ksd; board[m2] = ep; sides[m2] = esd;
+        if (safe) { canEscape = true; break; }
+      }
+    }
     board[fromI] = kp; sides[fromI] = ksd; board[m] = cp; sides[m] = csd;
-    return !attacked;
+    return !attacked || canEscape;
   });
 }
 
@@ -4102,8 +4124,12 @@ function aiBestMove(onDone) {
   // Lift the cap AND clear the abort flag for later searches that share minimax (hint/auto-play's
   // playerBestMove) — a lingering _aiAborted=true would make them return static evals instantly.
   const done = (mv) => { _aiNodesLeft = Infinity; _aiAborted = false; if (onDone) onDone(mv); return mv; };
-  // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed
-  let moves = allLegalMovesForSide(B);
+  // If checkmated (no legal moves), fall back to pseudo-legal so the enemy is never paralyzed.
+  // The flag widens ONLY this root list (a Fast King's transit option); it must be off for the
+  // search below and for the extra move itself, where the King has to land safe.
+  let moves;
+  _bKingFirstMove = true;
+  try { moves = allLegalMovesForSide(B); } finally { _bKingFirstMove = false; }
   if (moves.length === 0) {
     // No legal move: Kings FREEZE. Only non-King pieces may take a forced pseudo-legal move — a King
     // may no longer move here (previously it could, even capturing a White piece while staying in
