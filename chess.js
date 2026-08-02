@@ -1,4 +1,4 @@
-﻿const VERSION = "696";
+﻿const VERSION = "697";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4355,6 +4355,8 @@ function _animateShieldBounce(atkI, defI, onSettle) {
   const wasLastShield = health[defI] === 2;
   playSfx('shield'); // shield block sound at attack start (pop stays on impact)
   // Phase 1: slide the attacker toward the defender (attacker still sits on atkI on the board).
+  // The defender is still UNHIT here, so the recorded approach frame keeps its shield badge — the
+  // state mutation happens in the completion below, after startAnim has snapshotted the buffer.
   startAnim([{ toIdx: atkI, fromCX, fromCY, toCX, toCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
     const result = applyShieldBounceState(atkI, defI, attackPiece);
     if (defI === merchantIdx) respawnMerchant();
@@ -8092,13 +8094,17 @@ function handleBoardClick(cx, cy) {
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
       // suppressFromIdx: if the piece hasn't moved on the board, pass fromI to suppress ghost draw.
-      const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone, sfx) => {
+      // onImpact (optional) runs the state change at the moment of contact — AFTER startAnim has
+      // recorded the approach frame. Callers that mutate the defender must use it, or the recorded
+      // frame shows the post-hit state (a shielded King drawn without his shield before being hit).
+      const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone, sfx, onImpact) => {
         const [bx, by] = xy(bounceI);
         const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
         const approach = { toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: targetCX, toCY: targetCY, piece, side, hlth };
         const retreat  = { toIdx: bounceI, fromCX: targetCX, fromCY: targetCY, toCX: bounceCX, toCY: bounceCY, piece, side, hlth };
         if (suppressFromIdx != null) { approach.fromIdx = suppressFromIdx; retreat.fromIdx = suppressFromIdx; }
         startAnim([approach], 0, () => {
+          if (onImpact) onImpact();
           startShieldPop(targetCX + TILE / 2, targetCY + TILE / 2); // shield blocks on impact (sound + pop)
           startAnim([retreat], 0, () => {
             onDone();
@@ -8144,31 +8150,41 @@ function handleBoardClick(cx, cy) {
         // off this turn (with the Speed extra move) unlocks the two-hit achievement.
         if (speeds[fromI] > 1 && health[clicked] - attacks[fromI] >= 1) _turnFastBounced.add(clicked);
         const attackPiece = board[fromI], attackHlth = health[fromI];
-        const result = applyShieldBounceState(fromI, clicked, attackPiece);
-        const bounceI = result.bounceI;
+        // Predict the bounce square WITHOUT mutating: the hit is applied at impact (onImpact below),
+        // so the recorded approach frame still shows the defender's shield badge. Mutating up front
+        // made Last Move draw a shielded King already stripped before the blow landed.
+        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
         selected = -1; validMoves = [];
-        if (result.voidDeath) { // the White attacker bounced into a Void and fell in
-          _speedIdx = -1; _speedMovesUsed = 0;
-          recordPosition();
-          const [bvx, bvy] = xy(result.bounceI);
-          const bvCX = MARGIN + bvx * TILE, bvCY = BOARD_Y + MARGIN + bvy * TILE;
-          const kingFell = (result.deadPiece === KING || result.deadPiece === CHECKERS_KING);
-          _doBounceAnim(fromI, pToCX, pToCY, result.bounceI, null, attackPiece, W, attackHlth, () => {
+        let _sbResult = null;
+        // suppressFromIdx = fromI: the attacker is still standing on its origin during the approach
+        // (the move happens at impact), so the static draw must hide it there — the overlay draws it.
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, fromI, attackPiece, W, attackHlth, () => {
+          if (_sbResult && _sbResult.voidDeath) { // the White attacker bounced into a Void and fell in
+            const [bvx, bvy] = xy(_sbResult.bounceI);
+            const bvCX = MARGIN + bvx * TILE, bvCY = BOARD_Y + MARGIN + bvy * TILE;
+            const kingFell = (_sbResult.deadPiece === KING || _sbResult.deadPiece === CHECKERS_KING);
             if (kingFell && countKings(W) === 0) _triggerGameOver(`Game Over! Score: ${score}`); // only when the LAST White King falls
             startVoidDeath(bvCX + TILE / 2, bvCY + TILE / 2, attackPiece, W, () => { if (gameOver) { takeReplaySnapshot(); draw(); } else endWhiteTurn(); });
-          }, 'shield');
-          return;
-        }
-        // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
-        // (mirrors the AI's _aiSpeedContinue after a shield bounce).
-        const _sbFinalI = result.bounceI;
-        if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
-          _speedMovesUsed++; _speedIdx = _sbFinalI;
-        } else {
-          _speedIdx = -1; _speedMovesUsed = 0; // bounce ON the extra move: clear the stale move-1 registration (no third move)
-        }
-        recordPosition();
-        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'shield');
+            return;
+          }
+          endWhiteTurn();
+        }, 'shield', () => {
+          // Impact: apply the hit now that the pre-hit approach frame is recorded.
+          _sbResult = applyShieldBounceState(fromI, clicked, attackPiece);
+          if (_sbResult.voidDeath) {
+            _speedIdx = -1; _speedMovesUsed = 0;
+          } else {
+            // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
+            // (mirrors the AI's _aiSpeedContinue after a shield bounce).
+            const _sbFinalI = _sbResult.bounceI;
+            if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
+              _speedMovesUsed++; _speedIdx = _sbFinalI;
+            } else {
+              _speedIdx = -1; _speedMovesUsed = 0; // bounce ON the extra move: clear the stale move-1 registration (no third move)
+            }
+          }
+          recordPosition();
+        });
         return;
       }
       // Engage merchant: bounce attacker, open shop, then end turn
