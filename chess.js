@@ -1,4 +1,4 @@
-﻿const VERSION = "695";
+﻿const VERSION = "696";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2087,6 +2087,17 @@ function stepReplay(delta) {
   } else {
     _playReplayTransition(replayIdx, () => draw());
   }
+}
+
+// Jump straight to the START of the final turn (no animation, autoplay off) — one "Next ▶" then
+// plays just the finale, so the player needn't sit through the whole replay to see how it ended.
+function skipReplayToLastTurn() {
+  if (anim || replaySnapshots.length === 0) return;
+  replayAutoPlay = false;
+  if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
+  replayIdx = Math.max(0, replaySnapshots.length - 2);
+  applyReplaySnapshot(replaySnapshots[replayIdx]);
+  draw();
 }
 
 function _tickAutoPlay() {
@@ -5794,12 +5805,13 @@ if (replayMode && !_miniReplayActive) {
   ctx.fillText(`Step ${replayIdx + 1} of ${replaySnapshots.length}`, midX, rowY1);
   // Buttons row
   const bW = 140, bH = 52, bGap = 14;
-  const totalBW = 4 * bW + 3 * bGap;
+  const totalBW = 5 * bW + 4 * bGap;
   let bx = midX - totalBW / 2;
   const by = ctrlY + ctrlH - bH - 14;
   const btns = [
     { label: "◀ Prev", id: 'prev', enabled: replayIdx > 0, color: "#334" },
     { label: "Next ▶", id: 'next', enabled: replayIdx < replaySnapshots.length - 1, color: "#334" },
+    { label: "⏭ Last", id: 'last', enabled: replayIdx < replaySnapshots.length - 2, color: "#334" },
     { label: replayAutoPlay ? "⏸ Pause" : "▶ Auto", id: 'auto', enabled: true, color: "#1a4a8a" },
     { label: "✕ Exit", id: 'exit', enabled: true, color: "#5a1a1a" },
   ];
@@ -7652,15 +7664,16 @@ function handleReplayClick(cx, cy) {
   const ctrlH = 130;
   const midX = ctrlX + BOARD_PX / 2;
   const bW = 140, bH = 52, bGap = 14;
-  const totalBW = 4 * bW + 3 * bGap;
+  const totalBW = 5 * bW + 4 * bGap;
   let bx = midX - totalBW / 2;
   const by = ctrlY + ctrlH - bH - 14;
-  const ids = ['prev', 'next', 'auto', 'exit'];
+  const ids = ['prev', 'next', 'last', 'auto', 'exit'];
   for (const id of ids) {
     if (cx >= bx && cx <= bx + bW && cy >= by && cy <= by + bH) {
       playSfx('button');
       if (id === 'prev') stepReplay(-1);
       else if (id === 'next') stepReplay(1);
+      else if (id === 'last') skipReplayToLastTurn();
       else if (id === 'auto') toggleReplayAutoPlay();
       else if (id === 'exit') exitReplay();
       return;
