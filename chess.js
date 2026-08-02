@@ -1,4 +1,4 @@
-﻿const VERSION = "690";
+﻿const VERSION = "691";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3234,10 +3234,11 @@ function makeMove(fromI, toI, visual = false) {
   const movedAtk = attacks[fromI];
   const movedSpd = speeds[fromI];
   const movedBurn = burning[fromI];
-  let landPiece = p;
-  // Checkers Man promotion: reaches the far back rank
-  if (p === CHECKERS && ((s === W && ty === 0) || (s === B && ty === 7))) landPiece = CHECKERS_KING;
-  board[toI] = landPiece; sides[toI] = s; health[toI] = movedHealth;
+  // No positional promotion: a Checkers Man reaching the far rank stays a Man (like Pawns).
+  // The Promoter to Checkers King item is the ONLY path to crowning a Man. (The old back-rank
+  // auto-crown also let a Black Man walk to row 7, become a Black Checkers King, and be farmed
+  // for a free score point.)
+  board[toI] = p; sides[toI] = s; health[toI] = movedHealth;
   elements[toI] = movedElem; statuses[toI] = movedStatus; attacks[toI] = movedAtk; speeds[toI] = movedSpd;
   burning[toI] = movedBurn;
   effectOrders[toI] = [...effectOrders[fromI]];
@@ -3282,8 +3283,7 @@ function _applyEarthLanding(fromI, landI, side, visual) {
   _lay(fromI);
   // Jumpers leave no mid-path trail (same rule as applyFireTrail): a Knight has no path, and a
   // Checkers jump leaps OVER its square — without this a jump would wall the captured piece's
-  // square. board[landI] is the piece that just landed (a Checkers promoted on landing is a
-  // Checkers King — also excluded).
+  // square. board[landI] is the piece that just landed.
   const lp = board[landI];
   if (lp === KNIGHT || lp === CHECKERS || lp === CHECKERS_KING) return;
   const straightLine = (dx !== 0 || dy !== 0) && (dx === 0 || dy === 0 || Math.abs(tx - fx) === Math.abs(ty - fy));
