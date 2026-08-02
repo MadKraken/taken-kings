@@ -1,4 +1,4 @@
-﻿const VERSION = "697";
+﻿const VERSION = "698";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2089,16 +2089,20 @@ function stepReplay(delta) {
   }
 }
 
-// Jump straight to the START of the final turn (no animation, autoplay off) — one "Next ▶" then
-// plays just the finale, so the player needn't sit through the whole replay to see how it ended.
-function skipReplayToLastTurn() {
+// Jump straight to a snapshot (no animation, autoplay off) — used by the First/Last buttons.
+function _jumpReplayTo(i) {
   if (anim || replaySnapshots.length === 0) return;
   replayAutoPlay = false;
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
-  replayIdx = Math.max(0, replaySnapshots.length - 2);
+  replayIdx = Math.max(0, Math.min(replaySnapshots.length - 1, i));
   applyReplaySnapshot(replaySnapshots[replayIdx]);
   draw();
 }
+// Back to the very start of the run — rewatch from the top without exiting and re-entering.
+function skipReplayToFirst() { _jumpReplayTo(0); }
+// Jump straight to the START of the final turn — one "Next ▶" then plays just the finale, so the
+// player needn't sit through the whole replay to see how it ended.
+function skipReplayToLastTurn() { _jumpReplayTo(replaySnapshots.length - 2); }
 
 function _tickAutoPlay() {
   if (!replayAutoPlay || !replayMode) return;
@@ -5807,10 +5811,11 @@ if (replayMode && !_miniReplayActive) {
   ctx.fillText(`Step ${replayIdx + 1} of ${replaySnapshots.length}`, midX, rowY1);
   // Buttons row
   const bW = 140, bH = 52, bGap = 14;
-  const totalBW = 5 * bW + 4 * bGap;
+  const totalBW = 6 * bW + 5 * bGap;
   let bx = midX - totalBW / 2;
   const by = ctrlY + ctrlH - bH - 14;
   const btns = [
+    { label: "⏮ First", id: 'first', enabled: replayIdx > 0, color: "#334" },
     { label: "◀ Prev", id: 'prev', enabled: replayIdx > 0, color: "#334" },
     { label: "Next ▶", id: 'next', enabled: replayIdx < replaySnapshots.length - 1, color: "#334" },
     { label: "⏭ Last", id: 'last', enabled: replayIdx < replaySnapshots.length - 2, color: "#334" },
@@ -7666,14 +7671,15 @@ function handleReplayClick(cx, cy) {
   const ctrlH = 130;
   const midX = ctrlX + BOARD_PX / 2;
   const bW = 140, bH = 52, bGap = 14;
-  const totalBW = 5 * bW + 4 * bGap;
+  const totalBW = 6 * bW + 5 * bGap;
   let bx = midX - totalBW / 2;
   const by = ctrlY + ctrlH - bH - 14;
-  const ids = ['prev', 'next', 'last', 'auto', 'exit'];
+  const ids = ['first', 'prev', 'next', 'last', 'auto', 'exit'];
   for (const id of ids) {
     if (cx >= bx && cx <= bx + bW && cy >= by && cy <= by + bH) {
       playSfx('button');
-      if (id === 'prev') stepReplay(-1);
+      if (id === 'first') skipReplayToFirst();
+      else if (id === 'prev') stepReplay(-1);
       else if (id === 'next') stepReplay(1);
       else if (id === 'last') skipReplayToLastTurn();
       else if (id === 'auto') toggleReplayAutoPlay();
