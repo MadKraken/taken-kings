@@ -1,4 +1,4 @@
-﻿const VERSION = "694";
+﻿const VERSION = "695";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1000,7 +1000,8 @@ function _commitSquares(n) {
   speeds.splice(0, 64, ...n.speeds); burning.splice(0, 64, ...n.burning);
   if (n.effectOrders) for (let i = 0; i < 64; i++) effectOrders[i] = n.effectOrders[i];
 }
-function _grantEffect(i, eff) { if (!effectOrders[i].includes(eff) && effectOrders[i].length < 3) effectOrders[i].push(eff); }
+// Returns true if the badge is present after the call (already had it, or added); false = full (3-cap).
+function _grantEffect(i, eff) { if (effectOrders[i].includes(eff)) return true; if (effectOrders[i].length >= 3) return false; effectOrders[i].push(eff); return true; }
 function _removeEffect(i, eff) { const k = effectOrders[i].indexOf(eff); if (k >= 0) effectOrders[i].splice(k, 1); }
 function movePiece(src, dst) { copyPiece(src, dst); clearSquare(src); }
 
@@ -1021,8 +1022,11 @@ function _promotePawnTo(item, i) {
 // Apply an elementalizer item to i: resolve element (mystery→random), OR-in flag + badge.
 function _applyElementItem(item, i) {
   const elem = item === ITEM_ELEM_MYSTERY ? ELEM_ALL[randInt(4)] : elemFromItem(item, false);
+  // Badge first: if the Warrior is full (3-cap), do NOT set the element bit — the old order granted
+  // an invisible power (mechanics without a badge). Eligibility usually prevents reaching this, but
+  // ungated paths (sky drops onto a full piece) still land here.
+  if (!_grantEffect(i, _ELEM_BADGE[elem])) return;
   elements[i] |= elem;
-  _grantEffect(i, _ELEM_BADGE[elem]);
   playSfx('spell'); // item grants a piece an effect
 }
 
@@ -4507,15 +4511,29 @@ function checkWhiteKingAlive() {
 function canItemAffectPiece(item, i) {
   const p = board[i];
   if (isPromoterItem(item)) { return p === promoterTarget(item) && sides[i] === W; }
+  // A Warrior already carrying 3 effect badges is FULL: items that would grant a NEW badge can't
+  // affect it. An ineligible Warrior landing on a board Item leaves it on the square, unconsumed
+  // (the landing paths all gate on this). The stat items' own checks already imply their badge is
+  // absent (health<2 ⇒ no 'hlt' badge, etc.), so fullness is the only extra room-check needed.
+  const _full = effectOrders[i].length >= 3;
   switch (item) {
-    case ITEM_SHIELD: return health[i] < 2;
+    case ITEM_SHIELD: return health[i] < 2 && !_full;
     case ITEM_TELEPORTER: return true;
     case ITEM_CLONER: return adjacentClonerDests(i).length > 0;
     case ITEM_BOMB: return true;
-    case ITEM_VAMPIRE_FANG: return !(statuses[i] & STATUS_BLOODTHIRSTY);
-    case ITEM_SWORD: return attacks[i] < 2;
-    case ITEM_BOOTS: return speeds[i] < 2;
-    default: if (isElementalizerItem(item)) return true; return false;
+    case ITEM_VAMPIRE_FANG: return !(statuses[i] & STATUS_BLOODTHIRSTY) && !_full;
+    case ITEM_SWORD: return attacks[i] < 2 && !_full;
+    case ITEM_BOOTS: return speeds[i] < 2 && !_full;
+    default:
+      if (isElementalizerItem(item)) {
+        if (_full) return false;
+        // Mystery: can benefit as long as some element is missing; a specific Essence needs ITS
+        // element to be new — an Air Warrior gains nothing from an Air Essence, so it stays put.
+        const _ALL = ELEM_FIRE | ELEM_WATER | ELEM_EARTH | ELEM_AIR;
+        if (item === ITEM_ELEM_MYSTERY) return (elements[i] & _ALL) !== _ALL;
+        return !(elements[i] & elemFromItem(item, false));
+      }
+      return false;
   }
 }
 
