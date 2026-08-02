@@ -1,4 +1,4 @@
-﻿const VERSION = "691";
+﻿const VERSION = "693";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -328,6 +328,13 @@ function _makeTinted(img, color) {
   oc.width = w; oc.height = h;
   const oc2 = oc.getContext('2d');
   oc2.drawImage(img, 0, 0, w, h);
+  // Desaturate BEFORE tinting: on colored art (the new Rook, and any future colored sprites) a bare
+  // multiply barely reads — grey-multiplied color is still colorful, so Grey looked like White. Killing
+  // the saturation first makes the sides unmistakable at a glance: White = full color, Grey = stone
+  // grey, Black = dark purple. (No-op for the legacy near-white art.)
+  oc2.globalCompositeOperation = 'saturation';
+  oc2.fillStyle = '#808080'; // any zero-saturation fill — keeps luminance, drops color
+  oc2.fillRect(0, 0, w, h);
   oc2.globalCompositeOperation = 'multiply';
   oc2.fillStyle = color;
   oc2.fillRect(0, 0, w, h);
@@ -4531,6 +4538,11 @@ function _applyItemAuto(item, i) {
 // At end-of-round: convert pending shadows to real item spaces (with fall animation),
 // then roll new shadows on vacant squares.
 function _doSkyDropPhase(onDone) {
+  // Ticker-idle test BEFORE the batch push: the rAF ticker runs iff any anim pool is non-empty.
+  // The old kick ran after the loop and required exactly ONE drop (length === 1) — with 2+ stacked
+  // drops it never fired, nothing visibly fell, and _resolveAllSkyDrops silently popped the items
+  // onto the board 420ms later.
+  const _tickerIdle = flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 0;
   let hasDrops = false;
   for (const [i, item] of _shadowSpaces) {
     if (itemSpaces[i] === ITEM_NONE && !isVoidSpace(i) && !isBlockSpace(i)) {
@@ -4558,7 +4570,7 @@ function _doSkyDropPhase(onDone) {
   if (_sdci > 0) _kingQueueFirst('firstShadow');   // the run's first looming shadow
   if (hasDrops) _kingQueueFirst('firstItemFall');  // the run's first item actually falling
   if (hasDrops) {
-    if (flyAnims.length === 0 && itemFlyAnims.length === 0 && shieldPops.length === 0 && _skyDropAnims.length === 1) requestAnimationFrame(_flyTick);
+    if (_tickerIdle) requestAnimationFrame(_flyTick);
     // Land all drops deterministically before onDone (which snapshots the turn start), so the
     // snapshot never misses an item that's still mid-animation — otherwise a later Rewinder loses it.
     const _gen = _runGen;
@@ -5070,6 +5082,10 @@ for (const [i] of _shadowSpaces) {
 // Item spaces (rendered before pieces so pieces show on top)
 for (let i = 0; i < 64; i++) {
   if (itemSpaces[i] === ITEM_NONE) continue;
+  // An airborne sky-drop targeting this square IS this item — suppress the ground sprite until it
+  // lands. Replayed (cosmetic) drops land AFTER the board splice already placed the item, which
+  // drew the item on the square while it was still visibly falling (Last Move double-vision).
+  if (_skyDropAnims.some(f => f.i === i)) continue;
   const [x, y] = xy(i);
   const px = MARGIN + x * TILE, py = MARGIN + y * TILE;
   const itemHere = itemSpaces[i];
