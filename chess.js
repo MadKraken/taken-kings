@@ -1,4 +1,4 @@
-﻿const VERSION = "699";
+﻿const VERSION = "700";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4530,6 +4530,17 @@ function countKings(s) {
   return n;
 }
 
+// Inventory Elementalizer eligibility. Unlike a board Essence (which ORs its element in), the
+// inventory path REPLACES the piece's element — it strips any element badge before granting the new
+// one, so a Warrior already carrying an element always has room. Ineligible only when three
+// NON-element badges leave no slot, or when the swap would change nothing.
+function elementizerCanAffect(i, elem, mystery) {
+  if (board[i] === NONE || sides[i] !== W) return false;
+  const hasElemBadge = effectOrders[i].some(e => e === 'fire' || e === 'water' || e === 'earth' || e === 'air');
+  if (!hasElemBadge && effectOrders[i].length >= 3) return false; // full, with nothing to swap out
+  return !!mystery || elements[i] !== elem;                       // identical element = no change
+}
+
 function _hasRewinder() {
   return inventory.indexOf(ITEM_REWINDER) >= 0 && _turnStartSnapIndices.length >= 2;
 }
@@ -5396,10 +5407,13 @@ if (clonerMode) {
   }
 }
 
-// Upgrader highlight â€" all white pieces selectable
+// Upgrader highlight — only White pieces the item can actually BENEFIT are selectable. A Warrior
+// already carrying three effects (or already at this stat's cap) is skipped, so the player can see
+// at a glance where the item would be wasted.
 if (shieldMode || vampireFangMode || swordMode || speedMode) {
+  const _upItem = shieldMode ? ITEM_SHIELD : vampireFangMode ? ITEM_VAMPIRE_FANG : swordMode ? ITEM_SWORD : ITEM_BOOTS;
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) continue;
+    if (sides[i] !== W || !canItemAffectPiece(_upItem, i)) continue;
     const [px, py] = xy(i);
     ctx.fillStyle = "rgba(255,200,50,0.5)";
     ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
@@ -5415,7 +5429,7 @@ if (elementizerMode) {
   };
   const hlColor = ELEM_RGBA[elementizerElem] || 'rgba(204,136,255,0.45)';
   for (let i = 0; i < 64; i++) {
-    if (sides[i] !== W) continue;
+    if (!elementizerCanAffect(i, elementizerElem, elementizerMystery)) continue; // skip no-benefit targets
     const [px, py] = xy(i);
     ctx.fillStyle = hlColor;
     ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
@@ -7823,7 +7837,7 @@ function handlePiecePromoterClick(cx, cy) {
 function handleShieldClick(cx, cy) {
   const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
-  if (i >= 0 && sides[i] === W) {
+  if (i >= 0 && sides[i] === W && canItemAffectPiece(ITEM_SHIELD, i)) { // ineligible = miss, item kept
     _logItemUse(_s, _fs, [i]);
     _applyStatEffect(ITEM_SHIELD, i);
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
@@ -7949,12 +7963,15 @@ function handleTeleporterClick(cx, cy) {
 function handleElementizerClick(cx, cy) {
   const _s = inventory._activeSlot, _fs = activeItemSpaceIdx >= 0;
   const i = cellIdxFromCoords(cx, cy);
-  if (i >= 0 && sides[i] === W) {
+  if (i >= 0 && elementizerCanAffect(i, elementizerElem, elementizerMystery)) { // ineligible = miss, item kept
     _logItemUse(_s, _fs, [i]);
     const resolvedElem = elementizerMystery ? ELEM_ALL[randInt(4)] : elementizerElem;
+    // Swap the element badge, but never set the element bit without one — that would be an invisible
+    // power (mechanics with no icon). Eligibility guarantees room; restore untouched if it ever doesn't.
+    const _prevBadges = effectOrders[i];
     effectOrders[i] = effectOrders[i].filter(e => e !== 'fire' && e !== 'water' && e !== 'earth' && e !== 'air');
-    elements[i] = resolvedElem;
-    _grantEffect(i, _ELEM_BADGE[resolvedElem]);
+    if (_grantEffect(i, _ELEM_BADGE[resolvedElem])) elements[i] = resolvedElem;
+    else effectOrders[i] = _prevBadges;
     playSfx('spell'); // item grants a piece an effect
     if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
     const fromSpace = activeItemSpaceIdx >= 0;
@@ -7975,7 +7992,9 @@ function _handleStatItemClick(cx, cy, item, clearMode) {
   const _s = inventory._activeSlot;
   const i = cellIdxFromCoords(cx, cy);
   const fromSpace = activeItemSpaceIdx >= 0;
-  const hit = i >= 0 && sides[i] === W;
+  // Ineligible targets aren't highlighted, so tapping one must not consume the item — treat it as a
+  // miss (cancels the mode, item stays in the bag).
+  const hit = i >= 0 && sides[i] === W && canItemAffectPiece(item, i);
   _logItemUse(_s, fromSpace, hit ? [i] : null);
   if (hit) {
     _applyStatEffect(item, i);
