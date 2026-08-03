@@ -1,4 +1,4 @@
-﻿const VERSION = "703";
+﻿const VERSION = "708";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -194,8 +194,8 @@ const INV_X = MARGIN;
 
 const LIGHT = "#edcea0";
 const DARK = "#b5855a";
-const SEL_COLOR = "rgba(50,120,200,0.5)";
-const PASS_COLOR = "rgba(235,205,40,0.55)"; // extra-move offer: the piece's own square (tap = pass/cancel)
+const SEL_BORDER = "rgba(90,170,255,0.95)"; // Checkers chain: outline only — the jump can't be cancelled
+const PASS_COLOR = "rgba(235,205,40,0.55)"; // selected piece's own square (tap = deselect, or pass an extra move)
 const MOVE_COLOR = "rgba(100,180,60,0.55)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
@@ -701,7 +701,11 @@ let _inspectPreviewCol = -1; // last preview-row (fog) column the player tapped 
 let _checkersChainIdx = -1; // board index of White Checkers Man mid chain-jump; -1 if not in chain
 let _bloodthirstyIdx = -1;  // board index of Bloodthirsty piece mid extra-move; -1 if not active
 let _bloodthirstyUsed = false; // true if BT extra move already granted this turn (no chaining)
-function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; }
+// _checkersChainIdx belongs here too: it was previously cleared ONLY when a chain ran out of jumps,
+// so a new game (or any turn-end) started mid-chain inherited a stale index — which both drew the
+// chain outline on an unrelated piece AND blocked deselection, since re-tapping is ignored while a
+// chain is pending. Same leak the Bloodthirsty latch had in v690.
+function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; _checkersChainIdx = -1; }
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 let gameOver = false;
@@ -5112,11 +5116,17 @@ if (_fieldAnim && anim.exitRow) {
 // Selected
 if (selected >= 0) {
   const [sx, sy] = xy(selected);
-  // During a Speed/Bloodthirsty extra-move offer, tapping the Warrior's own square passes (ends the
-  // turn) — paint it YELLOW to signal that. Checkers chain jumps can't be passed, so they stay blue.
-  const _passable = selected === _speedIdx || selected === _bloodthirstyIdx;
-  ctx.fillStyle = _passable ? PASS_COLOR : SEL_COLOR;
-  ctx.fillRect(MARGIN + sx * TILE, MARGIN + sy * TILE, TILE, TILE);
+  // Tapping the selected Warrior's own square backs out: it deselects an ordinary selection, and
+  // passes (ends the turn) on a Speed/Bloodthirsty extra-move offer. Fill it YELLOW to advertise
+  // that. The one exception is a Checkers chain jump, which must be finished — re-tapping is
+  // deliberately ignored there (see handleBoardClick), so it gets an outline INSTEAD of a fill:
+  // still clearly the active piece, but with no tint promising a cancel that won't happen.
+  // (The chain-jump outline is stroked near the end of this function, with the inspect ring — an
+  //  outline drawn here gets washed out by the board elements layered on afterwards.)
+  if (_checkersChainIdx < 0) {
+    ctx.fillStyle = PASS_COLOR;
+    ctx.fillRect(MARGIN + sx * TILE, MARGIN + sy * TILE, TILE, TILE);
+  }
 }
 
 // Valid moves
@@ -5473,6 +5483,21 @@ if (teleporterMode) {
 
 // Tap-marker ring: LAST board draw (still inside the board translate) so it sits on top of every
 // element — Blocks, pieces, items, terrain. Only on the player's turn.
+// Checkers chain jump: outline the acting piece instead of tinting it — the jump must be finished,
+// so there's no tap-to-cancel to advertise. Stroked here, on top of every board element, for the
+// same reason as the inspect ring below: an outline drawn at selection time gets washed out.
+if (selected >= 0 && _checkersChainIdx >= 0) {
+  const [cjx, cjy] = xy(selected);
+  ctx.save();
+  ctx.globalAlpha = 1; // save() inherits the current alpha — earlier board layers leave it low
+  ctx.strokeStyle = SEL_BORDER;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(MARGIN + cjx * TILE + 3, MARGIN + cjy * TILE + 3, TILE - 6, TILE - 6, 6);
+  ctx.stroke();
+  ctx.restore();
+}
+
 if (_inspectIdx >= 0 && turn === W && !aiThinking && gamePhase === 'playing' && !replayMode) {
   const [ix, iy] = xy(_inspectIdx);
   ctx.save();
