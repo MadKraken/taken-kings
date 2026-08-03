@@ -318,4 +318,9 @@ export async function handler(req: Request): Promise<Response> {
   return json({ ok: true, ranked: true, board, value });
 }
 
+// Serve only when this file IS the entrypoint — Supabase runs it that way, while name_test.ts
+// imports it for isNameBlocked() and must not start a listener.
+// @ts-ignore: import.meta is valid under Deno (deno check passes); the Supabase dashboard editor
+// type-checks with a stricter --module setting and flags it as TS1343. Harmless — the deployed
+// function has always run this line.
 if (import.meta.main) Deno.serve(handler);
