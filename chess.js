@@ -1,4 +1,4 @@
-﻿const VERSION = "702";
+﻿const VERSION = "703";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5814,6 +5814,7 @@ if (gameOver && !replayMode) {
   }
   fillBtn(L.startOver, "#2a6e3f", "Start Over");
   fillBtn(L.replay, replaySnapshots.length > 0 ? "#1a4a8a" : "#333", "Replay");
+  fillBtn(L.mainMenu, "#4a3a7a", "Main Menu"); // same purple as the setup screen's Back
   // A failed submit gets a prominent red banner so it's never mistaken for success (the button
   // also flips to red "Retry Submit"). A ranked-but-mismatched score gets an amber banner (the
   // submission landed, but at the server's re-simulated value — a logged determinism bug).
@@ -7207,12 +7208,16 @@ function _gameOverBtns() {
   const eligible = _lbEligible();
   const subW = btnW * 2 + btnGap;
   const rowY = eligible ? boardCY + 214 : boardCY + 120;
-  const soX = boardCX - subW / 2, repX = soX + btnW + btnGap;
+  // Three across (888 of the board's 960) rather than a fourth row — the submit error/warning
+  // banner already sits directly below this row.
+  const rowW = btnW * 3 + btnGap * 2;
+  const soX = boardCX - rowW / 2, repX = soX + btnW + btnGap, menuX = repX + btnW + btnGap;
   return {
     eligible,
     submit: { x: boardCX - subW / 2, y: boardCY + 120, w: subW, h: btnH },
     startOver: { x: soX, y: rowY, w: btnW, h: btnH },
     replay: { x: repX, y: rowY, w: btnW, h: btnH },
+    mainMenu: { x: menuX, y: rowY, w: btnW, h: btnH },
   };
 }
 let _achSelected = 0;        // highlighted grid cell
@@ -7774,6 +7779,8 @@ function handleGameOverClick(cx, cy) {
   if (L.eligible && inR(L.submit)) { playSfx('button'); _lbSubmit(); return; }
   if (inR(L.startOver)) { playSfx('button'); initBoard(); draw(); return; }
   if (inR(L.replay)) { playSfx('button'); enterReplay(); return; }
+  // Straight to the menu — the same end state as Start Over followed by the setup screen's Back.
+  if (inR(L.mainMenu)) { playSfx('button'); initBoard(); mainMenuOpen = true; startMenuBg(); draw(); return; }
 }
 
 function handleItemCancelOrTrash(cx, cy) {
