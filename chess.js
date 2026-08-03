@@ -1,4 +1,4 @@
-﻿const VERSION = "701";
+﻿const VERSION = "702";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6378,7 +6378,13 @@ function _kingOnPlayerTurn() {
 function drawKingDialogue() {
   // Shown during item-targeting too, so the King's remark on a just-selected item is visible. Its box
   // (COUNTDOWN_Y+30 downward) sits below the item mode's Cancel/Discard buttons — no overlap.
-  if (gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) return;
+  if (gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) {
+    // Not drawn — so retire the tap-to-page hotspot with it. Left stale, the previous game's rect
+    // sat invisibly over the setup screen and swallowed the Back button (its paging check runs
+    // before the setup buttons).
+    _kingDialogPages = 1; _kingDialogRect = null;
+    return;
+  }
   const x = PLAYER_GRAVE_X, w = ENEMY_GRAVE_X + GRAVE_W - PLAYER_GRAVE_X;
   // Taller box: raise the top to sit just under the "Field Auto-Advances" label; keep the bottom
   // where the graveyard ended so the Resign/Auto buttons below don't shift.
@@ -8423,7 +8429,7 @@ canvas.addEventListener("click", (e) => {
   if (_faConfirm) { handleFieldAdvanceConfirmClick(cx, cy); return; } // modal: capture all clicks
   if (_turnBusy()) return;
   // Long King remark: tap the dialogue box to page through it (arrow shown while more remains).
-  if (_kingDialogPages > 1 && _kingDialogRect && _inRect(cx, cy, _kingDialogRect)) { _kingPage = (_kingPage + 1) % _kingDialogPages; draw(); return; }
+  if (gamePhase === 'playing' && _kingDialogPages > 1 && _kingDialogRect && _inRect(cx, cy, _kingDialogRect)) { _kingPage = (_kingPage + 1) % _kingDialogPages; draw(); return; }
   if (gamePhase === 'playing' && isItemActive() && handleItemCancelOrTrash(cx, cy)) return;
   if (sellConfirmSlot >= 0) { handleSellConfirmClick(cx, cy); return; }
   if (shopMode) {
