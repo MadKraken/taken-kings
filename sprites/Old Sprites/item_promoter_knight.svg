@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- Knight horse head -->
+  <path d="M14,28 Q13,22 16,18 Q18,14 22,13 Q26,12 28,14 Q32,13 33,16 Q34,19 31,21 Q33,24 32,27 Q30,29 28,28 Q26,30 22,29 Q18,30 14,28 Z" fill="#44aa55" stroke="#226633" stroke-width="1.2"/>
+  <circle cx="27" cy="17" r="2" fill="#226633"/>
+  <!-- Pawn -->
+  <circle cx="25" cy="36" r="6" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <path d="M18 44 Q25 40 32 44 L34 50 Q25 48 16 50 Z" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <!-- Bishop mitre -->
+  <path d="M25,4 Q30,10 32,16 Q30,18 25,19 Q20,18 18,16 Q20,10 25,4 Z" fill="#9955cc" stroke="#662299" stroke-width="1.2"/>
+  <ellipse cx="25" cy="19" rx="7" ry="3" fill="#7733aa" stroke="#662299" stroke-width="1.2"/>
+  <line x1="25" y1="4" x2="25" y2="10" stroke="#ffdd88" stroke-width="1.5"/>
+  <!-- Pawn -->
+  <circle cx="25" cy="33" r="6" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <path d="M18 41 Q25 37 32 41 L34 47 Q25 45 16 47 Z" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+  <rect x="15" y="47" width="20" height="3" rx="1" fill="#ffffff" stroke="#333" stroke-width="1.2"/>
+</svg>

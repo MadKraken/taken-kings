@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+  <g transform="scale(1,-1) translate(0,-50)">
+    <!-- Arrow pointing down (flipped = up) -->
+    <polygon points="25,38 14,22 20,22 20,10 30,10 30,22 36,22" fill="#e04020" stroke="#8a1500" stroke-width="1.5"/>
+    <!-- Flame wisps on sides -->
+    <path d="M14,22 Q10,16 13,10 Q11,18 16,19" fill="#ff8800" opacity="0.85"/>
+    <path d="M36,22 Q40,16 37,10 Q39,18 34,19" fill="#ff8800" opacity="0.85"/>
+    <!-- Highlight on arrow -->
+    <polygon points="25,34 17,22 21,22 21,12 25,12" fill="#ff6040" opacity="0.5"/>
+  </g>
+</svg>

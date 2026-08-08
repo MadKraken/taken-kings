@@ -1,4 +1,4 @@
-﻿const VERSION = "708";
+﻿const VERSION = "709";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -220,6 +220,13 @@ const ANIM_FRAME_COUNTS = {
   idle:   { [PAWN]: 3, [ROOK]: 3, [KNIGHT]: 3, [BISHOP]: 3, [QUEEN]: 3, [KING]: 3 },
   active: { [PAWN]: 3, [ROOK]: 3, [KNIGHT]: 3, [BISHOP]: 3, [QUEEN]: 4, [KING]: 3 },
 };
+// Black and Grey now have their own drawn idle art instead of a tinted copy of the White sprite.
+// Idle only (3 frames): "Active Idle" marks the piece the PLAYER has selected, which is always a
+// White piece, so the other sides never need that set. The tint path survives as a fallback for a
+// failed fetch, and still serves Checkers/Checkers King (no animated art of their own).
+const SIDE_ANIM_FOLDER = { [B]: 'Enemy Idle Sprites', [N]: 'Neutral Idle Sprites' };
+const SIDE_ANIM_PREFIX = { [B]: 'Enemy', [N]: 'Neutral' };
+const SIDE_ANIM_FRAMES = 3;
 let _idleAnimFrame = 0;
 let _idleAnimRafId = null;
 let _idleAnimLastMs = 0;
@@ -351,10 +358,13 @@ const PIECE_SCALE = { [PAWN]: 0.9, [KNIGHT]: 1.2 };
 function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, halfSpeed = false, forceStatic = false) {
   // Animated sprite path
   if (!forceStatic && ANIM_PIECE_NAMES[piece]) {
-    const state = isActive ? 'active' : 'idle';
-    const nFrames = ANIM_FRAME_COUNTS[state][piece];
+    // Black/Grey use their own drawn idle art; they have no Active set (only the player's selected
+    // piece is ever "active"), so they stay on idle regardless of isActive.
+    const sideArt = side !== W && !!SIDE_ANIM_FOLDER[side];
+    const state = (isActive && !sideArt) ? 'active' : 'idle';
+    const nFrames = sideArt ? SIDE_ANIM_FRAMES : ANIM_FRAME_COUNTS[state][piece];
     const animTick = halfSpeed ? Math.floor(_idleAnimFrame / 2) : _idleAnimFrame;
-    const queenActive = (piece === QUEEN && isActive);
+    const queenActive = (piece === QUEEN && state === 'active');
     let frame;
     if (queenActive || nFrames <= 1) {
       frame = (animTick % nFrames) + 1;
@@ -363,10 +373,20 @@ function _drawPieceSprite(ctx, side, piece, dx, dy, dw, dh, isActive = false, ha
       const pos = animTick % cycleLen;
       frame = (pos < nFrames ? pos : cycleLen - pos) + 1;
     }
-    const baseKey = `anim_${state}_${piece}_${frame}`;
+    const baseKey = sideArt ? `anim_s${side}_idle_${piece}_${frame}` : `anim_${state}_${piece}_${frame}`;
     let animImg = spriteImages[baseKey];
+    // Fallback: if the side art failed to load, tint the matching White frame as before.
+    if (!animImg && sideArt) {
+      const wKey = `anim_idle_${piece}_${Math.min(frame, ANIM_FRAME_COUNTS.idle[piece])}`;
+      const wFrame = spriteImages[wKey];
+      if (wFrame) {
+        const tintKey = `${wKey}_t${side}`;
+        if (!spriteImages[tintKey]) spriteImages[tintKey] = _makeTinted(wFrame, SIDE_TINT[side]);
+        animImg = spriteImages[tintKey];
+      }
+    }
     if (animImg) {
-      if (side !== W) {
+      if (side !== W && !sideArt) {
         const tintKey = `${baseKey}_t${side}`;
         if (!spriteImages[tintKey]) spriteImages[tintKey] = _makeTinted(animImg, SIDE_TINT[side]);
         animImg = spriteImages[tintKey];
@@ -651,6 +671,19 @@ function loadSprites() {
       for (let f = 1; f <= nFrames; f++) {
         const key = `anim_${stateKey}_${piece}_${f}`;
         const rawPath = `${ANIM_BASE}/${pieceName}/Animations/${stateName}/${pieceName} ${stateName} ${f}.png`;
+        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/');
+        spriteList.push([key, src, true]);
+      }
+    }
+  }
+
+  // Per-side idle frames for Black/Grey (drawn art, not tints). Idle only — see SIDE_ANIM_FOLDER.
+  for (const [sideKey, folder] of Object.entries(SIDE_ANIM_FOLDER)) {
+    const prefix = SIDE_ANIM_PREFIX[sideKey];
+    for (const [piece, pieceName] of Object.entries(ANIM_PIECE_NAMES)) {
+      for (let f = 1; f <= SIDE_ANIM_FRAMES; f++) {
+        const key = `anim_s${sideKey}_idle_${piece}_${f}`;
+        const rawPath = `sprites/${folder}/${prefix} ${pieceName} Idle ${f}.png`;
         const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/');
         spriteList.push([key, src, true]);
       }
