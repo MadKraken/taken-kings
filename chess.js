@@ -1,4 +1,4 @@
-﻿const VERSION = "709";
+﻿const VERSION = "710";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -224,6 +224,10 @@ const ANIM_FRAME_COUNTS = {
 // Idle only (3 frames): "Active Idle" marks the piece the PLAYER has selected, which is always a
 // White piece, so the other sides never need that set. The tint path survives as a fallback for a
 // failed fetch, and still serves Checkers/Checkers King (no animated art of their own).
+// Cache-buster for piece art. These frames are replaced IN PLACE (same filenames), so without a
+// changing query the browser and the Pages CDN keep serving the bytes they already have — a redrawn
+// sprite simply never reaches anyone who has loaded the game before. Bump on every art change.
+const ART_V = '710';
 const SIDE_ANIM_FOLDER = { [B]: 'Enemy Idle Sprites', [N]: 'Neutral Idle Sprites' };
 const SIDE_ANIM_PREFIX = { [B]: 'Enemy', [N]: 'Neutral' };
 const SIDE_ANIM_FRAMES = 3;
@@ -671,7 +675,7 @@ function loadSprites() {
       for (let f = 1; f <= nFrames; f++) {
         const key = `anim_${stateKey}_${piece}_${f}`;
         const rawPath = `${ANIM_BASE}/${pieceName}/Animations/${stateName}/${pieceName} ${stateName} ${f}.png`;
-        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/');
+        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/') + `?v=${ART_V}`;
         spriteList.push([key, src, true]);
       }
     }
@@ -684,7 +688,7 @@ function loadSprites() {
       for (let f = 1; f <= SIDE_ANIM_FRAMES; f++) {
         const key = `anim_s${sideKey}_idle_${piece}_${f}`;
         const rawPath = `sprites/${folder}/${prefix} ${pieceName} Idle ${f}.png`;
-        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/');
+        const src = rawPath.split('/').map(s => encodeURIComponent(s)).join('/') + `?v=${ART_V}`;
         spriteList.push([key, src, true]);
       }
     }
