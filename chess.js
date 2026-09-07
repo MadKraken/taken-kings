@@ -7509,8 +7509,12 @@ function _drawSettingsButton() {
 
 // Panel geometry - one source of truth for drawing and hit-testing.
 function _settingsGeom() {
+  // The panel sits BELOW the board, in the bottom half of the screen, so the board stays in view
+  // (dimmed) while Settings is open — the player can watch the clock run out and Black move without
+  // closing the panel. Math.min keeps it on-canvas if the board geometry ever grows.
   const w = BOARD_PX, x = MARGIN, h = 620;
-  const y = Math.round((canvas.height - h) / 2);
+  const boardBottom = BOARD_Y + MARGIN + BOARD_PX;
+  const y = Math.min(boardBottom + 20, canvas.height - h - 30);
   const btnW = 190, btnH = 62, pad = 50;
   const musicY = y + 150, sfxY = musicY + 192;
   return {
@@ -7537,7 +7541,7 @@ function _drawSettingsOverlay() {
   if (!settingsOpen) return;
   const g = _settingsGeom();
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.72)";                       // dim whatever is underneath
+  ctx.fillStyle = "rgba(0,0,0,0.55)";                       // grey the game out, but keep it readable
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(18,14,34,0.96)";
   ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
