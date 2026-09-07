@@ -400,10 +400,14 @@ function _applyWhiteStretch(cv, maxL, curve = WHITE_LIGHTEN_CURVE) {
 // read fine because they sit at the extremes; grey had to move off the board's own tone.
 const OUTLINE_RGB = { [W]: [255, 255, 255], [B]: [0, 0, 0], [N]: [185, 185, 185] };
 const OUTLINE_ALPHA_MIN = 1; // alpha >= this counts as drawn art
-// Border thickness in SOURCE pixels. The 240px-wide frames are drawn into a 120px tile, so source
-// pixels land at 0.5x — a 1px border renders as a half-pixel smudge. 2 gives a solid on-screen pixel.
-const OUTLINE_WIDTH = 2;
-function _outlineSprite(cv, rgb, width = OUTLINE_WIDTH) {
+// Border thickness in SOURCE pixels, per side. The 240px frames are drawn into a 120px tile, so
+// source pixels land at 0.5x — a 1px border renders as a half-pixel smudge and 2 gives a solid
+// on-screen pixel. Black is the exception at 1: every side's art already carries its own black
+// linework at the silhouette (median 5px deep on the Black frames), and a black border merges into
+// that instead of sitting against it, so 2px read as a noticeably fatter outline than the other
+// sides. White and Grey contrast with that linework, so they stay visually thin at 2.
+const OUTLINE_WIDTH = { [W]: 2, [B]: 1, [N]: 2 };
+function _outlineSprite(cv, rgb, width) {
   const c = cv.getContext('2d');
   const w = cv.width, h = cv.height;
   const d = c.getImageData(0, 0, w, h), px = d.data;
@@ -444,13 +448,13 @@ function _outlineAllSprites() {
       const n = ANIM_FRAME_COUNTS[state][piece];
       for (let f = 1; f <= n; f++) {
         const cv = spriteImages[`anim_${state}_${piece}_${f}`];
-        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[W]); // base package draws as White
+        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[W], OUTLINE_WIDTH[W]); // base package draws as White
       }
     }
     for (const side of Object.keys(SIDE_ANIM_FOLDER)) {
       for (let f = 1; f <= SIDE_ANIM_FRAMES; f++) {
         const cv = spriteImages[`anim_s${side}_idle_${piece}_${f}`];
-        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[side]);
+        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[side], OUTLINE_WIDTH[side]);
       }
     }
   }
