@@ -395,7 +395,10 @@ function _applyWhiteStretch(cv, maxL, curve = WHITE_LIGHTEN_CURVE) {
 // Sprite art carries a thin anti-aliased fringe (~200 partial-alpha pixels per frame), and any
 // non-zero alpha counts as drawn, so the outline hugs the outside of that fringe rather than eating
 // into it. No frame has opaque pixels within 2px of its outer ring, so nothing is clipped.
-const OUTLINE_RGB = { [W]: [255, 255, 255], [B]: [0, 0, 0], [N]: [140, 140, 140] };
+// Grey is 185, not the 140 of SIDE_TINT[N]: the board tiles sit at luminance ~141 (light) and
+// ~113 (dark), so a 140 border matched the board almost exactly and vanished. White and Black
+// read fine because they sit at the extremes; grey had to move off the board's own tone.
+const OUTLINE_RGB = { [W]: [255, 255, 255], [B]: [0, 0, 0], [N]: [185, 185, 185] };
 const OUTLINE_ALPHA_MIN = 1; // alpha >= this counts as drawn art
 // Border thickness in SOURCE pixels. The 240px-wide frames are drawn into a 120px tile, so source
 // pixels land at 0.5x — a 1px border renders as a half-pixel smudge. 2 gives a solid on-screen pixel.
