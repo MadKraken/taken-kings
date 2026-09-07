@@ -960,6 +960,11 @@ let _bloodthirstyUsed = false; // true if BT extra move already granted this tur
 function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; _checkersChainIdx = -1; }
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
+// A Field Advance is not a move: it scrolls the board, it does not spend White's turn. So when one
+// hands off to Black, the hand-back that follows must NOT age White's trails (fire/temp blocks) --
+// otherwise an advance silently burns a turn of trail life that White never actually used. A Team
+// Advance IS a move and does age them, as does an ordinary piece move.
+let _faSkipWhiteAge = false;
 let gameOver = false;
 let gameMsg = "";
 let score = 0;
@@ -2605,6 +2610,7 @@ function shuffle(arr) {
 
 function initBoard() {
   _runGen++;             // invalidate any pending async callbacks from the previous run
+  _faSkipWhiteAge = false; // never let a pending advance-skip leak into a new run
   anim = null; waveAnim = null; aiThinking = false;
   board.fill(NONE); sides.fill(0);
   spawnCount = 1;
@@ -4010,12 +4016,14 @@ function fieldAdvance(playerTriggered = false) {
       // Auto-advance: White just spent their move triggering the countdown, so Black goes next.
       turn = B;
       draw();
+      _faSkipWhiteAge = true; // the advance itself is not a move — don't spend White's trail life on it
       if (!gameOver) aiPlay();
     } else {
       // Manual advance: hand off to Black if White acted last, otherwise stay on White.
       if (lastActingSide === W) {
         turn = B;
         draw();
+        _faSkipWhiteAge = true; // as above — the advance is not the move that earns the tick
         if (!gameOver) aiPlay();
       } else {
         draw();
@@ -4452,7 +4460,7 @@ function aiPlay() {
               _doSkyDropPhase(() => {
                 turn = W;
                 aiThinking = false;
-                _ageTrails(W);  // White's trails (blocks/fire) age as its next turn begins
+                if (_faSkipWhiteAge) _faSkipWhiteAge = false; else _ageTrails(W);  // ... unless a Field Advance, not a move, brought us here
                 _burnTick();    // a full round elapsed — burning pieces tick down (and may burn up)
                 if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
                 _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
@@ -4512,7 +4520,7 @@ function aiPlay() {
             _doSkyDropPhase(() => {
               turn = W;
               aiThinking = false;
-              _ageTrails(W);  // White's trails (blocks/fire) age as its next turn begins
+              if (_faSkipWhiteAge) _faSkipWhiteAge = false; else _ageTrails(W);  // ... unless a Field Advance, not a move, brought us here
               _burnTick();    // a full round elapsed — burning pieces tick down (and may burn up)
               if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
               _kingOnPlayerTurn(); // the King reacts to the enemy phase (sightings, shadows, danger)
@@ -8506,6 +8514,7 @@ function handleInventoryClick(cx, cy) {
         if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
         turn = W; aiThinking = false; selected = -1; validMoves = [];
         _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
+        _faSkipWhiteAge = false; // a rewind cancels any pending Field-Advance age skip with the turn it belonged to
         shopMode = false;
         stopWhiteTurnTimer(); startWhiteTurnTimer();
         draw();
