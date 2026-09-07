@@ -23,10 +23,36 @@ const SFX_PATH = "sounds/Used%20Sounds/";
 let _sfxCtx = null;
 const _sfxBuffers = {}; // name -> [AudioBuffer, ...]
 let _sfxMuted = false;
+let _musicMuted = false;
+let _sfxVol = 1;    // 0..1 multiplier over each clip's SFX_VOLUME (and the wind loop)
+let _musicVol = 1;  // 0..1 multiplier over MUSIC_VOLUME
 let _sfxUnlocked = false;
 
+// Persisted audio settings. tk_sfx_muted predates the music/SFX split (it silenced both), so
+// when tk_music_muted is absent we inherit it — an older save that muted everything stays muted.
+function _loadAudioPrefs() {
+  try {
+    const legacy = localStorage.getItem('tk_sfx_muted') === '1';
+    _sfxMuted = legacy;
+    const m = localStorage.getItem('tk_music_muted');
+    _musicMuted = (m == null) ? legacy : (m === '1');
+    const sv = parseFloat(localStorage.getItem('tk_sfx_vol'));
+    const mv = parseFloat(localStorage.getItem('tk_music_vol'));
+    if (isFinite(sv)) _sfxVol = Math.min(1, Math.max(0, sv));
+    if (isFinite(mv)) _musicVol = Math.min(1, Math.max(0, mv));
+  } catch (e) {}
+}
+function _saveAudioPrefs() {
+  try {
+    localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0');
+    localStorage.setItem('tk_music_muted', _musicMuted ? '1' : '0');
+    localStorage.setItem('tk_sfx_vol', String(_sfxVol));
+    localStorage.setItem('tk_music_vol', String(_musicVol));
+  } catch (e) {}
+}
+
 function _loadSfx() {
-  try { _sfxMuted = localStorage.getItem('tk_sfx_muted') === '1'; } catch (e) {}
+  _loadAudioPrefs();
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
   // 'interactive' requests the lowest output latency the platform allows (mobile defaults are laggy).
@@ -72,7 +98,7 @@ function _loadSfx() {
       _pauseMusic();
       if (_sfxCtx && _sfxCtx.state === 'running') _sfxCtx.suspend();
     } else {
-      if (_musicStarted && !_sfxMuted) _playMusic();
+      if (_musicStarted && !_musicMuted) _playMusic();
       if (_sfxCtx && _sfxUnlocked && !_sfxMuted && _sfxCtx.state === 'suspended') _sfxCtx.resume();
     }
   };
@@ -95,14 +121,28 @@ function _sfxUnlockCtx() {
   } catch (e) {}
 }
 
-// Flip sound on/off: SFX, the looping wind, and the music all follow this one flag.
-// Persisted, so the choice survives a reload. Live-only — _instant re-sim never plays audio.
-function toggleSfxMute() {
-  _sfxMuted = !_sfxMuted;
-  try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
-  if (_sfxMuted) { stopWindLoop(0.25); _pauseMusic(); }   // kill the wind loop too, not just new SFX
-  else if (_sfxUnlocked) _playMusic();                    // music follows the toggle back on
-  return _sfxMuted;
+// Audio settings — each applied live and persisted. SFX and music are independent:
+// _sfxMuted covers one-shot effects and the wind loop, _musicMuted covers the theme.
+// All live-only; the _instant re-sim never plays audio at all.
+function setSfxMuted(v) {
+  _sfxMuted = !!v;
+  if (_sfxMuted) stopWindLoop(0.25); // stop a loop already playing, not just bar the next one
+  _saveAudioPrefs();
+}
+function setMusicMuted(v) {
+  _musicMuted = !!v;
+  if (_musicMuted) _pauseMusic(); else if (_sfxUnlocked) _playMusic();
+  _saveAudioPrefs();
+}
+function setSfxVol(v) {
+  _sfxVol = Math.min(1, Math.max(0, v));
+  if (_windLoop) { try { _windLoop.gain.gain.value = WIND_VOLUME * _sfxVol; } catch (e) {} }
+  _saveAudioPrefs();
+}
+function setMusicVol(v) {
+  _musicVol = Math.min(1, Math.max(0, v));
+  if (_musicEl) { try { _musicEl.volume = MUSIC_VOLUME * _musicVol; } catch (e) {} }
+  _saveAudioPrefs();
 }
 
 function playSfx(name) {
@@ -114,7 +154,7 @@ function playSfx(name) {
   const src = _sfxCtx.createBufferSource();
   src.buffer = bufs[Math.floor(Math.random() * bufs.length)];
   const g = _sfxCtx.createGain();
-  g.gain.value = SFX_VOLUME[name] ?? 0.5;
+  g.gain.value = (SFX_VOLUME[name] ?? 0.5) * _sfxVol;
   src.connect(g); g.connect(_sfxCtx.destination);
   src.start(0);
 }
@@ -133,7 +173,7 @@ function startWindLoop(fadeSec = 3) {
   const g = _sfxCtx.createGain();
   const now = _sfxCtx.currentTime;
   g.gain.setValueAtTime(0.0001, now);
-  g.gain.linearRampToValueAtTime(WIND_VOLUME, now + fadeSec);
+  g.gain.linearRampToValueAtTime(WIND_VOLUME * _sfxVol, now + fadeSec);
   src.connect(g); g.connect(_sfxCtx.destination);
   src.start(0);
   _windLoop = { src, gain: g };
@@ -168,13 +208,13 @@ const MUSIC_VOLUME = 0.4;
 // was blocked/muted/unavailable — never rejects, so every caller (gesture retry, visibility, mute) is
 // safe. Only the gesture-retry path inspects the result.
 function _playMusic() {
-  if (_instant || _sfxMuted) return Promise.resolve(false);
+  if (_instant || _musicMuted) return Promise.resolve(false);
   if (!_musicEl) {
     try {
       _musicEl = new Audio(`music/main_theme.mp3?v=${VERSION}`);
       _musicEl.loop = true;
       _musicEl.preload = 'auto';
-      _musicEl.volume = MUSIC_VOLUME;
+      _musicEl.volume = MUSIC_VOLUME * _musicVol;
     } catch (e) { _musicEl = null; return Promise.resolve(false); }
   }
   return Promise.resolve(_musicEl.play()).then(() => { _musicStarted = true; return true; }, () => false);
@@ -2567,7 +2607,7 @@ function startWhiteTurnTimer() {
   const onExpire = () => {
     if (_gen !== _runGen) return;
     if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
-    if (anim || waveAnim || _skyDropAnims.length > 0 || isItemActive() || shopMode || replayMode) {
+    if (anim || waveAnim || _skyDropAnims.length > 0 || isItemActive() || shopMode || settingsOpen || replayMode) {
       _timerTimeoutId = setTimeout(onExpire, 100); // never time out mid-pipeline — same idle rule as taps
       return;
     }
@@ -7420,49 +7460,142 @@ function draw() {
   if (_instant) return; // headless re-sim: no rendering
   _uiButtons = [];      // rebuilt each frame as buttons draw; used for press hit-testing
   _drawScene();
-  _drawMuteButton();     // global sound toggle, drawn on every screen after the start tap
-  _drawPressedOverlay(); // darken whatever button is currently held down
+  _drawSettingsOverlay();  // modal audio panel, over whatever screen is beneath
+  _drawSettingsButton();   // gear, on every screen after the start tap
+  _drawPressedOverlay();   // darken whatever button is currently held down
   _drawVersionLabel();   // "v<n>" in the lower-left corner, on every screen
 }
-// --- Sound toggle: one global control, bottom-right, mirroring the version label ---
-// Drawn and hit-tested from the SAME predicate, so it can never become an invisible hotspot
-// (the failure mode that let a stale dialogue rect swallow the setup Back button in v702).
-const MUTE_BTN_SZ = 64;
-function _muteBtnVisible() { return spritesLoaded && _continued; } // start screen: first tap is the audio unlock
-function _muteBtnRect() {
-  return { x: canvas.width - 10 - MUTE_BTN_SZ, y: canvas.height - 10 - MUTE_BTN_SZ, w: MUTE_BTN_SZ, h: MUTE_BTN_SZ };
+// --- Settings: a gear in the bottom-right, mirroring the version label, plus a modal panel ---
+// The gear is drawn and hit-tested from the SAME predicate, so it can never linger as an invisible
+// hotspot (the failure mode that let a stale dialogue rect swallow the setup Back button in v702).
+// The panel is an overlay, not a screen: it paints over whatever is beneath and swallows all input,
+// so it opens from the menu, the setup screen, or mid-game with no screen-transition bookkeeping.
+let settingsOpen = false;
+let _sliderDrag = null; // 'music' | 'sfx' while a volume slider is being dragged
+const SETTINGS_BTN_SZ = 64;
+function _settingsBtnVisible() { return spritesLoaded && _continued && !settingsOpen; } // start screen: first tap is the audio unlock
+function _settingsBtnRect() {
+  return { x: canvas.width - 10 - SETTINGS_BTN_SZ, y: canvas.height - 10 - SETTINGS_BTN_SZ, w: SETTINGS_BTN_SZ, h: SETTINGS_BTN_SZ };
 }
-function _drawMuteButton() {
-  if (!_muteBtnVisible()) return;
-  const r = _muteBtnRect();
+function _drawSettingsButton() {
+  if (!_settingsBtnVisible()) return;
+  const r = _settingsBtnRect();
   _registerBtn(r.x, r.y, r.w, r.h, 10); // press-darkening, same as every other button
   ctx.save();
   ctx.fillStyle = "rgba(18,14,34,0.62)";
   ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "rgba(184,145,46,0.55)";
   ctx.beginPath(); ctx.roundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 10); ctx.stroke();
-  const cx = r.x + r.w / 2, cy = r.y + r.h / 2, s = r.w * 0.30;
-  ctx.fillStyle = _sfxMuted ? "rgba(240,230,200,0.45)" : "#f0e6c8";
-  ctx.beginPath();                       // speaker cone
-  ctx.moveTo(cx - s * 0.95, cy - s * 0.34);
-  ctx.lineTo(cx - s * 0.45, cy - s * 0.34);
-  ctx.lineTo(cx + s * 0.10, cy - s * 0.95);
-  ctx.lineTo(cx + s * 0.10, cy + s * 0.95);
-  ctx.lineTo(cx - s * 0.45, cy + s * 0.34);
-  ctx.lineTo(cx - s * 0.95, cy + s * 0.34);
-  ctx.closePath(); ctx.fill();
-  ctx.lineCap = "round";
-  if (_sfxMuted) {                       // red slash
-    ctx.lineWidth = 5; ctx.strokeStyle = "#d05050";
-    ctx.beginPath(); ctx.moveTo(cx - s * 0.95, cy - s * 0.95); ctx.lineTo(cx + s * 1.05, cy + s * 1.05); ctx.stroke();
-  } else {                               // two sound arcs
-    ctx.lineWidth = 4; ctx.strokeStyle = "#f0e6c8";
-    for (let k = 1; k <= 2; k++) {
-      ctx.beginPath(); ctx.arc(cx + s * 0.18, cy, s * (0.45 + 0.40 * k), -Math.PI / 3.2, Math.PI / 3.2); ctx.stroke();
-    }
+  // Gear: eight teeth around a thick ring (the ring stroke leaves the hub hollow).
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = r.w * 0.30;
+  ctx.translate(cx, cy);
+  ctx.fillStyle = "#f0e6c8";
+  for (let i = 0; i < 8; i++) {
+    ctx.save(); ctx.rotate(i * Math.PI / 4);
+    ctx.beginPath(); ctx.roundRect(-R * 0.17, -R * 1.34, R * 0.34, R * 0.52, 2); ctx.fill();
+    ctx.restore();
   }
+  ctx.strokeStyle = "#f0e6c8"; ctx.lineWidth = R * 0.52;
+  ctx.beginPath(); ctx.arc(0, 0, R * 0.72, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
 }
+
+// Panel geometry - one source of truth for drawing and hit-testing.
+function _settingsGeom() {
+  const w = BOARD_PX, x = MARGIN, h = 620;
+  const y = Math.round((canvas.height - h) / 2);
+  const btnW = 190, btnH = 62, pad = 50;
+  const musicY = y + 150, sfxY = musicY + 192;
+  return {
+    panel:       { x, y, w, h },
+    musicBtn:    { x: x + w - pad - btnW, y: musicY, w: btnW, h: btnH },
+    musicSlider: { x: x + pad, y: musicY + btnH + 22, w: w - pad * 2, h: 56 },
+    sfxBtn:      { x: x + w - pad - btnW, y: sfxY,   w: btnW, h: btnH },
+    sfxSlider:   { x: x + pad, y: sfxY + btnH + 22, w: w - pad * 2, h: 56 },
+    close:       { x: x + w / 2 - 130, y: y + h - 92, w: 260, h: 66 },
+    labelX: x + pad, musicLabelY: musicY + btnH / 2, sfxLabelY: sfxY + btnH / 2,
+  };
+}
+function _drawVolSlider(t, v, enabled) {
+  const trackH = 12, ty = t.y + t.h / 2 - trackH / 2;
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath(); ctx.roundRect(t.x, ty, t.w, trackH, 6); ctx.fill();
+  ctx.fillStyle = enabled ? "#c8a060" : "rgba(200,160,96,0.30)";
+  ctx.beginPath(); ctx.roundRect(t.x, ty, Math.max(trackH, t.w * v), trackH, 6); ctx.fill();
+  ctx.fillStyle = enabled ? "#f0e6c8" : "rgba(240,230,200,0.40)";
+  ctx.beginPath(); ctx.arc(t.x + t.w * v, t.y + t.h / 2, 17, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.stroke();
+}
+function _drawSettingsOverlay() {
+  if (!settingsOpen) return;
+  const g = _settingsGeom();
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.72)";                       // dim whatever is underneath
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(18,14,34,0.96)";
+  ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
+  ctx.beginPath(); ctx.roundRect(g.panel.x + 1.5, g.panel.y + 1.5, g.panel.w - 3, g.panel.h - 3, 13); ctx.stroke();
+
+  ctx.fillStyle = "#c8a060"; ctx.font = "58px Canterbury";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Settings", g.panel.x + g.panel.w / 2, g.panel.y + 60);
+  ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "28px Canterbury";
+  ctx.fillText("Audio", g.panel.x + g.panel.w / 2, g.panel.y + 104);
+
+  const row = (label, labelY, on, vol, btn, slider) => {
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#f0e6c8"; ctx.font = "40px Canterbury";
+    ctx.fillText(label, g.labelX, labelY);
+    ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "28px monospace";
+    ctx.fillText(Math.round(vol * 100) + "%", btn.x - 26, labelY);
+    drawUIButton(btn, { color: on ? "#2a6e3f" : "#5a5a6e", label: on ? "On" : "Off",
+                        radius: 10, font: "38px Canterbury", stroke: "rgba(255,255,255,0.25)" });
+    _drawVolSlider(slider, vol, on);
+  };
+  row("Music",         g.musicLabelY, !_musicMuted, _musicVol, g.musicBtn, g.musicSlider);
+  row("Sound Effects", g.sfxLabelY,   !_sfxMuted,   _sfxVol,   g.sfxBtn,   g.sfxSlider);
+
+  drawUIButton(g.close, { color: "#1a5a6e", label: "Close", radius: 12, font: "44px Canterbury",
+                          stroke: "rgba(255,255,255,0.3)" });
+  ctx.restore();
+  ctx.textBaseline = "alphabetic";
+}
+function handleSettingsClick(cx, cy) {
+  const g = _settingsGeom();
+  if (_inRect(cx, cy, g.musicBtn)) { playSfx('button'); setMusicMuted(!_musicMuted); draw(); return; }
+  if (_inRect(cx, cy, g.sfxBtn))   { setSfxMuted(!_sfxMuted); playSfx('button'); draw(); return; } // set first: unmuting is audible, muting silent
+  if (_inRect(cx, cy, g.close))    { playSfx('button'); settingsOpen = false; draw(); return; }
+  // Sliders are driven by the pointer handlers below; every other click the modal swallows.
+}
+// Volume sliders: grabbed on pointerdown (a tap anywhere on the track sets it) and tracked on move,
+// so they work with mouse and touch alike. Handled here rather than in the click handler so a drag
+// that ends off the track can never be mistaken for a click on something else.
+function _applySliderAt(which, cx) {
+  const g = _settingsGeom();
+  const t = which === 'music' ? g.musicSlider : g.sfxSlider;
+  const v = Math.min(1, Math.max(0, (cx - t.x) / t.w));
+  if (which === 'music') setMusicVol(v); else setSfxVol(v);
+  draw();
+}
+canvas.addEventListener("pointerdown", (e) => {
+  if (!settingsOpen) return;
+  const [cx, cy] = canvasCoords(e);
+  const g = _settingsGeom();
+  if (_inRect(cx, cy, g.musicSlider))    { _sliderDrag = 'music'; _applySliderAt('music', cx); }
+  else if (_inRect(cx, cy, g.sfxSlider)) { _sliderDrag = 'sfx';   _applySliderAt('sfx', cx); }
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!_sliderDrag) return;
+  _applySliderAt(_sliderDrag, canvasCoords(e)[0]);
+});
+const _endSliderDrag = () => {
+  if (!_sliderDrag) return;
+  const which = _sliderDrag; _sliderDrag = null;
+  if (which === 'sfx') playSfx('button'); // one preview click at the level just chosen
+};
+canvas.addEventListener("pointerup", _endSliderDrag);
+canvas.addEventListener("pointercancel", _endSliderDrag);
 function _drawVersionLabel() {
   ctx.save();
   ctx.font = "22px monospace";
@@ -8430,7 +8563,8 @@ canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
   if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
-  if (_muteBtnVisible() && _inRect(cx, cy, _muteBtnRect())) { toggleSfxMute(); playSfx('button'); draw(); return; }
+  if (settingsOpen) { handleSettingsClick(cx, cy); return; } // modal: swallows every other screen's input
+  if (_settingsBtnVisible() && _inRect(cx, cy, _settingsBtnRect())) { playSfx('button'); settingsOpen = true; draw(); return; }
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
   if (mainMenuOpen) { handleMainMenuClick(cx, cy); return; }
