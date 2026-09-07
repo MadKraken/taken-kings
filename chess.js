@@ -388,6 +388,71 @@ function _applyWhiteStretch(cv, maxL, curve = WHITE_LIGHTEN_CURVE) {
   c.putImageData(d, 0, 0);
   return cv; // same canvas object, so _contentBottom set by _makeTransparentBg survives
 }
+// One-pixel outline in the side's own colour: every fully transparent pixel that touches a drawn
+// one becomes an opaque border pixel. The mask is snapshotted from the ORIGINAL alpha before any
+// writing, so the outline can never seed itself and grow past a single pixel.
+// Eight-neighbour: a four-neighbour test leaves notches wherever the silhouette steps diagonally.
+// Sprite art carries a thin anti-aliased fringe (~200 partial-alpha pixels per frame), and any
+// non-zero alpha counts as drawn, so the outline hugs the outside of that fringe rather than eating
+// into it. No frame has opaque pixels within 2px of its outer ring, so nothing is clipped.
+const OUTLINE_RGB = { [W]: [255, 255, 255], [B]: [0, 0, 0], [N]: [140, 140, 140] };
+const OUTLINE_ALPHA_MIN = 1; // alpha >= this counts as drawn art
+// Border thickness in SOURCE pixels. The 240px-wide frames are drawn into a 120px tile, so source
+// pixels land at 0.5x — a 1px border renders as a half-pixel smudge. 2 gives a solid on-screen pixel.
+const OUTLINE_WIDTH = 2;
+function _outlineSprite(cv, rgb, width = OUTLINE_WIDTH) {
+  const c = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  const d = c.getImageData(0, 0, w, h), px = d.data;
+  const drawn = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) drawn[i] = px[i * 4 + 3] >= OUTLINE_ALPHA_MIN ? 1 : 0;
+  const [r, g, b] = rgb;
+  // One ring per pass. Each pass scans against the mask as it stood when the pass began and commits
+  // only afterwards, so a ring can never feed itself within its own pass — the result is exactly
+  // `width` rings thick rather than a flood fill.
+  for (let pass = 0; pass < width; pass++) {
+    const added = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (drawn[i]) continue;                     // art, or an earlier ring — never overwritten
+        let touches = false;
+        for (let dy = -1; dy <= 1 && !touches; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (drawn[ny * w + nx]) { touches = true; break; }
+          }
+        }
+        if (touches) added.push(i);
+      }
+    }
+    for (const i of added) { const o = i * 4; px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255; drawn[i] = 1; }
+  }
+  c.putImageData(d, 0, 0);
+  return cv;
+}
+// Outline every Warrior frame in its side's colour. Runs AFTER the white-point stretch so the
+// border colour is exactly the constant above rather than something the stretch has lifted.
+function _outlineAllSprites() {
+  for (const piece of Object.keys(ANIM_PIECE_NAMES)) {
+    for (const state of ['idle', 'active']) {
+      const n = ANIM_FRAME_COUNTS[state][piece];
+      for (let f = 1; f <= n; f++) {
+        const cv = spriteImages[`anim_${state}_${piece}_${f}`];
+        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[W]); // base package draws as White
+      }
+    }
+    for (const side of Object.keys(SIDE_ANIM_FOLDER)) {
+      for (let f = 1; f <= SIDE_ANIM_FRAMES; f++) {
+        const cv = spriteImages[`anim_s${side}_idle_${piece}_${f}`];
+        if (cv && cv.getContext) _outlineSprite(cv, OUTLINE_RGB[side]);
+      }
+    }
+  }
+}
+
 // Run once, after every sprite has loaded, so the reference frame is guaranteed to be present no
 // matter what order the images arrived in.
 function _normalizeWhiteSprites() {
@@ -818,6 +883,7 @@ function loadSprites() {
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
       _normalizeWhiteSprites(); // one white point per piece, applied to all its frames
+      _outlineAllSprites();     // then a 1px border per side, on top of the stretched art
       spritesLoaded = true;
       _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
