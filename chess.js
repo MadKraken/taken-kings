@@ -334,43 +334,49 @@ if (typeof window !== 'undefined') { window.addEventListener('pageshow', _onBeco
 
 // Strip the white background from a PNG via edge-flood-fill, preserving white fills
 // inside black outline boundaries. Called once per frame at load time.
-// Lift the White package art WITHOUT touching its blacks, stretching each sprite to its own white
-// point. The lift is weighted by the pixel's luminance relative to the sprite's brightest pixel:
+// Lift the White package art WITHOUT touching its blacks, stretching each PIECE to a single white
+// point. The lift is weighted by the pixel's luminance relative to that white point:
 //     w = (L / maxL)^curve      out = v + (255 - v) * w
-// so the brightest pixel lands exactly on pure white (w = 1) and pure black is untouched (w = 0).
-// The white point is per sprite, so a frame that already reaches 255 is left alone.
-// A flat brightness add would raise the linework to grey, and a gamma curve is worse still here:
-// it lifts shadows the most in relative terms, which is precisely what we want to avoid.
-// Applied AFTER the background cut — lightening first would push more of the sprite over the
-// near-white threshold and eat its lightest parts.
+// so a pixel at the white point lands on pure white (w = 1) and pure black is untouched (w = 0).
+//
+// The white point is measured ONCE per piece, from its idle frame 1, and the identical transform is
+// then applied to every other frame of that piece — idle and active alike. Measuring per frame made
+// the lift differ slightly between frames, which showed up as flicker across the idle animation and
+// as a colour jump when a piece became active.
+//
+// A flat brightness add would raise the linework to grey, and a gamma curve is worse still here: it
+// lifts shadows the most in relative terms, which is precisely what we want to avoid. Applied AFTER
+// the background cut — lightening first would push more of the sprite over the near-white threshold
+// and eat its lightest parts.
 const WHITE_LIGHTEN_CURVE = 1.35; // >1 holds the lift off the shadows longer
 // Fraction of opaque pixels allowed above the white point. 0 uses the single brightest pixel, which
 // one stray highlight can peg at 255 and turn the whole stretch into a no-op (the Bishop frames have
 // exactly one such pixel out of ~12,600). A small percentile ignores those outliers.
 const WHITE_LIGHTEN_OUTLIER = 0;
-const _WHITE_ANIM_KEY = /^anim_(idle|active)_/; // the base package; per-side art is anim_s<side>_...
-function _lightenSpriteCanvas(cv, curve = WHITE_LIGHTEN_CURVE, outlier = WHITE_LIGHTEN_OUTLIER) {
+function _spriteWhitePoint(cv, outlier = WHITE_LIGHTEN_OUTLIER) {
   const c = cv.getContext('2d');
-  const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
-  // White point: the brightest opaque pixel, or the (1 - outlier) quantile of them.
-  let maxL = 0;
+  const px = c.getImageData(0, 0, cv.width, cv.height).data;
   if (outlier > 0) {
     const ls = [];
     for (let i = 0; i < px.length; i += 4) {
       if (px[i + 3] < 8) continue;
       ls.push(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
     }
-    if (!ls.length) return cv;
+    if (!ls.length) return 0;
     ls.sort((a, b) => a - b);
-    maxL = ls[Math.min(ls.length - 1, Math.floor((1 - outlier) * ls.length))];
-  } else {
-    for (let i = 0; i < px.length; i += 4) {
-      if (px[i + 3] < 8) continue;
-      const L = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-      if (L > maxL) maxL = L;
-    }
+    return ls[Math.min(ls.length - 1, Math.floor((1 - outlier) * ls.length))];
   }
-  if (maxL <= 0 || maxL >= 255) return cv; // already reaches white — nothing to stretch
+  let maxL = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] < 8) continue;
+    const L = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+    if (L > maxL) maxL = L;
+  }
+  return maxL;
+}
+function _applyWhiteStretch(cv, maxL, curve = WHITE_LIGHTEN_CURVE) {
+  const c = cv.getContext('2d');
+  const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
   for (let i = 0; i < px.length; i += 4) {
     if (px[i + 3] === 0) continue; // fully transparent — nothing to lift
     const L = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / maxL;
@@ -381,6 +387,23 @@ function _lightenSpriteCanvas(cv, curve = WHITE_LIGHTEN_CURVE, outlier = WHITE_L
   }
   c.putImageData(d, 0, 0);
   return cv; // same canvas object, so _contentBottom set by _makeTransparentBg survives
+}
+// Run once, after every sprite has loaded, so the reference frame is guaranteed to be present no
+// matter what order the images arrived in.
+function _normalizeWhiteSprites() {
+  for (const piece of Object.keys(ANIM_PIECE_NAMES)) {
+    const ref = spriteImages[`anim_idle_${piece}_1`];
+    if (!ref || !ref.getContext) continue;
+    const maxL = _spriteWhitePoint(ref);
+    if (maxL <= 0 || maxL >= 255) continue; // frame 1 already reaches white — leave the piece alone
+    for (const state of ['idle', 'active']) {
+      const n = ANIM_FRAME_COUNTS[state][piece];
+      for (let f = 1; f <= n; f++) {
+        const cv = spriteImages[`anim_${state}_${piece}_${f}`];
+        if (cv && cv.getContext) _applyWhiteStretch(cv, maxL);
+      }
+    }
+  }
 }
 
 function _makeTransparentBg(img) {
@@ -794,6 +817,7 @@ function loadSprites() {
     }
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
+      _normalizeWhiteSprites(); // one white point per piece, applied to all its frames
       spritesLoaded = true;
       _conquestFramesReady = true;
       if (_splashRafId) { cancelAnimationFrame(_splashRafId); _splashRafId = null; }
@@ -804,11 +828,7 @@ function loadSprites() {
   for (const [key, src, needsBg] of spriteList) {
     const img = new Image();
     let _tries = 0;
-    img.onload = () => {
-      let out = needsBg ? _makeTransparentBg(img) : null;
-      if (out && _WHITE_ANIM_KEY.test(key)) out = _lightenSpriteCanvas(out); // White Warriors only
-      done(key, img, out);
-    };
+    img.onload = () => done(key, img, needsBg ? _makeTransparentBg(img) : null);
     // Retry a failed fetch (cache-busted) before giving up — a cold first load of a new version pulls
     // ~90 large conquest frames at once and an individual request can drop under memory/network
     // pressure. Without the retry that frame becomes null, and the intro used to freeze on it.
