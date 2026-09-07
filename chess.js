@@ -334,22 +334,47 @@ if (typeof window !== 'undefined') { window.addEventListener('pageshow', _onBeco
 
 // Strip the white background from a PNG via edge-flood-fill, preserving white fills
 // inside black outline boundaries. Called once per frame at load time.
-// Lift the White package art WITHOUT touching its blacks. Each pixel's lift is weighted by its own
-// luminance, so a pure-black outline (L=0) is left exactly as it was while midtones and highlights
-// open up. A flat brightness add would raise the linework to grey, and a gamma curve is worse still
-// for this: it lifts shadows the most in relative terms, which is precisely what we want to avoid.
+// Lift the White package art WITHOUT touching its blacks, stretching each sprite to its own white
+// point. The lift is weighted by the pixel's luminance relative to the sprite's brightest pixel:
+//     w = (L / maxL)^curve      out = v + (255 - v) * w
+// so the brightest pixel lands exactly on pure white (w = 1) and pure black is untouched (w = 0).
+// The white point is per sprite, so a frame that already reaches 255 is left alone.
+// A flat brightness add would raise the linework to grey, and a gamma curve is worse still here:
+// it lifts shadows the most in relative terms, which is precisely what we want to avoid.
 // Applied AFTER the background cut — lightening first would push more of the sprite over the
 // near-white threshold and eat its lightest parts.
-const WHITE_LIGHTEN = 0.30;       // 0 = off; fraction of the way to white at full luminance
 const WHITE_LIGHTEN_CURVE = 1.35; // >1 holds the lift off the shadows longer
+// Fraction of opaque pixels allowed above the white point. 0 uses the single brightest pixel, which
+// one stray highlight can peg at 255 and turn the whole stretch into a no-op (the Bishop frames have
+// exactly one such pixel out of ~12,600). A small percentile ignores those outliers.
+const WHITE_LIGHTEN_OUTLIER = 0;
 const _WHITE_ANIM_KEY = /^anim_(idle|active)_/; // the base package; per-side art is anim_s<side>_...
-function _lightenSpriteCanvas(cv, amount = WHITE_LIGHTEN, curve = WHITE_LIGHTEN_CURVE) {
+function _lightenSpriteCanvas(cv, curve = WHITE_LIGHTEN_CURVE, outlier = WHITE_LIGHTEN_OUTLIER) {
   const c = cv.getContext('2d');
   const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
+  // White point: the brightest opaque pixel, or the (1 - outlier) quantile of them.
+  let maxL = 0;
+  if (outlier > 0) {
+    const ls = [];
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < 8) continue;
+      ls.push(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+    }
+    if (!ls.length) return cv;
+    ls.sort((a, b) => a - b);
+    maxL = ls[Math.min(ls.length - 1, Math.floor((1 - outlier) * ls.length))];
+  } else {
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < 8) continue;
+      const L = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      if (L > maxL) maxL = L;
+    }
+  }
+  if (maxL <= 0 || maxL >= 255) return cv; // already reaches white — nothing to stretch
   for (let i = 0; i < px.length; i += 4) {
     if (px[i + 3] === 0) continue; // fully transparent — nothing to lift
-    const L = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / 255;
-    const w = amount * Math.pow(L, curve); // 0 at black, so blacks stay black
+    const L = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / maxL;
+    const w = Math.min(1, Math.pow(L, curve)); // 1 at the white point, 0 at black
     px[i]     += (255 - px[i])     * w;
     px[i + 1] += (255 - px[i + 1]) * w;
     px[i + 2] += (255 - px[i + 2]) * w;
