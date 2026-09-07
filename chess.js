@@ -1,4 +1,4 @@
-﻿const VERSION = "713";
+﻿const VERSION = "714";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6585,6 +6585,35 @@ function _kingOnPlayerTurn() {
   }
 }
 
+// The King's voice belongs to a standard White King. When none is left but a White Checkers King
+// still stands, the Checkers King takes the dialogue box — portrait and all — and speaks in glyphs
+// nobody can read. Render-only: evaluated at draw time from the board, never stored.
+function _checkersKingSpeaks() {
+  let king = false, ck = false;
+  for (let i = 0; i < 64; i++) {
+    if (sides[i] !== W) continue;
+    if (board[i] === KING) king = true; else if (board[i] === CHECKERS_KING) ck = true;
+  }
+  return !king && ck;
+}
+// Fixed substitution into the Unicode Dingbats block (the standardised Zapf Dingbats — the closest
+// thing to Wingdings that renders without a font): the same letter always becomes the same glyph, so
+// the text holds still across frames and even looks like a cipher, but stays unreadable. Whitespace
+// is preserved so word-wrap and pagination keep working on the transformed text.
+const _GLYPHS = "✠✡✢✣✤✥✦✧✩✪✫✬✭✮✯✰✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❄❅❆❇❈❉❊❋☠☗⚔⚑⚚⚝❖✙";
+function _garbleRemark(text) {
+  let out = "";
+  for (const ch of String(text)) {
+    if (/\s/.test(ch)) { out += ch; continue; }
+    const c = ch.toLowerCase().charCodeAt(0);
+    let k;
+    if (c >= 97 && c <= 122) k = c - 97;          // letters: a..z -> first 26 glyphs
+    else if (c >= 48 && c <= 57) k = 26 + (c - 48); // digits
+    else k = (c * 7) % _GLYPHS.length;             // punctuation and anything else
+    out += _GLYPHS[k % _GLYPHS.length];
+  }
+  return out;
+}
 function drawKingDialogue() {
   // Shown during item-targeting too, so the King's remark on a just-selected item is visible. Its box
   // (COUNTDOWN_Y+30 downward) sits below the item mode's Cancel/Discard buttons — no overlap.
@@ -6608,13 +6637,23 @@ function drawKingDialogue() {
   // Portrait (circular, center-cropped so it never stretches)
   const pad = 14, picSz = Math.min(h - pad * 2, 150);
   const pcx = x + pad + picSz / 2, pcy = y + h / 2;
-  const img = spriteImages['king_profile'];
+  const ckSpeaks = _checkersKingSpeaks();
+  const img = ckSpeaks ? spriteImages[`${W}_${CHECKERS_KING}`] : spriteImages['king_profile'];
   if (img && img.complete && img.naturalWidth) {
     ctx.save();
     ctx.beginPath(); ctx.arc(pcx, pcy, picSz / 2, 0, Math.PI * 2); ctx.clip();
-    const iw = img.naturalWidth, ih = img.naturalHeight, scale = Math.max(picSz / iw, picSz / ih);
-    const sw = picSz / scale, sh = picSz / scale;
-    ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, pcx - picSz / 2, pcy - picSz / 2, picSz, picSz);
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if (ckSpeaks) {
+      // Whole piece, contained in the circle: the King profile is a bust, but this is a full sprite —
+      // centre-cropping it would show a torso with no crown.
+      ctx.fillStyle = "rgba(10,8,20,0.9)"; ctx.fillRect(pcx - picSz / 2, pcy - picSz / 2, picSz, picSz);
+      const fit = Math.min(picSz / iw, picSz / ih) * 0.9, dw = iw * fit, dh = ih * fit;
+      ctx.drawImage(img, pcx - dw / 2, pcy - dh / 2, dw, dh);
+    } else {
+      const scale = Math.max(picSz / iw, picSz / ih);
+      const sw = picSz / scale, sh = picSz / scale;
+      ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, pcx - picSz / 2, pcy - picSz / 2, picSz, picSz);
+    }
     ctx.restore();
     ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.95)";
     ctx.beginPath(); ctx.arc(pcx, pcy, picSz / 2, 0, Math.PI * 2); ctx.stroke();
@@ -6626,7 +6665,7 @@ function drawKingDialogue() {
   ctx.fillStyle = "#f0e6c8";
   ctx.textAlign = "left"; ctx.textBaseline = "top";
   const lineH = 40;
-  const words = String(_kingRemark).split(/\s+/);
+  const words = (ckSpeaks ? _garbleRemark(_kingRemark) : String(_kingRemark)).split(/\s+/);
   const lines = []; let cur = "";
   for (const word of words) {
     const test = cur ? cur + " " + word : word;
