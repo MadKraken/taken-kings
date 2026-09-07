@@ -2125,6 +2125,7 @@ function _buildReplaySnapshot() {
     score, gold, turn,
     playerDead: {...playerDead}, enemyDead: {...enemyDead},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
+    merchantOffers: [...merchantOffers], merchantSold: [...merchantSold], merchantRerollCountdown,
     elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], burning: [...burning],
     fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
     waterTrails: [...waterTrails].map(([k, v]) => [k, { ...v }]),
@@ -2150,6 +2151,12 @@ function applyReplaySnapshot(snap) {
   spawnCount = snap.spawnCount; leapCount = snap.leapCount;
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
   if (snap.merchantQueued !== undefined) { merchantQueued = snap.merchantQueued; merchantQueuedCol = snap.merchantQueuedCol ?? -1; }
+  // Shop wares travel with the snapshot so a rewind that refunds a purchase also un-sells it.
+  if (snap.merchantOffers) {
+    merchantOffers = [...snap.merchantOffers];
+    merchantSold = snap.merchantSold ? [...snap.merchantSold] : [false, false, false];
+    if (snap.merchantRerollCountdown != null) merchantRerollCountdown = snap.merchantRerollCountdown;
+  }
   if (snap.elements) elements.splice(0, 64, ...snap.elements); else elements.fill(0);
   if (snap.statuses) statuses.splice(0, 64, ...snap.statuses); else statuses.fill(0);
   if (snap.attacks) attacks.splice(0, 64, ...snap.attacks); else attacks.fill(1);
@@ -4743,7 +4750,10 @@ function elementizerCanAffect(i, elem, mystery) {
 }
 
 function _hasRewinder() {
-  return inventory.indexOf(ITEM_REWINDER) >= 0 && _turnStartSnapIndices.length >= 2;
+  // >= 1, matching the manual-use path: the last entry is the current turn's start, which is a valid
+  // restore target even on turn 1 (index 0 = the opening board). It was >= 2, so a King lost to
+  // Black's very first reply got no offer despite a Rewinder in hand.
+  return inventory.indexOf(ITEM_REWINDER) >= 0 && _turnStartSnapIndices.length >= 1;
 }
 
 function _triggerGameOver(msg) {
@@ -6747,7 +6757,12 @@ function _rewinderOfferAccept() {
   if (rSlot >= 0) inventory[rSlot] = ITEM_NONE;
   turn = W; aiThinking = false; selected = -1; validMoves = [];
   _resetTurnState(); _resetTurnCounters(); // rewound to turn start — discard the aborted turn's counters
+  _faSkipWhiteAge = false; // a rewind cancels any pending Field-Advance age skip with the turn it belonged to
   shopMode = false; gameOver = false; gameMsg = "";
+  // Restart the turn clock. The hand-back that armed this offer returned early, BEFORE its
+  // startWhiteTurnTimer, so without this the rewound turn ran with no clock at all in Timed mode —
+  // one free untimed turn on the 15s board. (gameOver must already be false, or the start is refused.)
+  stopWhiteTurnTimer(); startWhiteTurnTimer();
   draw();
 }
 
@@ -8498,7 +8513,9 @@ function handleInventoryClick(cx, cy) {
       // Rewinder: immediate action, no board-interaction mode
       if (item === ITEM_REWINDER) {
         if (_turnStartSnapIndices.length < 1) return true; // nothing to undo yet
-        _logInput({ t: 'rw' }); // Phase-3 validator rewinds its sim + RNG to THIS turn's start, dropping the aborted turn's inputs
+        _logInput({ t: 'rw' }); // The validator replays this same handler. The RNG is deliberately NOT rewound (live and
+                                // re-sim agree on that), so the redone turn draws fresh randomness rather than replaying
+                                // the aborted turn's — you can't use a Rewinder to re-roll a known outcome.
         // Restore the START OF THE CURRENT TURN — undo just this turn's actions (matches the death-save
         // Rewinder). Popping to the PRIOR turn start over-rewound a full round: it brought back pieces
         // the bomb had killed but dropped anything acquired since (e.g. a Bomb bought/found last turn).
