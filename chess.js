@@ -7541,8 +7541,14 @@ function _drawSettingsOverlay() {
   if (!settingsOpen) return;
   const g = _settingsGeom();
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.55)";                       // grey the game out, but keep it readable
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Grey the game out, but keep it readable — and leave the status header (logo, Taken Kings /
+  // Gold, and the turn timer) at full brightness so the running clock is unmistakable. Everything
+  // the header draws sits inside the top LOGO_H band, so the scrim simply starts below it.
+  // The menu screens put no HUD in that band, so there we dim the full canvas and avoid a seam.
+  const _headerLive = !(mainMenuOpen || achievementsOpen || leaderboardOpen);
+  const _dimTop = _headerLive ? LOGO_H : 0;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, _dimTop, canvas.width, canvas.height - _dimTop);
   ctx.fillStyle = "rgba(18,14,34,0.96)";
   ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
