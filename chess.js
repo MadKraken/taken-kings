@@ -95,6 +95,16 @@ function _sfxUnlockCtx() {
   } catch (e) {}
 }
 
+// Flip sound on/off: SFX, the looping wind, and the music all follow this one flag.
+// Persisted, so the choice survives a reload. Live-only — _instant re-sim never plays audio.
+function toggleSfxMute() {
+  _sfxMuted = !_sfxMuted;
+  try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
+  if (_sfxMuted) { stopWindLoop(0.25); _pauseMusic(); }   // kill the wind loop too, not just new SFX
+  else if (_sfxUnlocked) _playMusic();                    // music follows the toggle back on
+  return _sfxMuted;
+}
+
 function playSfx(name) {
   if (_instant) return; // headless re-sim: no audio
   if (_sfxMuted || !_sfxUnlocked || !_sfxCtx) return;
@@ -7410,8 +7420,48 @@ function draw() {
   if (_instant) return; // headless re-sim: no rendering
   _uiButtons = [];      // rebuilt each frame as buttons draw; used for press hit-testing
   _drawScene();
+  _drawMuteButton();     // global sound toggle, drawn on every screen after the start tap
   _drawPressedOverlay(); // darken whatever button is currently held down
   _drawVersionLabel();   // "v<n>" in the lower-left corner, on every screen
+}
+// --- Sound toggle: one global control, bottom-right, mirroring the version label ---
+// Drawn and hit-tested from the SAME predicate, so it can never become an invisible hotspot
+// (the failure mode that let a stale dialogue rect swallow the setup Back button in v702).
+const MUTE_BTN_SZ = 64;
+function _muteBtnVisible() { return spritesLoaded && _continued; } // start screen: first tap is the audio unlock
+function _muteBtnRect() {
+  return { x: canvas.width - 10 - MUTE_BTN_SZ, y: canvas.height - 10 - MUTE_BTN_SZ, w: MUTE_BTN_SZ, h: MUTE_BTN_SZ };
+}
+function _drawMuteButton() {
+  if (!_muteBtnVisible()) return;
+  const r = _muteBtnRect();
+  _registerBtn(r.x, r.y, r.w, r.h, 10); // press-darkening, same as every other button
+  ctx.save();
+  ctx.fillStyle = "rgba(18,14,34,0.62)";
+  ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = "rgba(184,145,46,0.55)";
+  ctx.beginPath(); ctx.roundRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 10); ctx.stroke();
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2, s = r.w * 0.30;
+  ctx.fillStyle = _sfxMuted ? "rgba(240,230,200,0.45)" : "#f0e6c8";
+  ctx.beginPath();                       // speaker cone
+  ctx.moveTo(cx - s * 0.95, cy - s * 0.34);
+  ctx.lineTo(cx - s * 0.45, cy - s * 0.34);
+  ctx.lineTo(cx + s * 0.10, cy - s * 0.95);
+  ctx.lineTo(cx + s * 0.10, cy + s * 0.95);
+  ctx.lineTo(cx - s * 0.45, cy + s * 0.34);
+  ctx.lineTo(cx - s * 0.95, cy + s * 0.34);
+  ctx.closePath(); ctx.fill();
+  ctx.lineCap = "round";
+  if (_sfxMuted) {                       // red slash
+    ctx.lineWidth = 5; ctx.strokeStyle = "#d05050";
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.95, cy - s * 0.95); ctx.lineTo(cx + s * 1.05, cy + s * 1.05); ctx.stroke();
+  } else {                               // two sound arcs
+    ctx.lineWidth = 4; ctx.strokeStyle = "#f0e6c8";
+    for (let k = 1; k <= 2; k++) {
+      ctx.beginPath(); ctx.arc(cx + s * 0.18, cy, s * (0.45 + 0.40 * k), -Math.PI / 3.2, Math.PI / 3.2); ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 function _drawVersionLabel() {
   ctx.save();
@@ -8380,6 +8430,7 @@ canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
   if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
+  if (_muteBtnVisible() && _inRect(cx, cy, _muteBtnRect())) { toggleSfxMute(); playSfx('button'); draw(); return; }
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
   if (mainMenuOpen) { handleMainMenuClick(cx, cy); return; }
