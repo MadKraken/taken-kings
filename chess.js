@@ -2607,11 +2607,18 @@ function startWhiteTurnTimer() {
   const onExpire = () => {
     if (_gen !== _runGen) return;
     if (!timedMode || turn !== W || gameOver || gamePhase !== 'playing') return;
-    if (anim || waveAnim || _skyDropAnims.length > 0 || isItemActive() || shopMode || settingsOpen || replayMode) {
+    if (anim || waveAnim || _skyDropAnims.length > 0 || isItemActive() || replayMode) {
       _timerTimeoutId = setTimeout(onExpire, 100); // never time out mid-pipeline — same idle rule as taps
       return;
     }
     stopWhiteTurnTimer();
+    // Time up with the Merchant's shop open: the shop closes itself and its continuation
+    // (endWhiteTurn) ends the turn — the move onto the Merchant was already made, so there is no
+    // pending action to forfeit. Deliberately logs NO 'to': the re-sim already closes a still-open
+    // shop before the next input and at run end, so the sequences match either way, and a 'to' here
+    // would make the server run endWhiteTurn twice for the one turn.
+    if (shopMode) { closeShop(); return; }
+    // Settings is NOT in the guard above: the panel may stay open and the game plays on beneath it.
     _logInput({ t: 'to' }); // timeout ends the turn — a real state change the validator must replay
     _timedOutThisRun = true; // a turn ran out of time (for the no-timeout achievement)
     selected = -1; validMoves = [];
