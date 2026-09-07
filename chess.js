@@ -7541,9 +7541,11 @@ function _drawVolSlider(t, v, enabled) {
   const trackH = 12, ty = t.y + t.h / 2 - trackH / 2;
   ctx.fillStyle = "rgba(255,255,255,0.18)";
   ctx.beginPath(); ctx.roundRect(t.x, ty, t.w, trackH, 6); ctx.fill();
-  ctx.fillStyle = enabled ? "#c8a060" : "rgba(200,160,96,0.30)";
+  // Disabled uses solid greys, not transparency. A translucent knob let the filled track's end
+  // show through it, so the line appeared to run into the middle of the knob.
+  ctx.fillStyle = enabled ? "#c8a060" : "#55556a";
   ctx.beginPath(); ctx.roundRect(t.x, ty, Math.max(trackH, t.w * v), trackH, 6); ctx.fill();
-  ctx.fillStyle = enabled ? "#f0e6c8" : "rgba(240,230,200,0.40)";
+  ctx.fillStyle = enabled ? "#f0e6c8" : "#9a9aab";
   ctx.beginPath(); ctx.arc(t.x + t.w * v, t.y + t.h / 2, 17, 0, Math.PI * 2); ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.stroke();
 }
