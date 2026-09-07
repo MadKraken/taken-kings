@@ -1,4 +1,4 @@
-﻿const VERSION = "711";
+﻿const VERSION = "712";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -334,6 +334,30 @@ if (typeof window !== 'undefined') { window.addEventListener('pageshow', _onBeco
 
 // Strip the white background from a PNG via edge-flood-fill, preserving white fills
 // inside black outline boundaries. Called once per frame at load time.
+// Lift the White package art WITHOUT touching its blacks. Each pixel's lift is weighted by its own
+// luminance, so a pure-black outline (L=0) is left exactly as it was while midtones and highlights
+// open up. A flat brightness add would raise the linework to grey, and a gamma curve is worse still
+// for this: it lifts shadows the most in relative terms, which is precisely what we want to avoid.
+// Applied AFTER the background cut — lightening first would push more of the sprite over the
+// near-white threshold and eat its lightest parts.
+const WHITE_LIGHTEN = 0.30;       // 0 = off; fraction of the way to white at full luminance
+const WHITE_LIGHTEN_CURVE = 1.35; // >1 holds the lift off the shadows longer
+const _WHITE_ANIM_KEY = /^anim_(idle|active)_/; // the base package; per-side art is anim_s<side>_...
+function _lightenSpriteCanvas(cv, amount = WHITE_LIGHTEN, curve = WHITE_LIGHTEN_CURVE) {
+  const c = cv.getContext('2d');
+  const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue; // fully transparent — nothing to lift
+    const L = (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]) / 255;
+    const w = amount * Math.pow(L, curve); // 0 at black, so blacks stay black
+    px[i]     += (255 - px[i])     * w;
+    px[i + 1] += (255 - px[i + 1]) * w;
+    px[i + 2] += (255 - px[i + 2]) * w;
+  }
+  c.putImageData(d, 0, 0);
+  return cv; // same canvas object, so _contentBottom set by _makeTransparentBg survives
+}
+
 function _makeTransparentBg(img) {
   const oc = document.createElement('canvas');
   const w = img.naturalWidth, h = img.naturalHeight;
@@ -755,7 +779,11 @@ function loadSprites() {
   for (const [key, src, needsBg] of spriteList) {
     const img = new Image();
     let _tries = 0;
-    img.onload = () => done(key, img, needsBg ? _makeTransparentBg(img) : null);
+    img.onload = () => {
+      let out = needsBg ? _makeTransparentBg(img) : null;
+      if (out && _WHITE_ANIM_KEY.test(key)) out = _lightenSpriteCanvas(out); // White Warriors only
+      done(key, img, out);
+    };
     // Retry a failed fetch (cache-busted) before giving up — a cold first load of a new version pulls
     // ~90 large conquest frames at once and an individual request can drop under memory/network
     // pressure. Without the retry that frame becomes null, and the intro used to freeze on it.
