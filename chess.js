@@ -440,6 +440,35 @@ function _outlineSprite(cv, rgb, width) {
   c.putImageData(d, 0, 0);
   return cv;
 }
+// Grey Warriors carry no pure black at all: each Neutral frame is remapped from [0,255] onto
+// [GREY_BLACK_FLOOR,255], so its darkest pixel lands on a dark grey, white stays white, and the
+// relative tonal structure in between is preserved. Their art is genuinely greyscale (zero
+// saturated pixels measured), so remapping each channel by the same line is hue-neutral.
+// This is a large change by design: the Neutral frames are 35-47% pure black, and that whole mass
+// becomes the floor tone. Runs BEFORE the outline pass, so the border colour is untouched.
+const GREY_BLACK_FLOOR = 64;
+function _liftGreyBlacks(cv, floor = GREY_BLACK_FLOOR) {
+  const c = cv.getContext('2d');
+  const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
+  const k = (255 - floor) / 255;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue;      // transparent — leave alone
+    px[i]     = floor + px[i]     * k;
+    px[i + 1] = floor + px[i + 1] * k;
+    px[i + 2] = floor + px[i + 2] * k;
+  }
+  c.putImageData(d, 0, 0);
+  return cv;
+}
+function _liftAllGreySprites() {
+  for (const piece of Object.keys(ANIM_PIECE_NAMES)) {
+    for (let f = 1; f <= SIDE_ANIM_FRAMES; f++) {
+      const cv = spriteImages[`anim_s${N}_idle_${piece}_${f}`];
+      if (cv && cv.getContext) _liftGreyBlacks(cv);
+    }
+  }
+}
+
 // Outline every Warrior frame in its side's colour. Runs AFTER the white-point stretch so the
 // border colour is exactly the constant above rather than something the stretch has lifted.
 function _outlineAllSprites() {
@@ -890,6 +919,7 @@ function loadSprites() {
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
       _normalizeWhiteSprites(); // one white point per piece, applied to all its frames
+      _liftAllGreySprites();    // Grey side loses its pure blacks before it gets a border
       _outlineAllSprites();     // then a 1px border per side, on top of the stretched art
       spritesLoaded = true;
       _conquestFramesReady = true;
