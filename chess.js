@@ -991,13 +991,11 @@ let _turnBombFromSquare = false;    // a Bomb triggered by moving onto a board B
 let _turnSells = 0;                 // items sold this turn
 let _bombSource = '';               // 'inv' | 'square' — source of the currently-detonating bomb
 let _turnRecruited = false;         // recruited a Grey this turn (for the 3-in-a-row streak)
-let _turnFastBounced = new Set();   // squares a Fast White piece bounced off (shield-damaged) this turn
 // Event flags / streaks (per run unless noted):
 let _tookShieldedKingWithSword = false; // 30
 let _pushedBlackIntoVoidByWater = false; // 28
 let _pushedBlackIntoBombByWater = false; // 29
 let _waterShoveActive = false;      // a water-wave shove is currently applying (attributes shoves to a Water piece)
-let _tookShieldedWithDoubleHit = false; // 40
 let _recruitedWithCKing = false;    // 33
 let _recruitStreak = 0;             // consecutive turns recruiting a Grey (32)
 let _bombStreak = 0;                // consecutive turns taking ≥1 Black with a Bomb (49)
@@ -1008,7 +1006,7 @@ let _whiteLostSinceAdvance = false; // a White piece died since the previous Fie
 function _resetTurnCounters() {
   _turnKingsTaken = 0; _turnActorTakes = 0; _turnActorType = NONE; _turnActorBuffed = false;
   _turnBombKills = 0; _turnBombFromInv = false; _turnBombFromSquare = false; _turnSells = 0;
-  _turnRecruited = false; _turnFastBounced = new Set();
+  _turnRecruited = false;
 }
 // White's turn is over (via move, Team Advance, or Field Advance): fold this turn's
 // activity into the streak trackers, then clear the per-turn counters.
@@ -1177,14 +1175,12 @@ function _elbowEligible(fromI, m) {
 }
 // Legal destinations for leg 2: the mover is placed on the elbow (displacing whatever an Air mover
 // is passing over), the origin is vacated, legalMoves is asked, and the board is put back exactly.
-// Excluded: returning to the origin, and every destination that would END in a bounce -- the
-// Merchant, a shielded enemy, a Grey a King would recruit -- because a bounce off the last leg has
-// no well-defined resting square. Those are engaged with a direct single move instead.
+// Only returning to the origin is excluded. A leg-2 destination may be a bounce (a shielded enemy,
+// the Merchant, a Grey a King recruits): the attacker rebounds along leg 2 -- see _bounceSquare.
 function _legTwoMoves(fromI, elbow) {
   const arrs = _squareArrays();
   const sFrom = arrs.map(a => a[fromI]), sElb = arrs.map(a => a[elbow]);
   const eFrom = effectOrders[fromI], eElb = effectOrders[elbow];
-  const p = board[fromI], sd = sides[fromI], atk = attacks[fromI];
   const prevFirst = _bKingFirstMove; _bKingFirstMove = false; // leg 2 never transits through check
   let moves;
   try {
@@ -1196,11 +1192,7 @@ function _legTwoMoves(fromI, elbow) {
     effectOrders[fromI] = eFrom; effectOrders[elbow] = eElb;
     _bKingFirstMove = prevFirst;
   }
-  const foe = sd === W ? B : W;
-  return moves.filter(m =>
-    m !== fromI && m !== merchantIdx &&
-    !(sides[m] === foe && health[m] > atk) &&
-    !(sd === W && sides[m] === N && (p === KING || p === CHECKERS_KING)));
+  return moves.filter(m => m !== fromI);
 }
 // The leg-2 list if `m` works as an elbow for `fromI`, else null.
 function _tryElbow(fromI, m) {
@@ -2719,7 +2711,7 @@ function initBoard() {
   _recruitedCManThisRun = false; _recruitedCKingThisRun = false; _maxGoldThisRun = 0;
   _usedItemThisRun = false; _had4KingsAt25 = false; _timedOutThisRun = false; _startCounts = {};
   _tookShieldedKingWithSword = false; _pushedBlackIntoVoidByWater = false; _pushedBlackIntoBombByWater = false;
-  _tookShieldedWithDoubleHit = false; _recruitedWithCKing = false; _recruitStreak = 0; _bombStreak = 0;
+  _recruitedWithCKing = false; _recruitStreak = 0; _bombStreak = 0;
   _flawlessAdvances = 0; _lastAdvanceScore = 0; _whiteLostSinceAdvance = false;
   _resetTurnCounters();
   chestSpaces = new Set();
@@ -3401,10 +3393,22 @@ function legalMoves(x, y) {
 
 // Applies shield-bounce state for atkI→defI (must already satisfy health[defI]>1 check).
 // Returns { mode:'attacker-bounce', bounceI } (Earth no longer "bonks" — it bounces like any attacker).
-function applyShieldBounceState(atkI, defI, p) {
+// Where an attacker comes to rest after bouncing off `toI`. The rebound follows the LAST leg: for
+// a two-leg move that is the elbow -> toI leg, so a piece sliding up leg 2 bounces back down it.
+// Sliders settle on the last empty square of that approach (calcBouncePos), which also copes with an
+// Air slider that phased through pieces; non-sliders return to the leg's origin -- the elbow. If
+// that square is occupied (an Air non-slider that elbowed over a piece) the attacker falls back to
+// the square it physically left, which is still vacant because the move never completed.
+function _bounceSquare(fromI, toI, p, viaI = -1) {
+  const legFrom = viaI >= 0 ? viaI : fromI;
+  let b = calcBouncePos(legFrom, toI, p);
+  if (b !== fromI && board[b] !== NONE) b = fromI;
+  return b;
+}
+function applyShieldBounceState(atkI, defI, p, viaI = -1) {
   health[defI]--;
   if (health[defI] < 2) _removeEffect(defI, 'hlt'); // shield consumed — drop the badge
-  const bounceI = calcBouncePos(atkI, defI, p);
+  const bounceI = _bounceSquare(atkI, defI, p, viaI);
   if (bounceI !== atkI) {
     if (isVoidSpace(bounceI)) {
       // The attacker bounced onto a Void — it perishes there rather than surviving on it. score/gold
@@ -3474,7 +3478,7 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     if (p === KING || p === CHECKERS_KING) {
       if (visual && _KING_RECRUIT_KEY[board[toI]]) _kingQueue(_KING_RECRUIT_KEY[board[toI]]); // the King welcomes the convert
       sides[toI] = W;
-      const bounceI = calcBouncePos(fromI, toI, p);
+      const bounceI = _bounceSquare(fromI, toI, p, viaI);
       if (bounceI !== fromI) {
         copyPiece(fromI, bounceI); sides[bounceI] = W;
         clearSquare(fromI);
@@ -3486,7 +3490,7 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
 
   // Bounce: attacker hits a piece with more health than attacker's attack power
   if (sides[toI] !== s && sides[toI] !== N && health[toI] > attacks[fromI]) {
-    applyShieldBounceState(fromI, toI, p);
+    applyShieldBounceState(fromI, toI, p, viaI);
     return;
   }
 
@@ -3510,8 +3514,6 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     _trackWhiteTake(p, fromI, captured); // per-turn take tracking
     // Shielded King (health≥2) captured (only possible with attack≥2 = a Sworded warrior)
     if ((captured === KING || captured === CHECKERS_KING) && health[toI] >= 2) _tookShieldedKingWithSword = true;
-    // A Fast warrior finished off a shielded Black piece it had bounced off earlier this turn
-    if (_turnFastBounced.has(toI)) _tookShieldedWithDoubleHit = true;
   } else if (visual && s === W && captured !== NONE && capSide === N) _kingQueue('killGrey'); // struck down a Grey
   if (chestSpaces.has(toI) && s === W) {
     chestSpaces.delete(toI);
@@ -4584,6 +4586,10 @@ function aiPlay() {
           const l2 = _legTwoMoves(move[0], move[1]);
           if (l2.length) { aiVia = move[1]; aiDest = _aiGreedyPick(l2, B); }
         }
+        if (aiVia >= 0 && sides[aiDest] === W && health[aiDest] > attacks[move[0]]) {
+          // Leg 2 ends on a shield: hop to the elbow, strike, rebound along leg 2. Terminal.
+          _animateShieldBounce(move[0], aiDest, () => _aiFinish(), aiVia);
+        } else {
         const [lfx, lfy] = xy(aiVia >= 0 ? aiVia : move[0]), [ltx, lty] = xy(aiDest); // last-leg geometry
         const lToCX = MARGIN + ltx * TILE, lToCY = BOARD_Y + MARGIN + lty * TILE;
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
@@ -4615,6 +4621,7 @@ function aiPlay() {
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiAfterLand);
           } else { _aiAfterLand(); }
         });
+        }
       }
     } else {
       // No Black moves — pass through to greyPlay/merchantPlay
@@ -4685,7 +4692,7 @@ function _checkersJumpsFrom(i) {
 // A Black attacker at atkI bounces off the shielded piece at defI: slide in, shield pop, slide
 // back (or fall into a Void). Shared by the primary AI move and the Bloodthirsty/Speed follow-up
 // so every bounce animates identically. onSettle(restIdx) resumes the turn from where it landed.
-function _animateShieldBounce(atkI, defI, onSettle) {
+function _animateShieldBounce(atkI, defI, onSettle, viaI = -1) {
   const attackPiece = board[atkI], attackHlth = health[atkI];
   const [fx, fy] = xy(atkI), [tx, ty] = xy(defI);
   const fromCX = MARGIN + fx * TILE, fromCY = BOARD_Y + MARGIN + fy * TILE;
@@ -4693,10 +4700,13 @@ function _animateShieldBounce(atkI, defI, onSettle) {
   const wasLastShield = health[defI] === 2;
   playSfx('shield'); // shield block sound at attack start (pop stays on impact)
   // Phase 1: slide the attacker toward the defender (attacker still sits on atkI on the board).
+  // A two-leg move first hops to the elbow and approaches from there.
   // The defender is still UNHIT here, so the recorded approach frame keeps its shield badge — the
   // state mutation happens in the completion below, after startAnim has snapshotted the buffer.
-  startAnim([{ toIdx: atkI, fromCX, fromCY, toCX, toCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
-    const result = applyShieldBounceState(atkI, defI, attackPiece);
+  const [ax, ay] = xy(viaI >= 0 ? viaI : atkI);
+  const appCX = MARGIN + ax * TILE, appCY = BOARD_Y + MARGIN + ay * TILE;
+  const approach = () => startAnim([{ toIdx: atkI, fromCX: appCX, fromCY: appCY, toCX, toCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, () => {
+    const result = applyShieldBounceState(atkI, defI, attackPiece, viaI);
     if (defI === merchantIdx) respawnMerchant();
     recordPosition();
     if (wasLastShield) startShieldPop(toCX + TILE / 2, toCY + TILE / 2); // shield blocks on impact
@@ -4712,6 +4722,8 @@ function _animateShieldBounce(atkI, defI, onSettle) {
       }
     });
   }, undefined, 'shield');
+  if (viaI >= 0) startAnim([{ toIdx: atkI, fromCX, fromCY, toCX: appCX, toCY: appCY, piece: attackPiece, side: B, hlth: attackHlth }], 0, approach);
+  else approach();
 }
 
 // Perform one greedy extra move for the Black piece at `dest` (capture > advance toward White),
@@ -7285,7 +7297,6 @@ const ACHIEVEMENTS = [
   { id: 'sword_shield_king', name: 'Shieldbreaker', desc: 'Take a Shielded Black King with a Sworded White Warrior', check: () => _tookShieldedKingWithSword },
   { id: 'recruit_streak_3', name: 'Recruiter',  desc: 'Recruit a Grey Warrior three turns in a row', check: () => _recruitStreak >= 3 },
   { id: 'recruit_cking_grey', name: 'Talent Scout', desc: 'Recruit a Grey Warrior with a Checkers King', check: () => _recruitedWithCKing },
-  { id: 'double_hit_shield', name: 'One-Two',    desc: 'Take a Shielded Black Warrior by hitting them twice with a Fast Warrior in one turn', check: () => _tookShieldedWithDoubleHit },
   { id: 'bomb_streak_3', name: 'Serial Bomber', desc: 'Take at least 1 Black Warrior with a Bomb 3 turns in a row', check: () => _bombStreak >= 3 },
   { id: 'flawless_8_adv', name: 'Untouchable', desc: 'Survive 8 Field Advances without taking a Black King or losing a White Warrior', check: () => _flawlessAdvances >= 8 },
 ];
@@ -8769,16 +8780,23 @@ function handleBoardClick(cx, cy) {
       const _doBounceAnim = (fromI, targetCX, targetCY, bounceI, suppressFromIdx, piece, side, hlth, onDone, sfx, onImpact) => {
         const [bx, by] = xy(bounceI);
         const bounceCX = MARGIN + bx * TILE, bounceCY = BOARD_Y + MARGIN + by * TILE;
-        const approach = { toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: targetCX, toCY: targetCY, piece, side, hlth };
+        // A two-leg move approaches from the elbow, after a first hop there; a plain move from the origin.
+        const startCX = viaI >= 0 ? MARGIN + lfx * TILE : pFromCX, startCY = viaI >= 0 ? BOARD_Y + MARGIN + lfy * TILE : pFromCY;
+        const approach = { toIdx: bounceI, fromCX: startCX, fromCY: startCY, toCX: targetCX, toCY: targetCY, piece, side, hlth };
         const retreat  = { toIdx: bounceI, fromCX: targetCX, fromCY: targetCY, toCX: bounceCX, toCY: bounceCY, piece, side, hlth };
         if (suppressFromIdx != null) { approach.fromIdx = suppressFromIdx; retreat.fromIdx = suppressFromIdx; }
-        startAnim([approach], 0, () => {
+        const runApproach = () => startAnim([approach], 0, () => {
           if (onImpact) onImpact();
           startShieldPop(targetCX + TILE / 2, targetCY + TILE / 2); // shield blocks on impact (sound + pop)
           startAnim([retreat], 0, () => {
             onDone();
           });
         }, undefined, sfx); // sfx tags the approach leg so Last Move replays the right cue
+        if (viaI >= 0) {
+          const hop = { toIdx: bounceI, fromCX: pFromCX, fromCY: pFromCY, toCX: startCX, toCY: startCY, piece, side, hlth };
+          if (suppressFromIdx != null) hop.fromIdx = suppressFromIdx;
+          startAnim([hop], 0, runApproach);
+        } else runApproach();
       };
       // Recruit a Grey: only a King (or Checkers King) recruits — attacker bounces, the Grey turns white.
       // A non-King White piece targeting a Grey KILLS it instead, and falls through to the normal
@@ -8794,9 +8812,9 @@ function handleBoardClick(cx, cy) {
           if (recruitedType === CHECKERS) _recruitedCManThisRun = true;
           if (recruitedType === CHECKERS_KING) _recruitedCKingThisRun = true;
         }
-        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
+        const bounceI = _bounceSquare(fromI, clicked, attackPiece, viaI);
         selected = -1; validMoves = [];
-        makeMove(fromI, clicked, false);
+        makeMove(fromI, clicked, false, viaI);
         recordPosition();
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'recruit');
         return;
@@ -8805,14 +8823,11 @@ function handleBoardClick(cx, cy) {
       if (sides[clicked] === B && health[clicked] > attacks[selected]) {
         playSfx('shield'); // shield block sound at attack start (pop stays on impact)
         const fromI = selected;
-        // A Fast piece bounced off a shielded Black piece — remember it, so finishing it
-        // off this turn (with the Speed extra move) unlocks the two-hit achievement.
-        if (speeds[fromI] > 1 && health[clicked] - attacks[fromI] >= 1) _turnFastBounced.add(clicked);
         const attackPiece = board[fromI], attackHlth = health[fromI];
         // Predict the bounce square WITHOUT mutating: the hit is applied at impact (onImpact below),
         // so the recorded approach frame still shows the defender's shield badge. Mutating up front
         // made Last Move draw a shielded King already stripped before the blow landed.
-        const bounceI = calcBouncePos(fromI, clicked, attackPiece);
+        const bounceI = _bounceSquare(fromI, clicked, attackPiece, viaI);
         selected = -1; validMoves = [];
         let _sbResult = null;
         // suppressFromIdx = fromI: the attacker is still standing on its origin during the approach
@@ -8829,7 +8844,7 @@ function handleBoardClick(cx, cy) {
           endWhiteTurn();
         }, 'shield', () => {
           // Impact: apply the hit now that the pre-hit approach frame is recorded.
-          _sbResult = applyShieldBounceState(fromI, clicked, attackPiece);
+          _sbResult = applyShieldBounceState(fromI, clicked, attackPiece, viaI);
           recordPosition();
         });
         return;
@@ -8838,12 +8853,8 @@ function handleBoardClick(cx, cy) {
       if (clicked === merchantIdx) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI], attackStat = statuses[fromI], attackAtk = attacks[fromI], attackSpd = speeds[fromI], attackEff = [...effectOrders[fromI]];
-        // Always bounce to the square directly adjacent to the merchant on the attacker's side.
-        const [_mfx, _mfy] = xy(fromI), [_mtx, _mty] = xy(clicked);
-        const _mdx = Math.sign(_mtx - _mfx), _mdy = Math.sign(_mty - _mfy);
-        const bounceI = (attackPiece === ROOK || attackPiece === BISHOP || attackPiece === QUEEN)
-          ? idx(_mtx - _mdx, _mty - _mdy)
-          : fromI;
+        // Rebound along the approach (the last leg, for a two-leg move) to the last empty square.
+        const bounceI = _bounceSquare(fromI, clicked, attackPiece, viaI);
         selected = -1; validMoves = [];
         recordPosition();
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, fromI, attackPiece, W, attackHlth, () => {
@@ -8854,9 +8865,9 @@ function handleBoardClick(cx, cy) {
             // An elemental Warrior still leaves its trail along the approach even when it bounces off
             // the Merchant — the slide happened, only the landing changed. fromI is now vacant, so the
             // origin is eligible. (Runs in live and re-sim alike: replay drives this same branch.)
-            if (attackElem & ELEM_EARTH) _applyEarthLanding(fromI, bounceI, W, true);
-            if (attackElem & ELEM_FIRE) applyFireTrail(fromI, bounceI, attackPiece, W);
-            if (attackElem & ELEM_WATER) applyWaterTrail(fromI, bounceI, attackPiece, W);
+            if (attackElem & ELEM_EARTH) { if (viaI >= 0) _applyEarthLandingVia(fromI, viaI, bounceI, W, true); else _applyEarthLanding(fromI, bounceI, W, true); }
+            if (attackElem & ELEM_FIRE)  { if (viaI >= 0) applyFireTrail(fromI, viaI, attackPiece, W);  applyFireTrail(viaI >= 0 ? viaI : fromI, bounceI, attackPiece, W); }
+            if (attackElem & ELEM_WATER) { if (viaI >= 0) applyWaterTrail(fromI, viaI, attackPiece, W); applyWaterTrail(viaI >= 0 ? viaI : fromI, bounceI, attackPiece, W); }
           }
           openMerchantShop(endWhiteTurn);
         });
