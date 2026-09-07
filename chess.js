@@ -7475,10 +7475,12 @@ function draw() {
 // --- Settings: a gear in the bottom-right, mirroring the version label, plus a modal panel ---
 // The gear is drawn and hit-tested from the SAME predicate, so it can never linger as an invisible
 // hotspot (the failure mode that let a stale dialogue rect swallow the setup Back button in v702).
-// The panel is an overlay, not a screen: it paints over whatever is beneath and swallows all input,
-// so it opens from the menu, the setup screen, or mid-game with no screen-transition bookkeeping.
+// The panel is an overlay, not a screen, and it is NOT modal: only clicks that land on the panel
+// itself are consumed, so the player can keep playing the board around it and close it when they
+// want the covered controls back. It opens from the menu, the setup screen, or mid-game alike.
 let settingsOpen = false;
 let _sliderDrag = null; // 'music' | 'sfx' while a volume slider is being dragged
+let _settingsBtnFirst = -1; // index in _uiButtons where this frame's panel buttons begin (-1 = panel closed)
 const SETTINGS_BTN_SZ = 64;
 function _settingsBtnVisible() { return spritesLoaded && _continued && !settingsOpen; } // start screen: first tap is the audio unlock
 function _settingsBtnRect() {
@@ -7538,17 +7540,12 @@ function _drawVolSlider(t, v, enabled) {
   ctx.lineWidth = 2; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.stroke();
 }
 function _drawSettingsOverlay() {
-  if (!settingsOpen) return;
+  if (!settingsOpen) { _settingsBtnFirst = -1; return; }
   const g = _settingsGeom();
+  _settingsBtnFirst = _uiButtons.length; // everything registered from here on belongs to the panel
   ctx.save();
-  // Grey the game out, but keep it readable — and leave the status header (logo, Taken Kings /
-  // Gold, and the turn timer) at full brightness so the running clock is unmistakable. Everything
-  // the header draws sits inside the top LOGO_H band, so the scrim simply starts below it.
-  // The menu screens put no HUD in that band, so there we dim the full canvas and avoid a seam.
-  const _headerLive = !(mainMenuOpen || achievementsOpen || leaderboardOpen);
-  const _dimTop = _headerLive ? LOGO_H : 0;
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.fillRect(0, _dimTop, canvas.width, canvas.height - _dimTop);
+  ctx.fillStyle = "rgba(0,0,0,0.55)";                       // grey everything; nothing stays lit
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(18,14,34,0.96)";
   ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
@@ -7583,7 +7580,8 @@ function handleSettingsClick(cx, cy) {
   if (_inRect(cx, cy, g.musicBtn)) { playSfx('button'); setMusicMuted(!_musicMuted); draw(); return; }
   if (_inRect(cx, cy, g.sfxBtn))   { setSfxMuted(!_sfxMuted); playSfx('button'); draw(); return; } // set first: unmuting is audible, muting silent
   if (_inRect(cx, cy, g.close))    { playSfx('button'); settingsOpen = false; draw(); return; }
-  // Sliders are driven by the pointer handlers below; every other click the modal swallows.
+  // Sliders are driven by the pointer handlers below; other clicks on the panel body do nothing
+  // (they are consumed rather than passed to the board, which the panel covers).
 }
 // Volume sliders: grabbed on pointerdown (a tap anywhere on the track sets it) and tracked on move,
 // so they work with mouse and touch alike. Handled here rather than in the click handler so a drag
@@ -7728,8 +7726,15 @@ let _pressedRect = null;    // the button currently held down (a {x,y,w,h,r})
 function _registerBtn(x, y, w, h, r) { _uiButtons.push({ x, y, w, h, r: r == null ? 8 : r }); }
 function _btnAt(cx, cy) {
   // last match wins → topmost (buttons drawn later, e.g. dialogs, sit on top)
+  // The Settings panel isn't modal, but it does physically cover the inventory and the Team/Field
+  // Advance buttons. Press-darkening is painted AFTER the panel, so without this restriction a
+  // press on the panel would paint the covered button's dark rect on top of it.
+  const start = (settingsOpen && _settingsBtnFirst >= 0 && _inRect(cx, cy, _settingsGeom().panel)) ? _settingsBtnFirst : 0;
   let hit = null;
-  for (const b of _uiButtons) if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) hit = b;
+  for (let i = start; i < _uiButtons.length; i++) {
+    const b = _uiButtons[i];
+    if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) hit = b;
+  }
   return hit;
 }
 function _drawPressedOverlay() {
@@ -7780,6 +7785,7 @@ function trashBounds() {
 canvas.addEventListener("mousedown", (e) => {
   if (replayMode || gameOver || _turnBusy() || shopMode || sellMode || sellConfirmSlot >= 0 || gamePhase !== 'playing') return;
   const [cx, cy] = canvasCoords(e);
+  if (settingsOpen && _inRect(cx, cy, _settingsGeom().panel)) return; // the panel covers the inventory
   const invY = INV_PANEL_TOP + 50;
   for (let r = 0; r < INV_ROWS; r++) {
     for (let c = 0; c < INV_COLS; c++) {
@@ -8580,7 +8586,7 @@ canvas.addEventListener("click", (e) => {
   if (dragConsumed) { dragConsumed = false; return; }
   const [cx, cy] = canvasCoords(e);
   if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
-  if (settingsOpen) { handleSettingsClick(cx, cy); return; } // modal: swallows every other screen's input
+  if (settingsOpen && _inRect(cx, cy, _settingsGeom().panel)) { handleSettingsClick(cx, cy); return; } // panel clicks only — play continues around it
   if (_settingsBtnVisible() && _inRect(cx, cy, _settingsBtnRect())) { playSfx('button'); settingsOpen = true; draw(); return; }
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
