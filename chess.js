@@ -1,4 +1,4 @@
-﻿const VERSION = "710";
+﻿const VERSION = "711";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -109,13 +109,6 @@ function playSfx(name) {
   src.start(0);
 }
 
-function toggleSfxMute() {
-  _sfxMuted = !_sfxMuted;
-  try { localStorage.setItem('tk_sfx_muted', _sfxMuted ? '1' : '0'); } catch (e) {}
-  if (_sfxMuted) _pauseMusic(); else if (_sfxUnlocked) _playMusic(); // music follows the mute toggle
-  return _sfxMuted;
-}
-
 // ─── Looping ambiance (wind) ─────────────────────────────────────────────────
 let _windLoop = null; // { src, gain } while playing
 const WIND_VOLUME = 0.5; // half volume
@@ -192,8 +185,6 @@ canvas.width = MARGIN + BOARD_PX + MARGIN;
 canvas.height = 1920;
 const INV_X = MARGIN;
 
-const LIGHT = "#edcea0";
-const DARK = "#b5855a";
 const SEL_BORDER = "rgba(90,170,255,0.95)"; // Checkers chain: outline only — the jump can't be cancelled
 const PASS_COLOR = "rgba(235,205,40,0.55)"; // selected piece's own square (tap = deselect, or pass an extra move)
 const MOVE_COLOR = "rgba(100,180,60,0.55)";
@@ -202,10 +193,8 @@ const LEAP_BTN_DISABLED = "#555";
 
 const NONE = 0, PAWN = 1, ROOK = 2, KNIGHT = 3, BISHOP = 4, QUEEN = 5, KING = 6, CHEST = 7, CHECKERS = 8, CHECKERS_KING = 9;
 const W = 1, B = 2, N = 3;
-const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS, CHECKERS_KING];
 
 const PIECE_NAMES = { [PAWN]: "pawn", [ROOK]: "rook", [KNIGHT]: "knight", [BISHOP]: "bishop", [QUEEN]: "queen", [KING]: "king", [CHECKERS]: "checkers", [CHECKERS_KING]: "checkers_king" };
-const SIDE_PREFIX = { [W]: "w", [B]: "b", [N]: "n" };
 const spriteImages = {};
 let spritesLoaded = false;
 let _continued = false; // player pressed Continue on the loading screen (also unlocks audio)
@@ -1000,7 +989,6 @@ let _aiAborted = false;      // set true when the budget runs out mid-depth (tha
 let _bKingFirstMove = false;
 const PIECE_VALUE = { [NONE]: 0, [PAWN]: 100, [KNIGHT]: 320, [BISHOP]: 330, [ROOK]: 500, [QUEEN]: 900, [KING]: 20000, [CHEST]: 0, [CHECKERS]: 150, [CHECKERS_KING]: 300 };
 const GOLD_VALUE = { [PAWN]: 1, [KNIGHT]: 3, [BISHOP]: 3, [ROOK]: 5, [QUEEN]: 9, [KING]: 15, [CHEST]: 0, [NONE]: 0, [CHECKERS]: 2, [CHECKERS_KING]: 30};
-const SPAWN_PIECES = [PAWN, ROOK, KNIGHT, BISHOP, QUEEN];
 
 const ANIM_MS = 180;
 let anim = null; // {pieces:[{toIdx,fromCX,fromCY,toCX,toCY,piece,side,hlth}], boardDy, startMs, onDone}
@@ -1636,27 +1624,6 @@ function _waveTick() {
   }
 }
 
-function _waveLineSqFromMove(fromI, toI, p) {
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
-  if (p === KNIGHT) {
-    const sq = [toI];
-    for (let dy2 = -1; dy2 <= 1; dy2++) for (let dx2 = -1; dx2 <= 1; dx2++) {
-      if (dx2 === 0 && dy2 === 0) continue;
-      if (inB(tx + dx2, ty + dy2)) sq.push(idx(tx + dx2, ty + dy2));
-    }
-    return { squares: sq, shoveParams: { isKnight: true, toI } };
-  }
-  const dx = tx === fx ? 0 : (tx > fx ? 1 : -1);
-  const dy = ty === fy ? 0 : (ty > fy ? 1 : -1);
-  // Start from the board edge behind the piece's origin, sweep to the edge past destination
-  let sx = fx, sy = fy;
-  while (inB(sx - dx, sy - dy)) { sx -= dx; sy -= dy; }
-  const sq = [];
-  let cx = sx, cy = sy;
-  while (inB(cx, cy)) { sq.push(idx(cx, cy)); cx += dx; cy += dy; }
-  return { squares: sq, shoveParams: { isKnight: false, dx, dy, toI } };
-}
-
 // Stone-block tile palettes. `temp` is the permanent stone palette blue-filtered (R/B channels
 // swapped) so a temporary Earth block reads at a glance as different from permanent rock.
 const _BLOCK_PALETTE = {
@@ -1764,54 +1731,6 @@ function _drawBurningOverlay(gctx, dx, dy, rounds) {
   gctx.fillStyle = '#ffd24a'; gctx.font = 'bold 15px sans-serif'; gctx.textAlign = 'center'; gctx.textBaseline = 'middle';
   gctx.fillText(String(rounds), bx, by + 1);
   gctx.restore();
-}
-
-function drawShopTile(gctx, tx, ty, tileSize) {
-  const cx = tx + tileSize / 2, cy = ty + tileSize / 2;
-  const sz = tileSize * 0.60;
-
-  // Building body
-  const bW = sz * 0.88, bH = sz * 0.54;
-  const bX = cx - bW / 2, bY = cy - sz * 0.04;
-  gctx.fillStyle = "rgba(220,185,110,0.95)";
-  gctx.fillRect(bX, bY, bW, bH);
-
-  // Awning â€" mostly above bY, small overlap into building top
-  const aW = sz, aH = sz * 0.19;
-  const aX = cx - aW / 2, aY = bY - aH * 0.6;
-  // awning bottom = aY + aH = bY + aH*0.4 = bY + sz*0.076
-  gctx.fillStyle = "#c03030";
-  gctx.beginPath();
-  gctx.moveTo(aX, aY);
-  gctx.lineTo(aX + aW, aY);
-  gctx.lineTo(aX + aW * 0.87, aY + aH);
-  gctx.lineTo(aX + aW * 0.13, aY + aH);
-  gctx.closePath();
-  gctx.fill();
-
-  // Small scalloped bottom â€" scallops bottom â‰ˆ bY + sz*0.111
-  const scR = sz * 0.035;
-  gctx.fillStyle = "#901a1a";
-  const scInner = aW * 0.74, scCount = 5;
-  for (let k = 0; k < scCount; k++) {
-    const scX = aX + aW * 0.13 + scInner * (k + 0.5) / scCount;
-    gctx.beginPath();
-    gctx.arc(scX, aY + aH, scR, 0, Math.PI);
-    gctx.fill();
-  }
-
-  // Door â€" top at bY + sz*0.292, leaving room for windows above it
-  const dW = bW * 0.28, dH = bH * 0.46;
-  gctx.fillStyle = "rgba(90,50,18,0.9)";
-  gctx.beginPath();
-  gctx.roundRect(cx - dW / 2, bY + bH - dH, dW, dH, 2);
-  gctx.fill();
-
-  // Windows â€" explicitly placed between scallops bottom (sz*0.111) and door top (sz*0.292)
-  gctx.fillStyle = "rgba(180,230,255,0.78)";
-  const wW = bW * 0.22, wH = sz * 0.13, wY = bY + sz * 0.14;
-  gctx.fillRect(bX + bW * 0.06, wY, wW, wH);
-  gctx.fillRect(bX + bW - bW * 0.06 - wW, wY, wW, wH);
 }
 
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
@@ -4842,15 +4761,6 @@ function respawnMerchant() {
   merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
 }
 
-function _placeMerchant() {
-  const empty = [];
-  for (let i = 0; i < 64; i++) if (board[i] === NONE && Math.floor(i / 8) !== 0) empty.push(i);
-  merchantIdx = empty.length > 0 ? empty[randInt(empty.length)] : -1;
-  merchantOffers = [_randomShopItem(), _randomShopItem(), _randomShopItem()];
-  merchantSold = [false, false, false];
-  merchantRerollCountdown = MERCHANT_REROLL_CYCLE;
-}
-
 function merchantPlay(onDone) {
   if (merchantIdx < 0 || gameOver) { onDone(); return; }
   const [mx, my] = xy(merchantIdx);
@@ -4930,7 +4840,6 @@ const HINT_BTN = { x: INV_X, y: SIDE_BTN_Y, w: INV_W, h: 36 };
 // --- Achievements screen geometry ---
 // The achievements grid reuses the board's exact geometry (8×8 equal cells).
 const ACH_GRID_X = MARGIN, ACH_GRID_Y = BOARD_Y + MARGIN;
-const ACH_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y, w: 300, h: 60 }; // on the setup menu
 const ACH_LABEL_Y = BOARD_Y + MARGIN + BOARD_PX + 24;                              // label under the grid
 const ACH_BACK_BTN  = { x: MARGIN + BOARD_PX / 2 - 110, y: ACH_LABEL_Y + 150, w: 220, h: 64 }; // centered under the label
 // Clear sits at the distant bottom of the screen, away from Back (computed from canvas height).
@@ -4951,7 +4860,6 @@ function _achClearDlgRects() {
 const SETUP_BACK_BTN = { x: MARGIN + BOARD_PX / 2 - 130, y: GRAVE_Y + 20, w: 260, h: 60 };
 
 // --- Leaderboard screen geometry ---
-const LB_MENU_BTN = { x: MARGIN + BOARD_PX / 2 - 150, y: GRAVE_Y + 70, w: 300, h: 60 }; // setup menu, below Achievements
 const LB_TAB_H = 60, LB_TAB_GAP = 14, LB_TABS_Y = BOARD_Y + MARGIN;
 // Single row of tab buttons, one per board (order matches LB_BOARDS).
 function _lbTabRects() {
@@ -6314,23 +6222,6 @@ function _kingInspectItem(item) {
   _kingRemark = _itemInspectLine(item); // selected inventory item
   _kingRemarkPri = _KING_PRI.inspect || 5;
   _kingRemarkMs = performance.now(); _kingPage = 0;
-}
-// Name of whatever is incoming in the fog (preview) row at column `col`: a Black Warrior (with its
-// rolled element/buffs), the queued Merchant, or a bonus (Chest/Item/Void/Block/River/Grey), else fog.
-function _previewDescriptor(col) {
-  const w = nextWave.find(w => w.x === col);
-  if (w) { const e = w.eff || {}; return `Black ${_buffMods(e.element || 0, e.hlth || 1, e.atk || 1, e.spd || 1, e.status || 0)}${_kingPieceName(w.piece)}`; }
-  if (merchantQueued && merchantQueuedCol === col) return 'Merchant';
-  const b = nextBonuses.find(b => b.col === col);
-  if (b) {
-    if (b.type === 'chest') return 'Chest';
-    if (b.type === 'item') return itemName(b.item);
-    if (b.type === 'void') return 'Void';
-    if (b.type === 'block') return 'Block';
-    if (b.type === 'river') return 'River';
-    if (b.type === 'grey') return `Grey ${_kingPieceName(b.piece)}`;
-  }
-  return 'fog';
 }
 // Tap-to-inspect for the fog (preview) row above the board.
 function _kingInspectPreview(col) {
