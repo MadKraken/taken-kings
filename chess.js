@@ -7511,9 +7511,9 @@ function _drawSettingsButton() {
 
 // Panel geometry - one source of truth for drawing and hit-testing.
 function _settingsGeom() {
-  // The panel sits BELOW the board, in the bottom half of the screen, so the board stays in view
-  // (dimmed) while Settings is open — the player can watch the clock run out and Black move without
-  // closing the panel. Math.min keeps it on-canvas if the board geometry ever grows.
+  // The panel sits BELOW the board, in the bottom half of the screen. Nothing is dimmed behind it:
+  // the board stays at full brightness and fully playable while Settings is open, so the player can
+  // keep taking turns and watch the clock. Math.min keeps it on-canvas if the board geometry grows.
   const w = BOARD_PX, x = MARGIN, h = 620;
   const boardBottom = BOARD_Y + MARGIN + BOARD_PX;
   const y = Math.min(boardBottom + 20, canvas.height - h - 30);
@@ -7544,8 +7544,6 @@ function _drawSettingsOverlay() {
   const g = _settingsGeom();
   _settingsBtnFirst = _uiButtons.length; // everything registered from here on belongs to the panel
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.55)";                       // grey everything; nothing stays lit
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(18,14,34,0.96)";
   ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
