@@ -6739,8 +6739,12 @@ function drawPromoDialog() {}
 function drawShopDialog() {
 // Shop dialogue
 if (shopMode) {
+  // Backdrop starts below the status header so the logo, Taken Kings / Gold and the turn timer stay
+  // lit. The clock keeps running while the shop is open (and now closes it when it expires), so the
+  // timer is exactly what the player needs to see here. Everything the header draws sits in the top
+  // LOGO_H band; the dialog itself is centred, well clear of it.
   ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, LOGO_H, canvas.width, canvas.height - LOGO_H);
 
   const dlgW = 820, dlgH = 500;
   const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
@@ -6837,7 +6841,7 @@ function drawSellConfirm() {
   if (item === ITEM_NONE) return;
   const g = _sellConfirmGeom();
   ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, LOGO_H, canvas.width, canvas.height - LOGO_H); // header stays lit, as with the shop backdrop
   ctx.fillStyle = "#1e1e3c";
   ctx.beginPath(); ctx.roundRect(g.px, g.py, g.pw, g.ph, 12); ctx.fill();
   ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
