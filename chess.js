@@ -7510,22 +7510,30 @@ function _drawSettingsButton() {
 }
 
 // Panel geometry - one source of truth for drawing and hit-testing.
+const CONTENT_H = 620; // height the row layout was designed against
 function _settingsGeom() {
-  // The panel sits BELOW the board, in the bottom half of the screen. Nothing is dimmed behind it:
-  // the board stays at full brightness and fully playable while Settings is open, so the player can
-  // keep taking turns and watch the clock. Math.min keeps it on-canvas if the board geometry grows.
-  const w = BOARD_PX, x = MARGIN, h = 620;
+  // The panel sits BELOW the board. Nothing is dimmed behind it: the board stays at full brightness
+  // and fully playable while Settings is open, so the player can keep taking turns and watch the clock.
+  // Width matches the board's OUTLINE, not its tiles: the tiles run MARGIN..MARGIN+BOARD_PX, but the
+  // turn border is drawn 4px proud of them on each side, so matching the tiles left the panel looking
+  // inset by that much. Height runs to the bottom edge so the Auto / Resign / Last Move row is fully
+  // covered rather than clipped halfway.
+  const x = MARGIN - 4, w = BOARD_PX + 8;
   const boardBottom = BOARD_Y + MARGIN + BOARD_PX;
-  const y = Math.min(boardBottom + 20, canvas.height - h - 30);
+  const y = boardBottom + 20;
+  const h = Math.max(CONTENT_H, canvas.height - y);
+  const top = y + (h - CONTENT_H) / 2;   // the layout was designed at CONTENT_H — centre it in the real height
   const btnW = 190, btnH = 62, pad = 50;
-  const musicY = y + 150, sfxY = musicY + 192;
+  const musicY = top + 150, sfxY = musicY + 192;
   return {
     panel:       { x, y, w, h },
+    titleY:      top + 60,
+    subtitleY:   top + 104,
     musicBtn:    { x: x + w - pad - btnW, y: musicY, w: btnW, h: btnH },
     musicSlider: { x: x + pad, y: musicY + btnH + 22, w: w - pad * 2, h: 56 },
     sfxBtn:      { x: x + w - pad - btnW, y: sfxY,   w: btnW, h: btnH },
     sfxSlider:   { x: x + pad, y: sfxY + btnH + 22, w: w - pad * 2, h: 56 },
-    close:       { x: x + w / 2 - 130, y: y + h - 92, w: 260, h: 66 },
+    close:       { x: x + w / 2 - 130, y: top + CONTENT_H - 92, w: 260, h: 66 },
     labelX: x + pad, musicLabelY: musicY + btnH / 2, sfxLabelY: sfxY + btnH / 2,
   };
 }
@@ -7544,16 +7552,16 @@ function _drawSettingsOverlay() {
   const g = _settingsGeom();
   _settingsBtnFirst = _uiButtons.length; // everything registered from here on belongs to the panel
   ctx.save();
-  ctx.fillStyle = "rgba(18,14,34,0.96)";
+  ctx.fillStyle = "rgb(18,14,34)"; // fully opaque: at 0.96 the covered buttons and dialogue ghosted through
   ctx.beginPath(); ctx.roundRect(g.panel.x, g.panel.y, g.panel.w, g.panel.h, 14); ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = "rgba(184,145,46,0.85)";
   ctx.beginPath(); ctx.roundRect(g.panel.x + 1.5, g.panel.y + 1.5, g.panel.w - 3, g.panel.h - 3, 13); ctx.stroke();
 
   ctx.fillStyle = "#c8a060"; ctx.font = "58px Canterbury";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("Settings", g.panel.x + g.panel.w / 2, g.panel.y + 60);
+  ctx.fillText("Settings", g.panel.x + g.panel.w / 2, g.titleY);
   ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "28px Canterbury";
-  ctx.fillText("Audio", g.panel.x + g.panel.w / 2, g.panel.y + 104);
+  ctx.fillText("Audio", g.panel.x + g.panel.w / 2, g.subtitleY);
 
   const row = (label, labelY, on, vol, btn, slider) => {
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
