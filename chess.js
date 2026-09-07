@@ -6746,10 +6746,11 @@ function drawShopDialog() {
 if (shopMode) {
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  // Re-draw the score and clock over the dim. The clock keeps running while the shop is open (and
+  // Re-draw the header readout over the dim. The clock keeps running while the shop is open (and
   // expiring it closes the shop), so it has to stay readable — but dimming everything and painting
   // these back on top reads far better than leaving an un-dimmed band across the top of the screen.
   drawStatsAndTimer();
+  _drawYourMoveLabel();
 
   const dlgW = 820, dlgH = 500;
   const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
@@ -6847,7 +6848,7 @@ function drawSellConfirm() {
   const g = _sellConfirmGeom();
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawStatsAndTimer(); // its backdrop covers the shop's, so paint the readout back on top again
+  drawStatsAndTimer(); _drawYourMoveLabel(); // its backdrop covers the shop's, so re-paint on top again
   ctx.fillStyle = "#1e1e3c";
   ctx.beginPath(); ctx.roundRect(g.px, g.py, g.pw, g.ph, 12); ctx.fill();
   ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
@@ -7642,16 +7643,18 @@ function _drawVersionLabel() {
 // continuously the whole time it's the player's move, and vanishes while Black is going. Without it,
 // a paralyzed Black King (Black passes instantly) reads as "the enemy is still thinking" and the
 // player sits waiting. Both ride the always-on idle repaint loop, so no extra RAF loop is needed.
-function drawTurnIndicator() {
-  if (gamePhase !== 'playing' || gameOver || replayMode || _rewinderSaveOffer || _conquestGifActive) return;
-  if (turn !== W || aiThinking || anim || waveAnim) return;
+// Shown only on the player's idle turn. The border and the label share this test but are drawn at
+// different stages: the border hugs the board and dims with it under a modal, while the label is
+// part of the status header and gets re-painted on top of the dim alongside the score and clock.
+function _turnIndicatorActive() {
+  if (gamePhase !== 'playing' || gameOver || replayMode || _rewinderSaveOffer || _conquestGifActive) return false;
+  return !(turn !== W || aiThinking || anim || waveAnim);
+}
+// "Your Move" label above the board — styled like the status labels (drop-shadowed, no chip).
+// In Timed mode it sits above the countdown timer.
+function _drawYourMoveLabel() {
+  if (!_turnIndicatorActive()) return;
   ctx.save();
-  // Continuously-flashing gold border hugging the board (only ever shown on the player's turn).
-  ctx.strokeStyle = `rgba(232, 201, 106, ${(0.45 + 0.35 * Math.sin(performance.now() / 400)).toFixed(3)})`;
-  ctx.lineWidth = 5;
-  ctx.beginPath(); ctx.roundRect(MARGIN - 4, BOARD_Y + MARGIN - 4, BOARD_PX + 8, BOARD_PX + 8, 8); ctx.stroke();
-  // "Your Move" label above the board — styled like the status labels (drop-shadowed, no chip).
-  // In Timed mode it sits above the countdown timer.
   ctx.font = "42px Canterbury";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
@@ -7661,6 +7664,16 @@ function drawTurnIndicator() {
   ctx.fillStyle = `rgb(${Math.round(232 + 23 * _p)}, ${Math.round(201 + 54 * _p)}, ${Math.round(106 + 149 * _p)})`;
   ctx.fillText("Your Move", MARGIN + BOARD_PX / 2, timedMode ? (LOGO_H / 2 - 50) : (LOGO_H / 2));
   ctx.restore();
+}
+function drawTurnIndicator() {
+  if (!_turnIndicatorActive()) return;
+  ctx.save();
+  // Continuously-flashing gold border hugging the board (only ever shown on the player's turn).
+  ctx.strokeStyle = `rgba(232, 201, 106, ${(0.45 + 0.35 * Math.sin(performance.now() / 400)).toFixed(3)})`;
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(MARGIN - 4, BOARD_Y + MARGIN - 4, BOARD_PX + 8, BOARD_PX + 8, 8); ctx.stroke();
+  ctx.restore();
+  _drawYourMoveLabel(); // normal play: label keeps its existing place in the stack
 }
 
 function _drawScene() {
