@@ -1,4 +1,4 @@
-﻿const VERSION = "714";
+﻿const VERSION = "715";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -957,7 +957,7 @@ let _bloodthirstyUsed = false; // true if BT extra move already granted this tur
 // so a new game (or any turn-end) started mid-chain inherited a stale index — which both drew the
 // chain outline on an unrelated piece AND blocked deselection, since re-tapping is ignored while a
 // chain is pending. Same leak the Bloodthirsty latch had in v690.
-function _resetTurnState() { _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; _checkersChainIdx = -1; }
+function _resetTurnState() { _elbowIdx = -1; _bloodthirstyIdx = -1; _bloodthirstyUsed = false; _checkersChainIdx = -1; }
 let turn = W;
 let lastActingSide = B; // tracks who made the last actual move; used by manual field advance
 // A Field Advance is not a move: it scrolls the board, it does not spend White's turn. So when one
@@ -1157,8 +1157,84 @@ let elementizerMystery = false; // true if the active elementalizer is Mystery (
 let vampireFangMode = false;
 let swordMode = false;
 let speedMode = false;
-let _speedIdx = -1;       // board index of piece currently in a speed multi-move sequence
-let _speedMovesUsed = 0;  // extra speed moves used so far this turn
+// Fast (Speed 2) movement is ONE move with two legs. The first tap on an eligible square only
+// sets the elbow -- the piece stays put and an arrow shows leg 1 -- and the second tap picks the
+// destination, at which point the whole path is travelled at once. The elbow is a joint, never a
+// landing: nothing that triggers on landing (items, chests, the Merchant, captures, shield
+// bounces, recruits) happens there, while crossing effects (fire, water, elemental trails) apply
+// along both legs. Engaging anything on leg 1 is simply an ordinary single move.
+let _elbowIdx = -1;       // the chosen elbow square while planning a two-leg move, else -1
+
+// Can `m` serve as the elbow of a two-leg move starting from `fromI`? It must be reachable as a
+// leg-1 move (caller guarantees) and engage nothing. Air phases over pieces and blocks, so for an
+// Air mover an occupied square or a block is a legitimate joint; a Void never is.
+function _elbowEligible(fromI, m) {
+  if (isVoidSpace(m) || m === merchantIdx) return false;
+  const air = !!(elements[fromI] & ELEM_AIR);
+  if (board[m] !== NONE) return air;
+  if (isBlockSpace(m)) return air;
+  return true;
+}
+// Legal destinations for leg 2: the mover is placed on the elbow (displacing whatever an Air mover
+// is passing over), the origin is vacated, legalMoves is asked, and the board is put back exactly.
+// Excluded: returning to the origin, and every destination that would END in a bounce -- the
+// Merchant, a shielded enemy, a Grey a King would recruit -- because a bounce off the last leg has
+// no well-defined resting square. Those are engaged with a direct single move instead.
+function _legTwoMoves(fromI, elbow) {
+  const arrs = _squareArrays();
+  const sFrom = arrs.map(a => a[fromI]), sElb = arrs.map(a => a[elbow]);
+  const eFrom = effectOrders[fromI], eElb = effectOrders[elbow];
+  const p = board[fromI], sd = sides[fromI], atk = attacks[fromI];
+  const prevFirst = _bKingFirstMove; _bKingFirstMove = false; // leg 2 never transits through check
+  let moves;
+  try {
+    copyPiece(fromI, elbow); clearSquare(fromI);
+    const [ex, ey] = xy(elbow);
+    moves = legalMoves(ex, ey);
+  } finally {
+    arrs.forEach((a, k) => { a[fromI] = sFrom[k]; a[elbow] = sElb[k]; });
+    effectOrders[fromI] = eFrom; effectOrders[elbow] = eElb;
+    _bKingFirstMove = prevFirst;
+  }
+  const foe = sd === W ? B : W;
+  return moves.filter(m =>
+    m !== fromI && m !== merchantIdx &&
+    !(sides[m] === foe && health[m] > atk) &&
+    !(sd === W && sides[m] === N && (p === KING || p === CHECKERS_KING)));
+}
+// The leg-2 list if `m` works as an elbow for `fromI`, else null.
+function _tryElbow(fromI, m) {
+  if (speeds[fromI] <= 1 || !_elbowEligible(fromI, m)) return null;
+  const l2 = _legTwoMoves(fromI, m);
+  return l2.length ? l2 : null;
+}
+// Squares a move ENTERS (never the origin): a straight slide walks its whole path; a jump or
+// teleport (non-straight, or from===to) touches only the landing square. Jumpers leap OVER their
+// midpoint (same rule applyFireTrail lays by), so they too are landing-square-only.
+function _movePathSquares(fromI, toI, p) {
+  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
+  const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
+  const isJumper = p === KNIGHT || p === CHECKERS || p === CHECKERS_KING;
+  const path = [];
+  if (!isJumper && fromI !== toI && (dx === 0 || dy === 0 || Math.abs(tx - fx) === Math.abs(ty - fy))) {
+    let cx = fx + dx, cy = fy + dy;
+    while (true) { path.push(idx(cx, cy)); if (cx === tx && cy === ty) break; cx += dx; cy += dy; }
+  } else path.push(toI);
+  return path;
+}
+// Greedy leg-2 pick for the AI: King capture > best capture by value > advance toward White.
+function _aiGreedyPick(moves, side) {
+  let best = moves[0], bestScore = -Infinity;
+  const foe = side === W ? B : W;
+  for (const m of moves) {
+    let sc;
+    if (sides[m] === foe && (board[m] === KING || board[m] === CHECKERS_KING)) sc = 1e9;
+    else if (board[m] !== NONE && sides[m] === foe) sc = 1000 + (PIECE_VALUE[board[m]] || 0);
+    else sc = side === B ? xy(m)[1] : -xy(m)[1];
+    if (sc > bestScore) { bestScore = sc; best = m; }
+  }
+  return best;
+}
 
 const ITEM_SPRITE_KEYS = {
   [ITEM_TELEPORTER]: "item_teleporter",
@@ -1498,13 +1574,18 @@ function _applyReplayInput(a) {
       // branch, silently ending the turn and desyncing every replay containing a Speed second
       // move (the root cause of the live-vs-server score mismatches in runs 13-16).
       if (selected !== a.f) { const [fx, fy] = _sqCenter(a.f); handleBoardClick(fx, fy); }
-      const [tx, ty] = _sqCenter(a.to); handleBoardClick(tx, ty); break;
+      const [tx, ty] = _sqCenter(a.to);
+      if (a.via != null) { const [vx, vy] = _sqCenter(a.via); handleBoardClick(vx, vy); } // sets the elbow; the piece stays put
+      // A plain move by a Fast piece onto a square that could have been an elbow took TWO taps live:
+      // the first only planned (no log entry), the second landed. _tryElbow is deterministic, so
+      // reproduce the double tap from state -- one tap here would plan instead of moving.
+      else if (_tryElbow(a.f, a.to)) handleBoardClick(tx, ty);
+      handleBoardClick(tx, ty); break;
     }
     case 'ta': teamAdvance(); break;
     case 'fa': fieldAdvance(true); break;
-    case 'p':
-      if (_speedIdx >= 0) { _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); }
-      else if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); }
+    case 'p': // pass a pending Bloodthirsty extra move
+      if (_bloodthirstyIdx >= 0) { _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); }
       break;
     case 'buy': { const [bx, by] = _shopBuyCenter(a.i); handleShopClick(bx, by); break; }
     case 'sell': { sellConfirmSlot = a.s; const g = _sellConfirmGeom(); handleSellConfirmClick(g.yesX + g.btnW / 2, g.btnY + g.btnH / 2); break; }
@@ -3189,28 +3270,21 @@ function shovePiece(srcI, dx, dy) {
 // (burning is rolled back by saveState), so the AI treats crossing fire as the delayed loss it is.
 // A death itself is resolved later by the once-per-round _burnTick, not here.
 function _igniteFromCrossing(fromI, toI) {
+  _igniteAlongPath(toI, _movePathSquares(fromI, toI, board[toI]));
+}
+// The core: the piece now standing on toI crossed `path` (the squares it entered, in order).
+// Opposing fire ignites it (burning=3); a river or water current extinguishes it (0) — later wins,
+// so fire-then-water ends safe. Fire & Water warriors never burn. A death itself is resolved later
+// by the once-per-round _burnTick, not here.
+function _igniteAlongPath(toI, path) {
   if (board[toI] === NONE) return;
   const s = sides[toI];
   if (elements[toI] & (ELEM_FIRE | ELEM_WATER)) { burning[toI] = 0; return; } // immune — never on fire
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
-  const dx = Math.sign(tx - fx), dy = Math.sign(ty - fy);
-  // Squares newly ENTERED this move (never the origin). A straight slide walks its whole path; a
-  // jump/teleport (non-straight, or from===to) only touches the landing square. Jumpers leap OVER
-  // their midpoint (same rule as applyFireTrail lays by), so they too are landing-square-only.
-  const lp = board[toI];
-  const isJumper = lp === KNIGHT || lp === CHECKERS || lp === CHECKERS_KING;
-  const path = [];
-  if (!isJumper && fromI !== toI && (dx === 0 || dy === 0 || Math.abs(tx - fx) === Math.abs(ty - fy))) {
-    let cx = fx + dx, cy = fy + dy;
-    while (true) { path.push(idx(cx, cy)); if (cx === tx && cy === ty) break; cx += dx; cy += dy; }
-  } else {
-    path.push(toI);
-  }
   let burn = burning[toI]; // any fire it was already carrying
   for (const sq of path) {
     const f = fireSquares.get(sq);
-    if (f && f.side !== s) burn = 3;                    // crossed opposing fire → ignite
-    if (isRiverSpace(sq) || waterTrails.has(sq)) burn = 0;  // crossed water (spawn river or trail current) → extinguished
+    if (f && f.side !== s) burn = 3;                       // crossed opposing fire → ignite
+    if (isRiverSpace(sq) || waterTrails.has(sq)) burn = 0;  // crossed water → extinguished
   }
   burning[toI] = burn;
 }
@@ -3363,8 +3437,14 @@ function calcBouncePos(fromI, toI, p) {
   return fromI;
 }
 
-function makeMove(fromI, toI, visual = false) {
-  const [fx, fy] = xy(fromI), [tx, ty] = xy(toI);
+function makeMove(fromI, toI, visual = false, viaI = -1) {
+  // viaI >= 0: a Fast two-leg move, fromI -> viaI -> toI, executed as ONE move. The piece leaves
+  // fromI and lands on toI; the elbow is a joint, not a landing. Geometry-derived rules (checkers
+  // jump midpoint, pawn double-step / en passant, the castle test, Earth's trail direction) read
+  // from the LAST leg, so a 1+1 pawn walk sets no en-passant square and a King can never castle
+  // round a corner. Castling rights still key off fromI / piece type below, so they are lost as usual.
+  const legFrom = viaI >= 0 ? viaI : fromI;
+  const [fx, fy] = xy(legFrom), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
   if (visual && s === W) {
     _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
@@ -3498,8 +3578,14 @@ function makeMove(fromI, toI, visual = false) {
   burning[toI] = movedBurn;
   effectOrders[toI] = [...effectOrders[fromI]];
   clearSquare(fromI);
-  if (movedElem & ELEM_EARTH) _applyEarthLanding(fromI, toI, s, visual); // Earth: destroy a block landed on, else drop a temp block along the move direction
-  _igniteFromCrossing(fromI, toI); // catch fire crossing opposing fire (or extinguish on a river) — real + sim (rolled back in sim)
+  if (movedElem & ELEM_EARTH) { // Earth: destroy a block landed on, else drop a temp block trail along the move
+    if (viaI >= 0) _applyEarthLandingVia(fromI, viaI, toI, s, visual); else _applyEarthLanding(fromI, toI, s, visual);
+  }
+  // Catch fire crossing opposing fire (or extinguish on a river) along EVERY square entered — both
+  // legs of a two-leg move. Real + sim (rolled back in sim).
+  _igniteAlongPath(toI, viaI >= 0
+    ? [..._movePathSquares(fromI, viaI, p), ..._movePathSquares(viaI, toI, p)]
+    : _movePathSquares(fromI, toI, p));
 
   // Ground items (sky drops): in simulation, bank the item so the search values
   // landing on item squares (via the inventory eval term). Real pickups run
@@ -3523,6 +3609,18 @@ function makeMove(fromI, toI, visual = false) {
 // real-move effect (visual): it runs identically in live play and headless re-sim — which drive every
 // real move through makeMove(visual=true) — but is kept out of minimax so lookahead stays cheap. The
 // block-destruction runs in sim too (it changes legality), which is why saveState covers specialSpaces.
+// Two-leg variant: the trail covers the origin, leg 1 (elbow included), and leg 2 up to but not
+// including the landing. Jumpers mark only their origin and the elbow, since they leap over the rest.
+function _applyEarthLandingVia(fromI, viaI, landI, side, visual) {
+  if (isBlockSpace(landI)) specialSpaces[landI] = null;
+  if (!visual) return;
+  const p = board[landI];
+  const squares = [fromI, ..._movePathSquares(fromI, viaI, p), ..._movePathSquares(viaI, landI, p)];
+  for (const i of squares) {
+    if (i === landI || board[i] !== NONE || specialSpaces[i] || i === merchantIdx) continue; // vacant squares only
+    specialSpaces[i] = { type: 'block', temp: true, owner: side, age: 0 };
+  }
+}
 function _applyEarthLanding(fromI, landI, side, visual) {
   if (isBlockSpace(landI)) specialSpaces[landI] = null; // Earth destroys the block it lands on (also in sim: changes legality)
   if (!visual) return;                                  // the block TRAIL below is a real-move effect only
@@ -3570,15 +3668,6 @@ function _ageTrails(side) {
 
 function endWhiteTurn() {
   _inspectIdx = -1; _inspectPreviewCol = -1; // the tap-marker rings are a player-turn thing; clear as control leaves the player
-  // If a Speed piece has remaining extra moves, show them before actually ending the turn
-  if (_speedIdx >= 0) {
-    const [_spx, _spy] = xy(_speedIdx);
-    const _spMoves = legalMoves(_spx, _spy);
-    if (_spMoves.length > 0) {
-      selected = _speedIdx; validMoves = _spMoves;
-      draw(); return;
-    }
-  }
   // The turn is truly ending — clear ALL extra-move state, Bloodthirsty included. Several turn-end
   // paths (shield bounce, merchant engage, recruit, void death, Speed pass, timeout) reset only the
   // Speed vars; a stale _bloodthirstyUsed=true then leaked across turns and wrongly denied the NEXT
@@ -4193,7 +4282,10 @@ function evaluate() {
 // Extra follow-up moves the piece now at `toI` earns this turn: Speed (speeds-1) plus a
 // Bloodthirsty bonus move if the move that landed there was a capture.
 function _extraMoveBudget(toI, wasCapture) {
-  const spd = speeds[toI] > 1 ? speeds[toI] - 1 : 0;
+  // Fast is a two-leg move whose second leg exists only if leg 1 engaged nothing; the search
+  // approximates it as one follow-up move after a NON-capturing landing. Granting it after a
+  // capture would have the AI value a capture-then-move that the rules no longer allow.
+  const spd = (speeds[toI] > 1 && !wasCapture) ? speeds[toI] - 1 : 0;
   const bt = (wasCapture && (statuses[toI] & STATUS_BLOODTHIRSTY)) ? 1 : 0;
   return spd + bt;
 }
@@ -4483,35 +4575,43 @@ function aiPlay() {
 
       // Shield bounce: attacker slides in, then bounces back (may still have Speed moves after).
       if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
-        _animateShieldBounce(move[0], move[1], (restI) => _aiSpeedContinue(restI, 0, _aiFinish));
+        _animateShieldBounce(move[0], move[1], () => _aiFinish()); // a bounce is terminal: no second leg
       } else {
         const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
+        // Fast piece whose chosen square engages nothing: make it the elbow and pick leg 2 greedily.
+        let aiVia = -1, aiDest = move[1];
+        if (speeds[move[0]] > 1 && _elbowEligible(move[0], move[1])) {
+          const l2 = _legTwoMoves(move[0], move[1]);
+          if (l2.length) { aiVia = move[1]; aiDest = _aiGreedyPick(l2, B); }
+        }
+        const [lfx, lfy] = xy(aiVia >= 0 ? aiVia : move[0]), [ltx, lty] = xy(aiDest); // last-leg geometry
+        const lToCX = MARGIN + ltx * TILE, lToCY = BOARD_Y + MARGIN + lty * TILE;
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
-        const _aiWasCapture = sides[move[1]] === W
-          || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2);
-        const _aiLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
-        makeMove(move[0], move[1], true);
-        if (_aiFromElems & ELEM_FIRE) applyFireTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
-        if (_aiFromElems & ELEM_WATER) applyWaterTrail(move[0], move[1], _aiFromPiece0, _aiFromSide0);
-        if (move[1] === merchantIdx) respawnMerchant();
-        const _aiPiece0 = board[move[1]], _aiSide0 = sides[move[1]], _aiHlth0 = health[move[1]];
-        const _aiIsCheckersJump = (_aiPiece0 === CHECKERS || _aiPiece0 === CHECKERS_KING) && Math.abs(mtx - mfx) === 2;
+        const _aiWasCapture = sides[aiDest] === W
+          || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(ltx - lfx) === 2);
+        const _aiLegs = aiVia >= 0 ? [aiVia, aiDest] : null;
+        makeMove(move[0], aiDest, true, aiVia);
+        if (_aiFromElems & ELEM_FIRE)  { if (aiVia >= 0) applyFireTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0);  applyFireTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
+        if (_aiFromElems & ELEM_WATER) { if (aiVia >= 0) applyWaterTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0); applyWaterTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
+        if (aiDest === merchantIdx) respawnMerchant();
+        const _aiPiece0 = board[aiDest], _aiSide0 = sides[aiDest], _aiHlth0 = health[aiDest];
+        const _aiIsCheckersJump = (_aiPiece0 === CHECKERS || _aiPiece0 === CHECKERS_KING) && Math.abs(ltx - lfx) === 2;
         const _aiAnimPieces = [{
-          toIdx: move[1],
-          fromCX: mFromCX, fromCY: mFromCY, toCX: mToCX, toCY: mToCY,
-          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[move[1]], spd: speeds[move[1]],
+          toIdx: aiDest,
+          fromCX: mFromCX, fromCY: mFromCY, toCX: lToCX, toCY: lToCY,
+          piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[aiDest], spd: speeds[aiDest],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
         _appendCaptureGhosts(_aiAnimPieces);
-        playMoveSfx(_aiPiece0, move[1]);
+        playMoveSfx(_aiPiece0, aiDest);
         _startMoveAnim(_aiAnimPieces, _aiLegs, () => {
           _drainCaptureAnims();
-          if (board[move[1]] !== NONE && itemSpaces[move[1]] !== ITEM_NONE) _applyItemAuto(itemSpaces[move[1]], move[1]);
+          if (board[aiDest] !== NONE && itemSpaces[aiDest] !== ITEM_NONE) _applyItemAuto(itemSpaces[aiDest], aiDest);
           recordPosition();
-          const _aiAfterLand = () => _aiTryChainJump(move[1], _aiIsCheckersJump, () =>
-            _aiBloodthirstyContinue(move[1], _aiWasCapture, (btDest) => _aiSpeedContinue(btDest, 0, _aiFinish)));
-          if (isVoidSpace(move[1]) && _aiPiece0 !== NONE) {
-            const [vx, vy] = xy(move[1]);
+          const _aiAfterLand = () => _aiTryChainJump(aiDest, _aiIsCheckersJump, () =>
+            _aiBloodthirstyContinue(aiDest, _aiWasCapture, () => _aiFinish()));
+          if (isVoidSpace(aiDest) && _aiPiece0 !== NONE) {
+            const [vx, vy] = xy(aiDest);
             startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _aiPiece0, _aiSide0, _aiAfterLand);
           } else { _aiAfterLand(); }
         });
@@ -4655,11 +4755,6 @@ function _aiExtraMove(dest, onDone) {
 }
 
 // Speed Up: a Black piece with speeds>1 takes up to speeds-1 extra moves.
-function _aiSpeedContinue(dest, movesUsed, onDone) {
-  if (board[dest] === NONE || sides[dest] !== B || speeds[dest] <= 1 || movesUsed >= speeds[dest] - 1) { onDone(); return; }
-  _aiExtraMove(dest, (newDest) => _aiSpeedContinue(newDest, movesUsed + 1, onDone));
-}
-
 // Bloodthirsty: a Black piece that just captured takes one extra move (mirrors the player rule).
 // Passes the piece's resulting index to onDone so any Speed moves continue from the right square.
 function _aiBloodthirstyContinue(dest, wasCapture, onDone) {
@@ -5687,6 +5782,31 @@ if (teleporterMode) {
 // Checkers chain jump: outline the acting piece instead of tinting it — the jump must be finished,
 // so there's no tap-to-cancel to advertise. Stroked here, on top of every board element, for the
 // same reason as the inspect ring below: an outline drawn at selection time gets washed out.
+// Two-leg plan in progress: an arrow from the piece to its elbow. The piece has NOT moved; the
+// arrow is the only thing that says where leg 1 goes, so it sits above every board element.
+if (selected >= 0 && _elbowIdx >= 0) {
+  const [ax, ay] = xy(selected), [bx, by] = xy(_elbowIdx);
+  const x0 = MARGIN + ax * TILE + TILE / 2, y0 = MARGIN + ay * TILE + TILE / 2;
+  const x1 = MARGIN + bx * TILE + TILE / 2, y1 = MARGIN + by * TILE + TILE / 2;
+  const ang = Math.atan2(y1 - y0, x1 - x0), head = 26, shaftEnd = 0.38 * TILE; // stop short of the elbow's centre
+  const ex = x1 - Math.cos(ang) * shaftEnd, ey = y1 - Math.sin(ang) * shaftEnd;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  for (const [col, wdt] of [["rgba(0,0,0,0.75)", 12], ["rgba(235,205,40,0.95)", 6]]) { // dark halo, then gold
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = wdt;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ex + Math.cos(ang) * head * 0.6, ey + Math.sin(ang) * head * 0.6);
+    ctx.lineTo(ex + Math.cos(ang + 2.5) * head, ey + Math.sin(ang + 2.5) * head);
+    ctx.lineTo(ex + Math.cos(ang - 2.5) * head, ey + Math.sin(ang - 2.5) * head);
+    ctx.closePath(); ctx.fill();
+  }
+  // The elbow square itself: outlined, since tapping it again lands there.
+  ctx.strokeStyle = "rgba(235,205,40,0.95)"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.roundRect(MARGIN + bx * TILE + 3, MARGIN + by * TILE + 3, TILE - 6, TILE - 6, 6); ctx.stroke();
+  ctx.restore();
+}
 if (selected >= 0 && _checkersChainIdx >= 0) {
   const [cjx, cjy] = xy(selected);
   ctx.save();
@@ -8408,7 +8528,6 @@ function handleTeleporterClick(cx, cy) {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
           if (fromSpace) {
-            if (_speedIdx >= 0) _speedIdx = i; // piece teleported; redirect speed second move to destination
             processNextQueuedItem();
           } else {
             recordPosition();
@@ -8578,7 +8697,7 @@ function handleInventoryClick(cx, cy) {
       }
       if (modeMap[item]) {
         modeMap[item]();
-        selected = -1; validMoves = [];
+        selected = -1; validMoves = []; _elbowIdx = -1;
         inventory._activeSlot = slotIdx;
         draw();
         return true;
@@ -8595,11 +8714,11 @@ function handleBoardClick(cx, cy) {
   const gx = Math.floor(mx / TILE), gy = Math.floor(my / TILE);
   // Fog (preview) row — the virtual row directly above the board (gy === -1): inspect what's incoming.
   if (gy === -1 && gx >= 0 && gx < 8) {
-    selected = -1; validMoves = []; _inspectIdx = -1; _inspectPreviewCol = gx;
+    selected = -1; validMoves = []; _elbowIdx = -1; _inspectIdx = -1; _inspectPreviewCol = gx;
     _kingInspectPreview(gx);
     draw(); return;
   }
-  if (!inB(gx, gy)) { selected = -1; validMoves = []; _inspectIdx = -1; _inspectPreviewCol = -1; draw(); return; }
+  if (!inB(gx, gy)) { selected = -1; validMoves = []; _elbowIdx = -1; _inspectIdx = -1; _inspectPreviewCol = -1; draw(); return; }
   const clicked = idx(gx, gy);
   _inspectIdx = clicked; _inspectPreviewCol = -1; // mark the tapped square (a ring is drawn around it)
   // Tap-to-inspect: on any tap that ISN'T a move (select, deselect, empty square, out-of-range piece,
@@ -8608,15 +8727,38 @@ function handleBoardClick(cx, cy) {
   if (selected < 0) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
   } else {
+    // Planning a two-leg move and tapped a square outside the current offer: if it is another
+    // leg-1 square, either re-pick the elbow there or -- if it engages something -- attack it
+    // directly as a plain single move (fall through with the leg-1 list restored).
+    if (_elbowIdx >= 0 && !validMoves.includes(clicked)) {
+      const [osx, osy] = xy(selected);
+      const l1 = legalMoves(osx, osy);
+      if (l1.includes(clicked)) {
+        const l2 = _tryElbow(selected, clicked);
+        if (l2) { _elbowIdx = clicked; validMoves = [clicked, ...l2]; draw(); return; }
+        _elbowIdx = -1; validMoves = l1;
+      }
+    }
     if (validMoves.includes(clicked)) {
-      _logInput({ t: 'm', f: selected, to: clicked }); // any board move/attack/recruit begins here
+      // Fast piece, first tap on an eligible square: set the elbow and wait for the destination.
+      if (_elbowIdx < 0) {
+        const l2 = _tryElbow(selected, clicked);
+        if (l2) { _elbowIdx = clicked; validMoves = [clicked, ...l2]; draw(); return; }
+      }
+      // Second tap: the elbow itself lands there (single move); anything else is the far end of
+      // the two-leg move, travelled via the elbow.
+      const viaI = (_elbowIdx >= 0 && clicked !== _elbowIdx) ? _elbowIdx : -1;
+      _elbowIdx = -1;
+      _logInput(viaI >= 0 ? { t: 'm', f: selected, to: clicked, via: viaI } : { t: 'm', f: selected, to: clicked }); // any board move/attack/recruit begins here
+      const legFromI = viaI >= 0 ? viaI : selected; // the LAST leg's origin: all geometry-derived rules read from here
       const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
+      const [lfx, lfy] = xy(legFromI);
       const pFromCX = MARGIN + pfx * TILE, pFromCY = BOARD_Y + MARGIN + pfy * TILE;
       const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
       // Match makeMove's castle test exactly (incl. pty===7 + rook-present) so the rook slide only
       // animates on a real castle — an Air King can now land on (6,7)/(2,7) as a plain 2-square move.
-      const isCKS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 6 && !wkMoved && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W;
-      const isCQS = board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 2 && !wkMoved && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W;
+      const isCKS = viaI < 0 && board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 6 && !wkMoved && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W;
+      const isCQS = viaI < 0 && board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 2 && !wkMoved && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W;
       const clickedDest = clicked;
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
@@ -8656,16 +8798,6 @@ function handleBoardClick(cx, cy) {
         selected = -1; validMoves = [];
         makeMove(fromI, clicked, false);
         recordPosition();
-        // Pre-register the Speed extra move at the bounce square so a Fast King recruiting a Grey
-        // can still go again (mirrors the shield-bounce / merchant-engage branches). Without this
-        // the turn ended after the recruit — a Fast King's second move was silently lost.
-        // The else-reset matters: recruiting ON the extra move must clear the stale _speedIdx
-        // from move 1, or endWhiteTurn would offer a third move.
-        if (sides[bounceI] === W && speeds[bounceI] > 1 && _speedMovesUsed < speeds[bounceI] - 1) {
-          _speedMovesUsed++; _speedIdx = bounceI;
-        } else {
-          _speedIdx = -1; _speedMovesUsed = 0;
-        }
         _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'recruit');
         return;
       }
@@ -8698,18 +8830,6 @@ function handleBoardClick(cx, cy) {
         }, 'shield', () => {
           // Impact: apply the hit now that the pre-hit approach frame is recorded.
           _sbResult = applyShieldBounceState(fromI, clicked, attackPiece);
-          if (_sbResult.voidDeath) {
-            _speedIdx = -1; _speedMovesUsed = 0;
-          } else {
-            // Pre-register Speed so endWhiteTurn offers the extra move after the bounce
-            // (mirrors the AI's _aiSpeedContinue after a shield bounce).
-            const _sbFinalI = _sbResult.bounceI;
-            if (sides[_sbFinalI] === W && speeds[_sbFinalI] > 1 && _speedMovesUsed < speeds[_sbFinalI] - 1) {
-              _speedMovesUsed++; _speedIdx = _sbFinalI;
-            } else {
-              _speedIdx = -1; _speedMovesUsed = 0; // bounce ON the extra move: clear the stale move-1 registration (no third move)
-            }
-          }
           recordPosition();
         });
         return;
@@ -8738,27 +8858,20 @@ function handleBoardClick(cx, cy) {
             if (attackElem & ELEM_FIRE) applyFireTrail(fromI, bounceI, attackPiece, W);
             if (attackElem & ELEM_WATER) applyWaterTrail(fromI, bounceI, attackPiece, W);
           }
-          // Pre-register speed so endWhiteTurn shows second move after shop closes
-          const _mSpI = bounceI !== fromI ? bounceI : fromI;
-          if (speeds[_mSpI] > 1 && _speedMovesUsed < speeds[_mSpI] - 1) {
-            _speedMovesUsed++; _speedIdx = _mSpI;
-          } else {
-            _speedIdx = -1; _speedMovesUsed = 0; // engaged ON the extra move: clear the stale move-1 registration (no third move)
-          }
           openMerchantShop(endWhiteTurn);
         });
         return;
       }
       const _fromElems = elements[selected], _fromPiece = board[selected], _fromSide = sides[selected], _fromI = selected;
-      const _midI2 = (Math.abs(ptx - pfx) === 2 && Math.abs(pty - pfy) === 2) ? idx((pfx + ptx) >> 1, (pfy + pty) >> 1) : -1;
+      const _midI2 = (Math.abs(ptx - lfx) === 2 && Math.abs(pty - lfy) === 2) ? idx((lfx + ptx) >> 1, (lfy + pty) >> 1) : -1;
       const _isCheckersJump = (_fromPiece === CHECKERS || _fromPiece === CHECKERS_KING)
         && _midI2 >= 0 && board[_midI2] !== NONE && sides[_midI2] !== _fromSide;
       const _wasCapture = sides[clicked] === B || sides[clicked] === N || _isCheckersJump; // a Grey kill also counts (Bloodthirsty)
-      // Extended Air move (Knight/Pawn/King second hop) → animate hop-by-hop. Computed pre-move.
-      const _airLegs = null; // Air moves are single-hop now (phasing sliders slide straight; no extended range)
-      makeMove(selected, clicked, true);
-      if (_fromElems & ELEM_FIRE) applyFireTrail(selected, clickedDest, _fromPiece, _fromSide);
-      if (_fromElems & ELEM_WATER) applyWaterTrail(selected, clickedDest, _fromPiece, _fromSide);
+      // A two-leg move animates through the elbow; a plain move goes straight.
+      const _airLegs = viaI >= 0 ? [viaI, clickedDest] : null;
+      makeMove(selected, clicked, true, viaI);
+      if (_fromElems & ELEM_FIRE)  { if (viaI >= 0) applyFireTrail(selected, viaI, _fromPiece, _fromSide);  applyFireTrail(legFromI, clickedDest, _fromPiece, _fromSide); }
+      if (_fromElems & ELEM_WATER) { if (viaI >= 0) applyWaterTrail(selected, viaI, _fromPiece, _fromSide); applyWaterTrail(legFromI, clickedDest, _fromPiece, _fromSide); }
       const wAnimPieces = [{
         toIdx: clickedDest,
         fromCX: pFromCX, fromCY: pFromCY, toCX: pToCX, toCY: pToCY,
@@ -8791,19 +8904,12 @@ function handleBoardClick(cx, cy) {
             const [_btx, _bty] = xy(movedTo);
             const _btMoves = legalMoves(_btx, _bty);
             if (_btMoves.length > 0) {
-              _speedMovesUsed = 0; // capture resets speed budget
               _bloodthirstyUsed = true;
               _bloodthirstyIdx = movedTo; selected = movedTo; validMoves = _btMoves;
               draw(); return;
             }
           }
           _bloodthirstyIdx = -1;
-          // Pre-register speed extra move so endWhiteTurn shows it after any item/interaction
-          if (speeds[movedTo] > 1 && _speedMovesUsed < speeds[movedTo] - 1) {
-            _speedMovesUsed++; _speedIdx = movedTo;
-          } else {
-            _speedIdx = -1; _speedMovesUsed = 0; _bloodthirstyUsed = false;
-          }
           // A sky-drop targeting movedTo may not have landed yet (anim takes 380ms, move takes 180ms).
           // Intercept it early so the piece picks it up immediately.
           const pendingDropIdx = _skyDropAnims.findIndex(a => a.i === movedTo);
@@ -8831,13 +8937,13 @@ function handleBoardClick(cx, cy) {
       });
       return;
     } else if (clicked === selected) {
-      if (_speedIdx >= 0) { _logInput({ t: 'p' }); _speedIdx = -1; _speedMovesUsed = 0; selected = -1; validMoves = []; endWhiteTurn(); return; }
+      _elbowIdx = -1; // abandon a planned two-leg move (the piece never moved)
       if (_bloodthirstyIdx >= 0) { _logInput({ t: 'p' }); _bloodthirstyIdx = -1; _bloodthirstyUsed = false; selected = -1; validMoves = []; endWhiteTurn(); return; }
       if (_checkersChainIdx < 0) { selected = -1; validMoves = []; }
     } else if (sides[clicked] === W) {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { _elbowIdx = -1; selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
     } else {
-      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0 && _speedIdx < 0) { selected = -1; validMoves = []; }
+      if (_checkersChainIdx < 0 && _bloodthirstyIdx < 0) { _elbowIdx = -1; selected = -1; validMoves = []; }
     }
   }
   draw();
@@ -8902,7 +9008,7 @@ canvas.addEventListener("click", (e) => {
   if (!gameOver && _inRect(cx, cy, RESIGN_BTN)) { playSfx('button'); resignConfirm = true; draw(); return; }
   if (!gameOver && replaySnapshots.length > 1 &&
       turn === W && !aiThinking &&
-      _speedIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0 && // mid-turn extra-move pending: replay would revert the first move
+      _elbowIdx < 0 && _bloodthirstyIdx < 0 && _checkersChainIdx < 0 && // mid-turn plan/extra-move pending: replay would splice the board under it
       _inRect(cx, cy, LAST_MOVE_BTN)) {
     playSfx('button');
     selected = -1; validMoves = []; // clear any selection — the board is about to be spliced
@@ -9207,7 +9313,7 @@ function _aiWhiteStep() {
   //    selected piece may act — play its best continuation, or pass (click the
   //    piece again) when ending the turn scores better. Without this the auto
   //    player deadlocks trying to move other pieces.
-  if (selected >= 0 && (_speedIdx >= 0 || _bloodthirstyIdx >= 0 || _checkersChainIdx >= 0)) {
+  if (selected >= 0 && (_elbowIdx >= 0 || _bloodthirstyIdx >= 0 || _checkersChainIdx >= 0)) {
     const from = selected;
     const cc = _sqCenter;
     let bestTo = -1, bestVal = -Infinity;
@@ -9219,7 +9325,7 @@ function _aiWhiteStep() {
       });
       if (val > bestVal) { bestVal = val; bestTo = to; }
     }
-    const inChain = _checkersChainIdx >= 0; // chain jumps can't be passed by re-clicking
+    const inChain = _checkersChainIdx >= 0 || _elbowIdx >= 0; // chain jumps can't be passed by re-clicking; a planned elbow must be completed, not cancelled into a loop
     const passVal = inChain ? -Infinity : withState(() => minimax(AUTO_DEPTH - 1, -Infinity, Infinity, false));
     const target = (bestTo >= 0 && bestVal >= passVal) ? bestTo : from;
     const [ccx, ccy] = cc(target);
