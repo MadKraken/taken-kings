@@ -4947,8 +4947,14 @@ if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
   }
 }
 
-// Stats â€" right side
-{
+drawStatsAndTimer();
+}
+
+// Score / Gold readout and the turn clock. Split out of drawBackground so a modal that dims the
+// whole canvas (the Merchant shop, the sell confirmation) can simply re-draw it afterwards and
+// leave it legible, instead of carving an un-dimmed bar out of the top of the screen.
+function drawStatsAndTimer() {
+  // Stats — right side
   ctx.font = "42px Canterbury";
   ctx.textBaseline = "middle";
   ctx.textAlign = "right";
@@ -4957,21 +4963,20 @@ if (groundEl && groundEl.complete && groundEl.naturalWidth > 0) {
   ctx.fillText(`Taken Kings: ${score}`, MARGIN + BOARD_PX, LOGO_H * 0.35);
   ctx.fillText(`Gold: ${gold}`, MARGIN + BOARD_PX, LOGO_H * 0.70);
   ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-}
 
-// Turn timer — centered above the board
-if (timedMode && !replayMode && gamePhase === 'playing' && !gameOver) {
-  const secsLeft = _timerEnd > 0 ? Math.max(0, Math.ceil((_timerEnd - Date.now()) / 1000)) : _timerDisplay;
-  if (_timerEnd > 0) _timerDisplay = secsLeft; // keep display in sync while running
-  const urgent = secsLeft <= 10;
-  const mins = Math.floor(secsLeft / 60), secs = secsLeft % 60;
-  const timeStr = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : `${secs}s`;
-  ctx.font = "52px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 8; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
-  ctx.fillStyle = urgent ? "#ff4444" : "#ffffff";
-  ctx.fillText(`⏱ ${timeStr}`, MARGIN + BOARD_PX / 2, LOGO_H / 2);
-  ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-}
+  // Turn timer — centered above the board
+  if (timedMode && !replayMode && gamePhase === 'playing' && !gameOver) {
+    const secsLeft = _timerEnd > 0 ? Math.max(0, Math.ceil((_timerEnd - Date.now()) / 1000)) : _timerDisplay;
+    if (_timerEnd > 0) _timerDisplay = secsLeft; // keep display in sync while running
+    const urgent = secsLeft <= 10;
+    const mins = Math.floor(secsLeft / 60), secs = secsLeft % 60;
+    const timeStr = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : `${secs}s`;
+    ctx.font = "52px Canterbury"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 8; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = urgent ? "#ff4444" : "#ffffff";
+    ctx.fillText(`⏱ ${timeStr}`, MARGIN + BOARD_PX / 2, LOGO_H / 2);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  }
 }
 
 function drawBoardArea(_animT, _animToSet, _fieldAnim) {
@@ -6739,12 +6744,12 @@ function drawPromoDialog() {}
 function drawShopDialog() {
 // Shop dialogue
 if (shopMode) {
-  // Backdrop starts below the status header so the logo, Taken Kings / Gold and the turn timer stay
-  // lit. The clock keeps running while the shop is open (and now closes it when it expires), so the
-  // timer is exactly what the player needs to see here. Everything the header draws sits in the top
-  // LOGO_H band; the dialog itself is centred, well clear of it.
   ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(0, LOGO_H, canvas.width, canvas.height - LOGO_H);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Re-draw the score and clock over the dim. The clock keeps running while the shop is open (and
+  // expiring it closes the shop), so it has to stay readable — but dimming everything and painting
+  // these back on top reads far better than leaving an un-dimmed band across the top of the screen.
+  drawStatsAndTimer();
 
   const dlgW = 820, dlgH = 500;
   const dlgX = (canvas.width - dlgW) / 2, dlgY = (canvas.height - dlgH) / 2;
@@ -6841,7 +6846,8 @@ function drawSellConfirm() {
   if (item === ITEM_NONE) return;
   const g = _sellConfirmGeom();
   ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(0, LOGO_H, canvas.width, canvas.height - LOGO_H); // header stays lit, as with the shop backdrop
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStatsAndTimer(); // its backdrop covers the shop's, so paint the readout back on top again
   ctx.fillStyle = "#1e1e3c";
   ctx.beginPath(); ctx.roundRect(g.px, g.py, g.pw, g.ph, 12); ctx.fill();
   ctx.strokeStyle = "rgba(255,200,50,0.5)"; ctx.lineWidth = 2;
