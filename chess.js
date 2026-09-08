@@ -1,4 +1,4 @@
-﻿const VERSION = "717";
+﻿const VERSION = "718";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -238,6 +238,9 @@ const INV_X = MARGIN;
 const SEL_BORDER = "rgba(90,170,255,0.95)"; // Checkers chain: outline only — the jump can't be cancelled
 const PASS_COLOR = "rgba(235,205,40,0.55)"; // selected piece's own square (tap = deselect, or pass an extra move)
 const MOVE_COLOR = "rgba(100,180,60,0.55)";
+// Where a Fast Warrior could END UP after both legs, shown while it is still choosing leg 1. Blue,
+// not green: green means "tap here to go there", and these need an elbow picked first.
+const LEG2_PREVIEW_COLOR = "rgba(90,170,255,0.42)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
 
@@ -1229,17 +1232,31 @@ function _elbowCandidates(fromI) {
   else if (p === KING) moves = moves.filter(m => Math.abs((m % 8) - x) < 2);
   return moves;
 }
-// Squares an Air Fast Warrior may use as a JOINT but cannot land on (someone is standing there, or
-// it is a block). Dashed, never filled: the fill means "you may land here", and these are only
-// waypoints. Memoised -- the board cannot change while a selection is held.
-let _jointCache = { key: '', list: [] };
-function _elbowOnlySquares() {
-  if (selected < 0 || sides[selected] !== W || speeds[selected] <= 1 || !(elements[selected] & ELEM_AIR)) return [];
+// The two overlays a selected Fast Warrior gets, computed together in one pass and memoised (the
+// board cannot change while a selection is held, and this walks every candidate elbow):
+//   joints -- squares usable as an elbow but NOT landable (an Air Warrior over a piece or a block).
+//             Dashed, never filled: a fill means "you may land here", and these are only waypoints.
+//   leg2   -- everywhere the Warrior could END UP after both legs, across every candidate elbow.
+//             Shown only while leg 1 is still being chosen; once an elbow is picked, that elbow's
+//             own destinations become the ordinary green offer.
+const _EMPTY_VIEW = { joints: [], leg2: [] };
+let _elbowViewCache = { key: '', joints: [], leg2: [] };
+function _elbowView() {
+  if (selected < 0 || sides[selected] !== W || speeds[selected] <= 1) return _EMPTY_VIEW;
   const key = `${selected}|${_elbowIdx}|${validMoves.join(',')}`;
-  if (_jointCache.key !== key) {
-    _jointCache = { key, list: _elbowCandidates(selected).filter(m => m !== _elbowIdx && !validMoves.includes(m) && _tryElbow(selected, m)) };
+  if (_elbowViewCache.key !== key) {
+    const [sx, sy] = xy(selected);
+    const landings = legalMoves(sx, sy);          // leg-1 squares it could simply move to
+    const joints = [], leg2 = new Set();
+    for (const m of _elbowCandidates(selected)) {
+      const l2 = _tryElbow(selected, m);
+      if (!l2) continue;
+      if (m !== _elbowIdx && !landings.includes(m)) joints.push(m); // un-landable => a joint only
+      if (_elbowIdx < 0) for (const d of l2) leg2.add(d);
+    }
+    _elbowViewCache = { key, joints, leg2: [...leg2].filter(d => !landings.includes(d)) };
   }
-  return _jointCache.list;
+  return _elbowViewCache;
 }
 // Would tapping `toI` with `fromI` selected PLAN a two-leg move rather than move the piece? Shared
 // by the click handler and the replay driver so both agree on what a single tap means.
@@ -5483,6 +5500,13 @@ if (selected >= 0) {
   }
 }
 
+// Two-leg reach preview: everywhere a Fast Warrior could finish, before it has picked an elbow.
+// Drawn first so the green leg-1 offer sits on top of it.
+for (const m of _elbowView().leg2) {
+  const [mx, my] = xy(m);
+  ctx.fillStyle = LEG2_PREVIEW_COLOR;
+  ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
+}
 // Valid moves
 for (const m of validMoves) {
   const [mx, my] = xy(m);
@@ -5841,7 +5865,7 @@ if (teleporterMode) {
 // so there's no tap-to-cancel to advertise. Stroked here, on top of every board element, for the
 // same reason as the inspect ring below: an outline drawn at selection time gets washed out.
 if (selected >= 0) {
-  const joints = _elbowOnlySquares();
+  const joints = _elbowView().joints;
   if (joints.length) {
     ctx.save();
     ctx.globalAlpha = 1;
