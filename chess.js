@@ -1,4 +1,4 @@
-﻿const VERSION = "715";
+﻿const VERSION = "716";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1200,6 +1200,52 @@ function _tryElbow(fromI, m) {
   const l2 = _legTwoMoves(fromI, m);
   return l2.length ? l2 : null;
 }
+// Squares usable as a JOINT. For everyone but Air that is just the legal landings. An Air Warrior
+// phases through pieces, so a square its movement reaches is a joint even when it could never LAND
+// there -- a friendly piece standing on it, say. legalMoves would never offer such a square, which
+// is why the candidate set is asked for separately: a Fast Air Knight on d7 can elbow on f6 even
+// with its own Pawn there.
+// Computed by asking the real move generator on a board cleared of every other piece: that is
+// exactly "where can my pattern take me, ignoring who is standing about", and it keeps the movement
+// rules in one place. Blocks and Voids live in specialSpaces, so they survive the clearing and the
+// generator's own Air/Earth handling still applies.
+function _elbowCandidates(fromI) {
+  const [x, y] = xy(fromI);
+  if (!(elements[fromI] & ELEM_AIR)) return legalMoves(x, y);
+  const arrs = _squareArrays();
+  const saved = arrs.map(a => a.slice()), savedEff = effectOrders.map(a => a.slice());
+  let moves;
+  try {
+    for (let i = 0; i < 64; i++) if (i !== fromI) clearSquare(i);
+    moves = pseudoMoves(x, y);
+  } finally {
+    arrs.forEach((a, k) => a.splice(0, 64, ...saved[k]));
+    effectOrders.splice(0, 64, ...savedEff);
+  }
+  const p = board[fromI];
+  // Captures are landings, never joints: a Pawn's diagonal (including en passant) and a castle are
+  // both landing-only specials that an empty board would otherwise hand back.
+  if (p === PAWN) moves = moves.filter(m => (m % 8) === x);
+  else if (p === KING) moves = moves.filter(m => Math.abs((m % 8) - x) < 2);
+  return moves;
+}
+// Squares an Air Fast Warrior may use as a JOINT but cannot land on (someone is standing there, or
+// it is a block). Dashed, never filled: the fill means "you may land here", and these are only
+// waypoints. Memoised -- the board cannot change while a selection is held.
+let _jointCache = { key: '', list: [] };
+function _elbowOnlySquares() {
+  if (selected < 0 || sides[selected] !== W || speeds[selected] <= 1 || !(elements[selected] & ELEM_AIR)) return [];
+  const key = `${selected}|${_elbowIdx}|${validMoves.join(',')}`;
+  if (_jointCache.key !== key) {
+    _jointCache = { key, list: _elbowCandidates(selected).filter(m => m !== _elbowIdx && !validMoves.includes(m) && _tryElbow(selected, m)) };
+  }
+  return _jointCache.list;
+}
+// Would tapping `toI` with `fromI` selected PLAN a two-leg move rather than move the piece? Shared
+// by the click handler and the replay driver so both agree on what a single tap means.
+function _tapPlans(fromI, toI) {
+  return speeds[fromI] > 1 && _elbowCandidates(fromI).includes(toI) && !!_tryElbow(fromI, toI);
+}
 // Squares a move ENTERS (never the origin): a straight slide walks its whole path; a jump or
 // teleport (non-straight, or from===to) touches only the landing square. Jumpers leap OVER their
 // midpoint (same rule applyFireTrail lays by), so they too are landing-square-only.
@@ -1571,7 +1617,7 @@ function _applyReplayInput(a) {
       // A plain move by a Fast piece onto a square that could have been an elbow took TWO taps live:
       // the first only planned (no log entry), the second landed. _tryElbow is deterministic, so
       // reproduce the double tap from state -- one tap here would plan instead of moving.
-      else if (_tryElbow(a.f, a.to)) handleBoardClick(tx, ty);
+      else if (_tapPlans(a.f, a.to)) handleBoardClick(tx, ty);
       handleBoardClick(tx, ty); break;
     }
     case 'ta': teamAdvance(); break;
@@ -5794,6 +5840,19 @@ if (teleporterMode) {
 // Checkers chain jump: outline the acting piece instead of tinting it — the jump must be finished,
 // so there's no tap-to-cancel to advertise. Stroked here, on top of every board element, for the
 // same reason as the inspect ring below: an outline drawn at selection time gets washed out.
+if (selected >= 0) {
+  const joints = _elbowOnlySquares();
+  if (joints.length) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "rgba(235,205,40,0.9)"; ctx.lineWidth = 3; ctx.setLineDash([9, 7]);
+    for (const m of joints) {
+      const [jx, jy] = xy(m);
+      ctx.beginPath(); ctx.roundRect(MARGIN + jx * TILE + 4, MARGIN + jy * TILE + 4, TILE - 8, TILE - 8, 6); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
 // Two-leg plan in progress: an arrow from the piece to its elbow. The piece has NOT moved; the
 // arrow is the only thing that says where leg 1 goes, so it sits above every board element.
 if (selected >= 0 && _elbowIdx >= 0) {
@@ -8738,24 +8797,33 @@ function handleBoardClick(cx, cy) {
   if (selected < 0) {
     if (sides[clicked] === W) { selected = clicked; validMoves = legalMoves(gx, gy); playSelectSfx(board[clicked]); }
   } else {
-    // Planning a two-leg move and tapped a square outside the current offer: if it is another
-    // leg-1 square, either re-pick the elbow there or -- if it engages something -- attack it
-    // directly as a plain single move (fall through with the leg-1 list restored).
-    if (_elbowIdx >= 0 && !validMoves.includes(clicked)) {
-      const [osx, osy] = xy(selected);
-      const l1 = legalMoves(osx, osy);
-      if (l1.includes(clicked)) {
-        const l2 = _tryElbow(selected, clicked);
-        if (l2) { _elbowIdx = clicked; validMoves = [clicked, ...l2]; draw(); return; }
-        _elbowIdx = -1; validMoves = l1;
+    // --- two-leg planning ---------------------------------------------------------------
+    // Set the elbow to `m` and offer leg 2. The elbow joins the offer only if the piece could also
+    // LAND there; an Air joint over a friendly piece or a block is a joint and nothing more.
+    const _planElbow = (m) => {
+      const l2 = _tryElbow(selected, m);
+      if (!l2) return false;
+      const [sx0, sy0] = xy(selected);
+      _elbowIdx = m;
+      validMoves = legalMoves(sx0, sy0).includes(m) ? [m, ...l2] : l2;
+      draw(); return true;
+    };
+    if (_elbowIdx < 0) {
+      // First tap: any joint candidate plans, whether or not it is also a legal landing.
+      if (_tapPlans(selected, clicked) && _planElbow(clicked)) return;
+    } else if (!validMoves.includes(clicked)) {
+      // Planning, and the tap is not on the leg-2 offer.
+      if (clicked === _elbowIdx) { // an un-landable joint: tapping it again abandons the plan
+        const [sx1, sy1] = xy(selected);
+        _elbowIdx = -1; validMoves = legalMoves(sx1, sy1); draw(); return;
       }
+      if (_elbowCandidates(selected).includes(clicked) && _planElbow(clicked)) return; // re-pick
+      const [sx2, sy2] = xy(selected);
+      const l1 = legalMoves(sx2, sy2);
+      // Engages something (or is otherwise a plain landing): drop the plan and take it directly.
+      if (l1.includes(clicked)) { _elbowIdx = -1; validMoves = l1; }
     }
     if (validMoves.includes(clicked)) {
-      // Fast piece, first tap on an eligible square: set the elbow and wait for the destination.
-      if (_elbowIdx < 0) {
-        const l2 = _tryElbow(selected, clicked);
-        if (l2) { _elbowIdx = clicked; validMoves = [clicked, ...l2]; draw(); return; }
-      }
       // Second tap: the elbow itself lands there (single move); anything else is the far end of
       // the two-leg move, travelled via the elbow.
       const viaI = (_elbowIdx >= 0 && clicked !== _elbowIdx) ? _elbowIdx : -1;
