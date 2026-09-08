@@ -1,4 +1,4 @@
-﻿const VERSION = "719";
+﻿const VERSION = "720";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1251,7 +1251,9 @@ function _elbowView() {
     for (const m of _elbowCandidates(selected)) {
       const l2 = _tryElbow(selected, m);
       if (!l2) continue;
-      if (m !== _elbowIdx && !landings.includes(m)) joints.push(m); // un-landable => a joint only
+      // Both overlays advertise CANDIDATE elbows, so both are dropped once leg 1 is settled: from
+      // then on the board shows the plan (arrow + elbow) and the leg-2 offer, nothing else.
+      if (_elbowIdx < 0 && !landings.includes(m)) joints.push(m); // un-landable => a joint only
       if (_elbowIdx < 0) for (const d of l2) leg2.add(d);
     }
     _elbowViewCache = { key, joints, leg2: [...leg2].filter(d => !landings.includes(d)) };
