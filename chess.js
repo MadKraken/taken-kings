@@ -1,4 +1,4 @@
-﻿const VERSION = "716";
+﻿const VERSION = "717";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5845,7 +5845,8 @@ if (selected >= 0) {
   if (joints.length) {
     ctx.save();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = "rgba(235,205,40,0.9)"; ctx.lineWidth = 3; ctx.setLineDash([9, 7]);
+    // Green, matching the move highlights: these are movement waypoints, not the gold elbow itself.
+    ctx.strokeStyle = "rgba(100,180,60,0.95)"; ctx.lineWidth = 3; ctx.setLineDash([9, 7]);
     for (const m of joints) {
       const [jx, jy] = xy(m);
       ctx.beginPath(); ctx.roundRect(MARGIN + jx * TILE + 4, MARGIN + jy * TILE + 4, TILE - 8, TILE - 8, 6); ctx.stroke();
