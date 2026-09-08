@@ -1,4 +1,4 @@
-﻿const VERSION = "718";
+﻿const VERSION = "719";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5869,11 +5869,22 @@ if (selected >= 0) {
   if (joints.length) {
     ctx.save();
     ctx.globalAlpha = 1;
-    // Green, matching the move highlights: these are movement waypoints, not the gold elbow itself.
-    ctx.strokeStyle = "rgba(100,180,60,0.95)"; ctx.lineWidth = 3; ctx.setLineDash([9, 7]);
+    // Diagonal green hatching plus a solid edge: more presence than an outline alone, but openly
+    // striped rather than a solid fill — a solid green square means "you may land here", and these
+    // are squares the Warrior only passes through. Drawn over the occupant (that is why the square
+    // is a joint at all), with gaps wide enough to read the piece underneath.
     for (const m of joints) {
       const [jx, jy] = xy(m);
-      ctx.beginPath(); ctx.roundRect(MARGIN + jx * TILE + 4, MARGIN + jy * TILE + 4, TILE - 8, TILE - 8, 6); ctx.stroke();
+      const bx = MARGIN + jx * TILE, by = MARGIN + jy * TILE;
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(bx + 3, by + 3, TILE - 6, TILE - 6, 6); ctx.clip();
+      ctx.strokeStyle = "rgba(100,180,60,0.5)"; ctx.lineWidth = 9;
+      for (let d = 0; d <= TILE * 2; d += 26) { // 45°, top-right to bottom-left
+        ctx.beginPath(); ctx.moveTo(bx + d, by); ctx.lineTo(bx + d - TILE, by + TILE); ctx.stroke();
+      }
+      ctx.restore();
+      ctx.strokeStyle = "rgba(100,180,60,0.95)"; ctx.lineWidth = 3; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.roundRect(bx + 4, by + 4, TILE - 8, TILE - 8, 6); ctx.stroke();
     }
     ctx.restore();
   }
