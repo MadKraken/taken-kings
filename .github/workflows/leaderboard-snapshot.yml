@@ -1,0 +1,55 @@
+# Snapshot the leaderboard into the repo, twice a week.
+#
+# This job does three useful things at once:
+#
+#  1. BACKUP / PERMANENCE. It commits leaderboard-snapshot.json, which GitHub Pages serves next to
+#     the game. The game falls back to it whenever Supabase is unreachable, so the hall of fame
+#     stays readable even if the backend is paused, deleted, or long gone. It is also the only
+#     backup of the scores — the table lives solely in Supabase otherwise.
+#
+#  2. SUPABASE KEEP-ALIVE. Free-tier projects pause after about a week with no activity, which is
+#     exactly what killed the leaderboard between 2026-09-08 and 2026-10-13. Reading the table IS
+#     activity, so running twice a week (max gap 4 days) keeps the pause clock from ever reaching
+#     7 days. This is the real reason for the cadence; the data rarely changes that fast.
+#
+#  3. GITHUB SCHEDULE KEEP-ALIVE (best effort). GitHub disables scheduled workflows in a PUBLIC
+#     repo "when no repository activity has occurred in 60 days". The snapshot always embeds a
+#     fresh fetched_at, so every run commits — which is repository activity. Whether a commit
+#     pushed with GITHUB_TOKEN resets that timer is NOT documented by GitHub and community reports
+#     conflict, so treat this as a bonus rather than a guarantee: see docs/LONGEVITY.md. If it does
+#     not hold, the schedule stops ~60 days after the last human push and the game degrades to the
+#     last committed snapshot, which is the whole point of (1).
+name: Leaderboard snapshot
+
+on:
+  schedule:
+    - cron: '17 5 * * 1,4'   # Mon & Thu 05:17 UTC — max 4-day gap, inside Supabase's ~7-day fuse
+  workflow_dispatch:         # and runnable by hand from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: leaderboard-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the live leaderboard
+        run: python3 scripts/snapshot_leaderboard.py
+
+      - name: Commit the snapshot
+        run: |
+          if git diff --quiet -- leaderboard-snapshot.json; then
+            echo "snapshot unchanged (not even the timestamp?) — nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions"
+          git config user.email "github-actions@github.com"
+          git add leaderboard-snapshot.json
+          git commit -m "Leaderboard snapshot $(date -u +%Y-%m-%d)"
+          git push

@@ -1,4 +1,4 @@
-﻿const VERSION = "720";
+﻿const VERSION = "721";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4935,6 +4935,7 @@ function _triggerGameOver(msg) {
   } else {
     gameOver = true;
     gameMsg = msg;
+    _recordLocalBest();              // the run is really over — bank it locally
     stopWindLoop(0); // silence the ambient wind loop on Game Over
     playSfx('over1'); playSfx('over2'); // Game Over
   }
@@ -7038,6 +7039,7 @@ function _rewinderOfferAccept() {
 function _rewinderOfferDecline() {
   _rewinderSaveOffer = false;
   gameOver = true;
+  _recordLocalBest();                // declined the save — the run ends here
   stopWindLoop(0); // silence ambient wind on Game Over
   playSfx('over1'); playSfx('over2'); // Game Over
   draw();
@@ -7463,16 +7465,48 @@ const _lbData = {};   // key -> null (unloaded) | array of rows
 const _lbState = {};  // key -> 'idle' | 'loading' | 'ready' | 'error'
 for (const b of LB_BOARDS) { _lbData[b.key] = null; _lbState[b.key] = 'idle'; }
 
+// Static snapshot committed to the repo and served next to the game, written twice a week by
+// .github/workflows/leaderboard-snapshot.yml. It is the fallback when Supabase is unreachable --
+// paused, deleted, or simply gone years from now -- so the hall of fame stays readable with no
+// backend at all. Relative URL: it sits beside index.html wherever the game is hosted.
+let _lbSnap = null;            // parsed snapshot, once loaded
+let _lbSnapState = 'idle';     // idle | loading | ready | error
+let _lbSnapWaiting = [];       // callbacks queued while the single fetch is in flight
+function _lbLoadSnapshot(then) {
+  if (_lbSnapState === 'ready' || _lbSnapState === 'error') { then(); return; }
+  // Two boards can fail at once (switching tabs quickly). Queue every caller rather than dropping
+  // the later ones, or their tab would sit on "Loading…" for good.
+  _lbSnapWaiting.push(then);
+  if (_lbSnapState === 'loading') return;
+  _lbSnapState = 'loading';
+  const settle = (state, j) => {
+    _lbSnapState = state; if (j) _lbSnap = j;
+    const queued = _lbSnapWaiting; _lbSnapWaiting = [];
+    for (const cb of queued) cb();
+  };
+  fetch('leaderboard-snapshot.json', { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(j => settle('ready', j))
+    .catch(() => settle('error', null));
+}
 function _lbFetch(key) {
   if (_lbState[key] === 'loading') return;
   _lbState[key] = 'loading';
   if (leaderboardOpen) draw();
   const asc = !!_lbBoard(key).speed; // speed boards rank by LOWEST value (time)
   const url = `${SUPABASE_URL}/rest/v1/scores?board=eq.${key}&select=name,value,created_at&order=value.${asc ? 'asc' : 'desc'}&limit=${LB_MAX_ROWS}`;
+  // Backend unreachable (or erroring): fall back to the snapshot, and to local bests if even that
+  // is missing. 'stale' and 'offline' are both readable states, not errors.
+  const _fallback = () => _lbLoadSnapshot(() => {
+    const rows = (_lbSnap && _lbSnap.boards && _lbSnap.boards[key]) || null;
+    if (rows && rows.length) { _lbData[key] = rows; _lbState[key] = 'stale'; }
+    else _lbState[key] = 'offline';
+    if (leaderboardOpen) draw();
+  });
   fetch(url, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY }, cache: 'no-store' })
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(rows => { _lbData[key] = rows; _lbState[key] = 'ready'; if (leaderboardOpen) draw(); })
-    .catch(() => { _lbState[key] = 'error'; if (leaderboardOpen) draw(); });
+    .catch(_fallback);
 }
 function _lbOpen() {
   leaderboardOpen = true; _lbTab = LB_BOARDS[0].key;
@@ -7500,6 +7534,36 @@ const LB_SUBMIT_URL = SUPABASE_URL + '/functions/v1/bright-task';
 let _lbSubmitState = 'idle'; // 'idle' | 'submitting' | 'done' | 'error'
 let _lbSubmitMsg = '';       // status line under the button
 let _lbSubmitWarn = false;   // ranked, but the server's re-simulated score differed from live
+
+// --- Local bests -------------------------------------------------------------------------
+// Kept in localStorage, so they outlive any backend: the global board needs Supabase, these need
+// nothing. Shown when the leaderboard is unreachable, and the reason a dead backend costs the
+// player a ranking rather than the whole score chase.
+const LOCAL_BEST_MAX = 10;
+let _localBests = { hs_untimed: [], hs_15s: [] };
+try {
+  const raw = JSON.parse(localStorage.getItem('tk_local_bests') || '{}') || {};
+  for (const k of ['hs_untimed', 'hs_15s']) if (Array.isArray(raw[k])) _localBests[k] = raw[k];
+} catch (e) {}
+// Which board this run belongs to, mirroring the server's choice (validate/index.ts): untimed, or
+// the 15s timer. Any other timer length is unranked, here as there.
+function _localBoardKey() {
+  if (!timedMode) return 'hs_untimed';
+  return timedModeSecs === 15 ? 'hs_15s' : null;
+}
+// Record the finished run. Live-only: the headless re-sim reaches the same game-over paths, and it
+// must not touch (or even look for) localStorage.
+function _recordLocalBest() {
+  if (_instant || replayMode || gamePhase !== 'playing') return;
+  if (_autoPlayUsedThisRun || score < 1) return;   // same bar as the global board
+  const key = _localBoardKey();
+  if (!key) return;
+  const list = _localBests[key];
+  list.push({ v: score, d: new Date().toISOString().slice(0, 10) });
+  list.sort((a, b) => b.v - a.v);
+  _localBests[key] = list.slice(0, LOCAL_BEST_MAX);
+  try { localStorage.setItem('tk_local_bests', JSON.stringify(_localBests)); } catch (e) {}
+}
 
 // A run is submittable only if it's a genuine, reproducible human run on an eligible mode.
 // Auto-play consumes RNG the input log can't reproduce (server would reject it), so it's barred.
@@ -7667,7 +7731,7 @@ function _lbDoSubmit(name) {
       clearTimeout(_timeout);
       _lbSubmitState = 'error';
       _stashRunForReview(payload); // network/timeout: the run never landed — keep it recoverable too
-      _lbSubmitMsg = (e && e.name === 'AbortError') ? 'Timed out — check connection, retry.' : 'Network error — retry.';
+      _lbSubmitMsg = (e && e.name === 'AbortError') ? 'Timed out — check connection, retry.' : 'Leaderboard offline — saved locally.';
       draw();
     });
 }
@@ -7867,11 +7931,27 @@ function drawLeaderboardScreen() {
   if (state === 'loading' || state === 'idle') {
     ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "34px Canterbury";
     ctx.fillText("Loading…", canvas.width / 2, LB_LIST_TOP + 120);
-  } else if (state === 'error') {
-    ctx.fillStyle = "#e08080"; ctx.font = "34px Canterbury";
-    ctx.fillText("Couldn't load scores.", canvas.width / 2, LB_LIST_TOP + 100);
-    ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "28px Canterbury";
-    ctx.fillText("Check your connection, then tap Refresh.", canvas.width / 2, LB_LIST_TOP + 150);
+  } else if (state === 'offline') {
+    // No backend and no snapshot: show what the player has done themselves. Calm, not an error —
+    // the game is fine, only the global board is away.
+    const mine = _localBests[_lbTab] || [];
+    ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = "34px Canterbury";
+    ctx.fillText("Leaderboard offline", canvas.width / 2, LB_LIST_TOP + 10);
+    ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "27px Canterbury";
+    ctx.fillText(mine.length ? "Your best runs on this board:" : "No local runs on this board yet.",
+                 canvas.width / 2, LB_LIST_TOP + 52);
+    for (let i = 0; i < mine.length; i++) {
+      const y = LB_LIST_TOP + 92 + i * LB_ROW_H, midY = y + (LB_ROW_H - 6) / 2;
+      ctx.fillStyle = (i % 2) ? "rgba(14,14,32,0.66)" : "rgba(26,26,50,0.72)";
+      ctx.beginPath(); ctx.roundRect(MARGIN, y, BOARD_PX, LB_ROW_H - 6, 6); ctx.fill();
+      ctx.font = "32px Canterbury"; ctx.textBaseline = "middle";
+      ctx.textAlign = "left";  ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.fillText(`${i + 1}.`, MARGIN + 20, midY);
+      ctx.fillStyle = "#f0e6c8"; ctx.fillText(mine[i].d || '', MARGIN + 92, midY);
+      ctx.textAlign = "right"; ctx.fillStyle = "#ffd24d";
+      ctx.fillText(String(mine[i].v), MARGIN + BOARD_PX - 24, midY);
+    }
+    ctx.textAlign = "center";
   } else if (!rows || rows.length === 0) {
     ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "34px Canterbury";
     ctx.fillText("No scores yet — be the first!", canvas.width / 2, LB_LIST_TOP + 120);
@@ -7906,6 +7986,14 @@ function drawLeaderboardScreen() {
   // Buttons
   const drawBtn = (r, fill, label) => drawUIButton(r, { color: fill, label, stroke: "rgba(255,255,255,0.3)", dy: 2 });
   drawBtn(LB_BACK_BTN, "#4a3a7a", "‹ Back");
+  if (state === 'stale') {
+    // Readable, but from the committed snapshot rather than live — say so plainly, with its date.
+    const when = (_lbSnap && _lbSnap.fetched_at) ? String(_lbSnap.fetched_at).slice(0, 10) : '';
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,210,120,0.85)"; ctx.font = "26px Canterbury";
+    ctx.fillText(`Leaderboard offline — showing the saved board${when ? ' from ' + when : ''}`,
+                 canvas.width / 2, LB_LIST_TOP + LB_MAX_ROWS * LB_ROW_H + 16);
+  }
   drawBtn(LB_REFRESH_BTN, "#2a5a7a", "Refresh");
   ctx.textBaseline = "alphabetic";
 }
