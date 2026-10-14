@@ -1,4 +1,4 @@
-﻿const VERSION = "724";
+﻿const VERSION = "725";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -5885,8 +5885,11 @@ if (teleporterMode) {
       if (i === teleporterSelected) {
         ctx.fillStyle = "rgba(80,180,255,0.7)";
         ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
-      } else if (board[i] === NONE || board[i] === CHEST) {
-        // Highlight valid destinations
+      } else if ((board[i] === NONE && !isBlockSpace(i)) || i === merchantIdx) {
+        // Highlight valid destinations. This has to agree exactly with handleTeleporterClick, or a
+        // green square silently cancels the teleport and eats the item: board[i] === CHEST used to
+        // be highlighted and then refused. Block spaces are out (as they are for _autoTeleport);
+        // the Merchant stays in, and bounces the piece home.
         ctx.fillStyle = "rgba(80,255,180,0.4)";
         ctx.fillRect(MARGIN + px * TILE, MARGIN + py * TILE, TILE, TILE);
       }
@@ -8773,10 +8776,36 @@ function handleTeleporterClick(cx, cy) {
     if (teleporterSelected < 0) {
       if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     } else {
-      if (board[i] === NONE) {
+      if (i === merchantIdx) {
+        // Engaging the Merchant is not a landing: the Warrior is turned away at the stall and comes
+        // back to where it started, the same rebound a normal move gets, and the shop opens. The
+        // Teleporter is spent either way. Nothing lands, so no chest, no item space, no ignite.
+        _logItemUse(_s, _fs, [teleporterSelected, i]);
+        const _mFrom = teleporterSelected;
+        const _mP = board[_mFrom], _mS = sides[_mFrom], _mH = health[_mFrom];
+        const [_mfx, _mfy] = xy(_mFrom), [_mmx, _mmy] = xy(i);
+        const _mFromCX = MARGIN + _mfx * TILE, _mFromCY = BOARD_Y + MARGIN + _mfy * TILE;
+        const _mToCX   = MARGIN + _mmx * TILE, _mToCY   = BOARD_Y + MARGIN + _mmy * TILE;
+        if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
+        const _mFromSpace = activeItemSpaceIdx >= 0;
+        activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
+        playSfx('teleport');
+        // fromIdx suppresses the board copy so the piece isn't drawn at home while it travels.
+        const _mApproach = { toIdx: _mFrom, fromIdx: _mFrom, fromCX: _mFromCX, fromCY: _mFromCY, toCX: _mToCX,   toCY: _mToCY,   piece: _mP, side: _mS, hlth: _mH };
+        const _mRetreat  = { toIdx: _mFrom, fromIdx: _mFrom, fromCX: _mToCX,   fromCY: _mToCY,   toCX: _mFromCX, toCY: _mFromCY, piece: _mP, side: _mS, hlth: _mH };
+        startAnim([_mApproach], 0, () => {
+          startShieldPop(_mToCX + TILE / 2, _mToCY + TILE / 2); // turned away at the stall
+          startAnim([_mRetreat], 0, () => {
+            // From a board Teleporter the move is already spent, so the queue ends the turn after
+            // the shop closes; from the inventory the player still has their move.
+            openMerchantShop(_mFromSpace ? processNextQueuedItem : draw);
+          });
+        });
+        return;
+      }
+      if (board[i] === NONE && !isBlockSpace(i)) {
         _logItemUse(_s, _fs, [teleporterSelected, i]);
         playSfx('teleport');
-        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         const _tPiece0 = board[teleporterSelected], _tHlth0 = health[teleporterSelected];
         const _tElem0 = elements[teleporterSelected], _tStat0 = statuses[teleporterSelected], _tAtk0 = attacks[teleporterSelected], _tSpd0 = speeds[teleporterSelected];
         const _tOrd0 = [...effectOrders[teleporterSelected]];
@@ -8784,11 +8813,13 @@ function handleTeleporterClick(cx, cy) {
         elements[i] = _tElem0; statuses[i] = _tStat0; attacks[i] = _tAtk0; speeds[i] = _tSpd0; effectOrders[i] = _tOrd0;
         board[teleporterSelected] = NONE; sides[teleporterSelected] = 0; health[teleporterSelected] = 1;
         elements[teleporterSelected] = 0; statuses[teleporterSelected] = 0; attacks[teleporterSelected] = 1; speeds[teleporterSelected] = 1; effectOrders[teleporterSelected] = [];
+        // Loot leaves the chest only once the piece is standing on it — the canonical mover queues
+        // this into _pendingCaptureAnims and drains it after the move animation, for the same reason.
+        if (chestSpaces.has(i)) { chestSpaces.delete(i); playSfx('chest'); playSfx('pickup'); const _ci = _randomItem(); const [_cx2,_cy2]=xy(i); startItemFlyAnim(_ci, MARGIN+_cx2*TILE+TILE/2, BOARD_Y+MARGIN+_cy2*TILE+TILE/2, findInventorySlot()); }
         if (inventory._activeSlot !== undefined) { removeFromInventory(inventory._activeSlot); delete inventory._activeSlot; }
         const fromSpace = activeItemSpaceIdx >= 0;
         activeItemSpaceIdx = -1; teleporterMode = false; teleporterSelected = -1;
         const _tPiece = board[i] || _tPiece0, _tHlth = health[i] || _tHlth0;
-        _igniteOnLand(i); // teleported onto enemy fire — catches fire (checkWhiteKingAlive below covers the King)
         const _tFinish = () => {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
@@ -8815,8 +8846,17 @@ function handleTeleporterClick(cx, cy) {
         };
         if (isVoidSpace(i) && _tPiece !== NONE) {
           const [vx, vy] = xy(i);
+          // startVoidDeath only plays the fall and sets the White-loss flags — the caller resolves
+          // the death (see the shove path: "shovePiece resolves the death"). Teleporting in never
+          // did, so the Warrior fell screaming and then stood back up, with the run already counted
+          // as having lost them. Clearing here also stops the board drawing a second copy under the
+          // one that is falling.
+          clearSquare(i);
           startVoidDeath(MARGIN + vx * TILE + TILE / 2, BOARD_Y + MARGIN + vy * TILE + TILE / 2, _tPiece, W, _tFinish);
-        } else { _tFinish(); }
+        } else {
+          _igniteOnLand(i); // only a Warrior that survived the landing can catch fire on it
+          _tFinish();
+        }
         return;
       } else if (sides[i] === W) { teleporterSelected = i; draw(); return; }
     }
