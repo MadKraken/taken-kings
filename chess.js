@@ -1,4 +1,4 @@
-﻿const VERSION = "721";
+﻿const VERSION = "722";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -7465,6 +7465,27 @@ const _lbData = {};   // key -> null (unloaded) | array of rows
 const _lbState = {};  // key -> 'idle' | 'loading' | 'ready' | 'error'
 for (const b of LB_BOARDS) { _lbData[b.key] = null; _lbState[b.key] = 'idle'; }
 
+// Last live board this browser saw, per board. Written on every successful fetch and preferred
+// over the committed snapshot when it is newer (see _lbFetch's fallback).
+let _lbCache = {};
+try {
+  const raw = JSON.parse(localStorage.getItem('tk_lb_cache') || '{}') || {};
+  for (const b of LB_BOARDS) {
+    const c = raw[b.key];
+    if (c && Array.isArray(c.rows) && c.rows.length) _lbCache[b.key] = c;
+  }
+} catch (e) {}
+let _lbStaleAt = {};           // key -> ISO date of whatever the offline board was taken from
+// Only non-empty boards are cached. An empty result is indistinguishable from a board nobody has
+// scored on yet, and caching it would let one odd response wipe a good local copy; an empty board
+// has nothing worth preserving anyway, and falls through to the snapshot or to local bests.
+function _lbCacheSave(key, rows) {
+  if (!Array.isArray(rows) || !rows.length) return;
+  _lbCache[key] = { at: new Date().toISOString(), rows };
+  try { localStorage.setItem('tk_lb_cache', JSON.stringify(_lbCache)); } catch (e) {}
+}
+function _lbWhen(iso) { const n = Date.parse(iso || ''); return isNaN(n) ? 0 : n; }
+
 // Static snapshot committed to the repo and served next to the game, written twice a week by
 // .github/workflows/leaderboard-snapshot.yml. It is the fallback when Supabase is unreachable --
 // paused, deleted, or simply gone years from now -- so the hall of fame stays readable with no
@@ -7498,14 +7519,24 @@ function _lbFetch(key) {
   // Backend unreachable (or erroring): fall back to the snapshot, and to local bests if even that
   // is missing. 'stale' and 'offline' are both readable states, not errors.
   const _fallback = () => _lbLoadSnapshot(() => {
-    const rows = (_lbSnap && _lbSnap.boards && _lbSnap.boards[key]) || null;
-    if (rows && rows.length) { _lbData[key] = rows; _lbState[key] = 'stale'; }
+    const snapRows = (_lbSnap && _lbSnap.boards && _lbSnap.boards[key]) || null;
+    let rows = null, at = '';
+    if (snapRows && snapRows.length) { rows = snapRows; at = (_lbSnap && _lbSnap.fetched_at) || ''; }
+    // This browser's own last view wins when it is newer, which it will be for anyone who was
+    // still playing after the snapshot workflow stopped running.
+    const mine = _lbCache[key];
+    if (mine && (!rows || _lbWhen(mine.at) > _lbWhen(at))) { rows = mine.rows; at = mine.at; }
+    if (rows) { _lbData[key] = rows; _lbStaleAt[key] = at; _lbState[key] = 'stale'; }
     else _lbState[key] = 'offline';
     if (leaderboardOpen) draw();
   });
   fetch(url, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY }, cache: 'no-store' })
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(rows => { _lbData[key] = rows; _lbState[key] = 'ready'; if (leaderboardOpen) draw(); })
+    .then(rows => {
+      _lbData[key] = rows; _lbState[key] = 'ready';
+      _lbCacheSave(key, rows);          // so this board survives the backend
+      if (leaderboardOpen) draw();
+    })
     .catch(_fallback);
 }
 function _lbOpen() {
@@ -7987,8 +8018,10 @@ function drawLeaderboardScreen() {
   const drawBtn = (r, fill, label) => drawUIButton(r, { color: fill, label, stroke: "rgba(255,255,255,0.3)", dy: 2 });
   drawBtn(LB_BACK_BTN, "#4a3a7a", "‹ Back");
   if (state === 'stale') {
-    // Readable, but from the committed snapshot rather than live — say so plainly, with its date.
-    const when = (_lbSnap && _lbSnap.fetched_at) ? String(_lbSnap.fetched_at).slice(0, 10) : '';
+    // Readable, but saved rather than live — say so plainly, dated by whichever source was used
+    // (the committed snapshot, or this browser's own last view of the board).
+    const src = _lbStaleAt[_lbTab] || (_lbSnap && _lbSnap.fetched_at) || '';
+    const when = src ? String(src).slice(0, 10) : '';
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(255,210,120,0.85)"; ctx.font = "26px Canterbury";
     ctx.fillText(`Leaderboard offline — showing the saved board${when ? ' from ' + when : ''}`,

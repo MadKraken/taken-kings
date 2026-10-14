@@ -11,6 +11,7 @@ and what has been done about it.
 | The game — HTML, JS, sprites, audio | GitHub Pages | the repo or account goes | effectively indefinite |
 | Engine at a version tag (for re-simulation) | jsDelivr, from git tags | GitHub goes | indefinite |
 | Leaderboard reads (saved board) | GitHub Pages, `leaderboard-snapshot.json` | the repo goes | indefinite |
+| Leaderboard reads (last seen live) | the player's browser (`localStorage`) | they clear site data | indefinite |
 | Player's own bests | the player's browser (`localStorage`) | they clear site data | indefinite |
 | **Leaderboard writes + validation** | **Supabase free tier** | **~7 days with no activity** | **~1 week** |
 
@@ -22,8 +23,16 @@ account that somebody owns.
 
 Nothing breaks. The game is playable, and:
 
-- The **Leaderboard screen** falls back to `leaderboard-snapshot.json`, committed in this repo and
-  served next to the game, and says so with the date it was taken.
+- The **Leaderboard screen** falls back to a saved board, dated, and says so. There are two
+  sources and the **newer one wins**: `leaderboard-snapshot.json`, committed in this repo and
+  served next to the game, and the last live board this particular browser saw, kept in its own
+  `localStorage`.
+
+  The second exists because the snapshot stops refreshing the day the snapshot workflow stops
+  running. Without it, a backend that outlives the workflow by two years would, on finally pausing,
+  rewind the board to the day the robot quit and lose every score set in between. With it, a
+  returning player sees the board as of the last time *they* looked, and the global board ends up
+  mirrored across every active player's browser instead of only in the repo.
 - If even that is missing, it shows the player's **local bests** instead, under "Leaderboard
   offline". Not an error — the game is fine, only the global board is away.
 - **Submitting** reports "Leaderboard offline — saved locally", because by then the score is
@@ -78,6 +87,34 @@ is a long-lived secret in the repo, so it is a deliberate trade rather than an o
 **To verify empirically**, check whether the workflow is still enabled about 60 days after the last
 human push. GitHub emails the repo owner before disabling a schedule, so it is detectable rather
 than silent.
+
+## The local keep-alive (this machine)
+
+`scripts/keepalive.ps1`, run daily by a Windows scheduled task registered from
+`scripts/keepalive-task.xml`:
+
+```
+schtasks /Create /TN "Taken Kings keep-alive" /XML scripts\keepalive-task.xml /F
+```
+
+It is a **backstop, not a second cron**. On each run it:
+
+1. Re-enables any workflow GitHub has disabled for inactivity (`gh workflow enable`). This is the
+   one repair nothing else can perform: a disabled schedule cannot resurrect itself, and no amount
+   of pushing turns it back on.
+2. Checks how old the committed snapshot is. Under 5 days means the Action is doing its job, so the
+   script stops there and a healthy repo never sees a commit from it.
+3. Over 5 days means the Action has stopped. It then fetches a fresh snapshot, commits it and
+   pushes — refreshing the fallback board, counting as Supabase activity (5 days is inside the
+   ~7-day pause fuse), and resetting GitHub's 60-day clock with real account credentials rather
+   than `GITHUB_TOKEN`, which settles the open question below in the only way that is certain.
+
+It refuses to push when there are local commits that have not been pushed — unpushed work is the
+author's to send, not a robot's. It logs one line per run to `keepalive.log` beside the working
+copy (gitignored); that file is the place to look if the game ever goes quiet.
+
+Its limit is obvious: it lives on one machine. It covers the years in which that machine still
+exists, and the committed snapshot covers the years after.
 
 ## If the project is ever gone for good
 
