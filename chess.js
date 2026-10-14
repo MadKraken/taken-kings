@@ -1,4 +1,4 @@
-﻿const VERSION = "725";
+﻿const VERSION = "726";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -894,8 +894,15 @@ function loadSprites() {
     [`${W}_${KNIGHT}`,  'sprites/knight.png'],
     [`${W}_${BISHOP}`,  'sprites/bishop_1.png'],
     [`${W}_${ROOK}`,    'sprites/rook.png'],
-    [`${W}_${CHECKERS}`, `sprites/w_${PIECE_NAMES[CHECKERS]}.svg`],
-    [`${W}_${CHECKERS_KING}`, `sprites/w_${PIECE_NAMES[CHECKERS_KING]}.svg`],
+    // Checkers Warriors: one drawn sprite per side rather than a tint of the White one. Black's
+    // Checkers are red. Kings are the double-stacked disc. See sprites/ai-generated/README.md —
+    // this art is AI-generated and meant to be swapped for human art by replacing those files.
+    [`${W}_${CHECKERS}`,      'sprites/ai-generated/checkers_w.png'],
+    [`${W}_${CHECKERS_KING}`, 'sprites/ai-generated/checkers_king_w.png'],
+    [`${B}_${CHECKERS}`,      'sprites/ai-generated/checkers_b.png'],
+    [`${B}_${CHECKERS_KING}`, 'sprites/ai-generated/checkers_king_b.png'],
+    [`${N}_${CHECKERS}`,      'sprites/ai-generated/checkers_n.png'],
+    [`${N}_${CHECKERS_KING}`, 'sprites/ai-generated/checkers_king_n.png'],
     ['chest',           'sprites/chest.svg'],
     ['item_teleporter', 'sprites/item_teleporter.svg'],
     ['item_cloner',     'sprites/item_cloner.svg'],
