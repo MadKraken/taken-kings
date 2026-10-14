@@ -1,4 +1,4 @@
-﻿const VERSION = "722";
+﻿const VERSION = "723";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -510,6 +510,37 @@ function _normalizeWhiteSprites() {
   }
 }
 
+// The White Pawn's shield is one flat grey, and the white-point stretch above flattens it further
+// still (rgb(94,93,96) in the source art becomes rgb(144,144,146) once stretched). Its armour is
+// already pale blue, so the shield is the only part of the piece saying "grey" -- which reads as a
+// Grey piece whenever there is no actual Grey Pawn on screen to compare it against. Recolour just
+// that one tone to blue steel. Luminance is preserved (144 -> 141), so the piece's shading and its
+// contrast against the board tiles are unchanged; only the hue moves.
+//
+// White only: Black and Grey have their own drawn art (anim_s2_/anim_s3_) and never see this.
+const PAWN_SHIELD_GREY = [144, 144, 146];  // post-stretch value; see _normalizeWhiteSprites
+const PAWN_SHIELD_BLUE = [115, 142, 200];
+const PAWN_SHIELD_TOL  = 14;               // takes the anti-aliased rim of the same flat fill with it
+function _blueWhitePawnShield() {
+  for (const state of ['idle', 'active']) {
+    const frames = ANIM_FRAME_COUNTS[state][PAWN];
+    for (let f = 1; f <= frames; f++) {
+      const cv = spriteImages[`anim_${state}_${PAWN}_${f}`];
+      if (!cv || !cv.getContext) continue;
+      const c = cv.getContext('2d');
+      const d = c.getImageData(0, 0, cv.width, cv.height), px = d.data;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i + 3] < 9) continue;                                            // transparent
+        if (Math.abs(px[i]     - PAWN_SHIELD_GREY[0]) > PAWN_SHIELD_TOL) continue;
+        if (Math.abs(px[i + 1] - PAWN_SHIELD_GREY[1]) > PAWN_SHIELD_TOL) continue;
+        if (Math.abs(px[i + 2] - PAWN_SHIELD_GREY[2]) > PAWN_SHIELD_TOL) continue;
+        px[i] = PAWN_SHIELD_BLUE[0]; px[i + 1] = PAWN_SHIELD_BLUE[1]; px[i + 2] = PAWN_SHIELD_BLUE[2];
+      }
+      c.putImageData(d, 0, 0);
+    }
+  }
+}
+
 function _makeTransparentBg(img) {
   const oc = document.createElement('canvas');
   const w = img.naturalWidth, h = img.naturalHeight;
@@ -922,6 +953,7 @@ function loadSprites() {
     _loadCount++;
     if (_loadCount >= _loadTotal && !spritesLoaded) {
       _normalizeWhiteSprites(); // one white point per piece, applied to all its frames
+      _blueWhitePawnShield();   // then the White Pawn's shield stops reading as a Grey piece
       _liftAllGreySprites();    // Grey side loses its pure blacks before it gets a border
       _outlineAllSprites();     // then a 1px border per side, on top of the stretched art
       spritesLoaded = true;
