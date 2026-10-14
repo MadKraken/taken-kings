@@ -48,7 +48,7 @@ A replacement has to match three things:
   the original `sprites/w_checkers.svg` used, and the Pawn's feet line agrees with it.
 - **A King that reads as two discs at 120px**, which is the tile the board actually draws. The
   original drawn King was only 14px taller than its Man on a 320 canvas — about five pixels at
-  playing size, effectively invisible. The generated Kings raise the upper disc by 38 instead.
+  playing size, effectively invisible. The generated Kings raise the upper disc by 44 instead.
 
 Keep the files small: everything loads at startup behind the progress bar.
 

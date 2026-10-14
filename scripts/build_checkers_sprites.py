@@ -19,7 +19,7 @@ Two operations:
   stack      A King is the same disc drawn twice, the upper copy raised, so the lower one shows
              only its rim. STACK_DY is deliberately larger than the height difference in the
              original drawn King (14px), which is nearly invisible at the 120px tile the board
-             actually draws: at 38 the two discs read clearly at playing size.
+             actually draws: at 44 the two discs read clearly at playing size.
 """
 import os
 import sys
@@ -32,7 +32,7 @@ except ImportError:
 ART = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'sprites', 'ai-generated')
 SOURCE = 'checkers_b.png'      # the one authored sprite; everything else is derived from it
 
-STACK_DY = 38                  # how far the upper disc of a King is raised, in source pixels
+STACK_DY = 44                  # how far the upper disc of a King is raised, in source pixels
 WHITE_RANGE = (0.62, 1.00)     # body brightness remapped into this range for the White side
 GREY_RANGE = (0.34, 0.78)      # ... and this one for Neutral
 SAT_KNEE = 0.22                # saturation at which a pixel counts as fully "body"
@@ -61,12 +61,13 @@ def recolour(im, lo, hi):
 
 def stack(man, dy):
     """A King: the disc on the feet line, and a second copy of it raised by dy."""
-    out = Image.new('RGBA', man.size, (0, 0, 0, 0))
-    out.alpha_composite(man)                            # lower disc
     upper = Image.new('RGBA', man.size, (0, 0, 0, 0))
-    upper.paste(man, (0, -dy), man)
-    out.alpha_composite(upper)                          # upper disc, drawn over it
-    return out
+    # Plain paste, NOT paste(..., mask=man): pasting with a mask onto a transparent canvas blends
+    # every antialiased pixel toward (0,0,0,0) -- it halved the alpha of the disc's rim and dragged
+    # its colour to black, leaving a chewed dark halo along the upper disc. A straight copy moves
+    # the pixels untouched, and alpha_composite then does the actual over-compositing.
+    upper.paste(man, (0, -dy))
+    return Image.alpha_composite(man, upper)
 
 
 def main():
