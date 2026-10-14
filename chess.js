@@ -1,4 +1,4 @@
-﻿const VERSION = "723";
+﻿const VERSION = "724";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -8738,13 +8738,17 @@ function handleClonerClick(cx, cy) {
         activeItemSpaceIdx = -1; clonerMode = false; clonerSelected = -1;
         // Check if clone landed on an item space
         const cloneItem = itemSpaces[i];
-        if (!clonerFromSpace && cloneItem !== ITEM_NONE && sides[i] === W && canItemAffectPiece(cloneItem, i)) {
+        const cloneTriggers = cloneItem !== ITEM_NONE && sides[i] === W && canItemAffectPiece(cloneItem, i);
+        if (clonerFromSpace) {
+          // Same landing rule as the Teleporter above: the clone's square triggers whether the
+          // Cloner came out of the inventory or was picked up off the board.
+          if (cloneTriggers && activateItemSpace(cloneItem, i)) processNextQueuedItem();
+          else if (!cloneTriggers) processNextQueuedItem();
+        } else if (cloneTriggers) {
           itemSpaces[i] = ITEM_NONE;
           activeItemSpaceIdx = i;
           const done = activateItemSpace(cloneItem, i);
           if (done) { firstMoveMade = true; recordPosition(); endWhiteTurn(); }
-        } else if (clonerFromSpace) {
-          processNextQueuedItem();
         } else {
           firstMoveMade = true; recordPosition(); draw();
         }
@@ -8789,7 +8793,18 @@ function handleTeleporterClick(cx, cy) {
           checkWhiteKingAlive();
           if (gameOver || _rewinderSaveOffer) { takeReplaySnapshot(); draw(); return; }
           if (fromSpace) {
-            processNextQueuedItem();
+            // The destination is a landing like any other, so an item sitting on it triggers. Without
+            // this, a Teleporter picked up FROM THE BOARD dropped the piece onto a Cloner and nothing
+            // happened, while the identical teleport out of the inventory did trigger it.
+            const landed = itemSpaces[i];
+            if (landed !== ITEM_NONE && sides[i] === W && canItemAffectPiece(landed, i)) {
+              // An instant item (Shield, Sword, ...) resolves here and the queue carries on; an
+              // interactive one (Cloner, Promoter, ...) waits for the player, and its own handler
+              // reaches processNextQueuedItem the same way this one did.
+              if (activateItemSpace(landed, i)) processNextQueuedItem();
+            } else {
+              processNextQueuedItem();
+            }
           } else {
             recordPosition();
             const itm = itemSpaces[i];
