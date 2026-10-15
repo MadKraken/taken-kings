@@ -1,5 +1,5 @@
 {
- "fetched_at": "2026-10-13T23:34:28Z",
+ "fetched_at": "2026-10-15T09:53:52Z",
  "source": "https://froggegesqnoznvenoyt.supabase.co",
  "boards": {
   "hs_untimed": [
@@ -44,14 +44,14 @@
     "created_at": "2026-08-05T02:41:56.900679+00:00"
    },
    {
-    "name": "MadKraken",
-    "value": 18,
-    "created_at": "2026-07-08T18:25:57.940778+00:00"
-   },
-   {
     "name": "KingBug",
     "value": 18,
     "created_at": "2026-07-12T00:59:27.260017+00:00"
+   },
+   {
+    "name": "MadKraken",
+    "value": 18,
+    "created_at": "2026-07-08T18:25:57.940778+00:00"
    },
    {
     "name": "MadKraken",
@@ -66,12 +66,17 @@
    {
     "name": "MadKraken",
     "value": 13,
-    "created_at": "2026-07-10T01:33:15.225476+00:00"
+    "created_at": "2026-08-02T19:44:40.951324+00:00"
    },
    {
     "name": "MadKraken",
     "value": 13,
-    "created_at": "2026-08-02T19:44:40.951324+00:00"
+    "created_at": "2026-07-10T01:33:15.225476+00:00"
+   },
+   {
+    "name": "Blah",
+    "value": 12,
+    "created_at": "2026-10-14T00:25:36.221118+00:00"
    },
    {
     "name": "MadKraken",
@@ -91,7 +96,7 @@
    {
     "name": "MadKraken",
     "value": 9,
-    "created_at": "2026-08-08T14:18:13.649155+00:00"
+    "created_at": "2026-07-26T22:45:53.637643+00:00"
    },
    {
     "name": "MadKraken",
@@ -101,12 +106,7 @@
    {
     "name": "MadKraken",
     "value": 9,
-    "created_at": "2026-07-26T22:45:53.637643+00:00"
-   },
-   {
-    "name": "MadKraken",
-    "value": 8,
-    "created_at": "2026-07-11T06:17:41.168253+00:00"
+    "created_at": "2026-08-08T14:18:13.649155+00:00"
    },
    {
     "name": "blah",
@@ -120,13 +120,13 @@
    },
    {
     "name": "MadKraken",
-    "value": 7,
-    "created_at": "2026-07-08T18:54:22.570324+00:00"
+    "value": 8,
+    "created_at": "2026-07-11T06:17:41.168253+00:00"
    },
    {
-    "name": "MadKraken",
-    "value": 7,
-    "created_at": "2026-08-08T20:08:46.181928+00:00"
+    "name": "Blah",
+    "value": 8,
+    "created_at": "2026-10-14T01:06:38.250687+00:00"
    }
   ],
   "hs_15s": []
