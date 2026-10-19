@@ -1,4 +1,4 @@
-﻿const VERSION = "735";
+﻿const VERSION = "736";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1759,10 +1759,11 @@ function startCaptureAnim(piece, side, sx, sy) {
   const isPlayer = side === W;
   if (isPlayer && !replayMode) { _lostWhiteThisRun = true; _whiteLostSinceAdvance = true; } // a White Warrior fell (capture / field advance / bomb); replayed falls don't count
   const pool = isPlayer ? playerDead : enemyDead;
-  // No graveyard panels anymore — fling the fallen piece up and off the board, into the ether, where
-  // it spins away and fades. (pool still counts the fall for achievements/stats.)
-  const tgx = sx + (sx < MARGIN + BOARD_PX / 2 ? -1 : 1) * (TILE * 1.5);
-  startFlyAnim(piece, side, sx, sy, tgx, BOARD_Y - TILE * 3, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
+  // With the Taken Warriors tally showing, the fallen piece flies into its slot; otherwise it is flung
+  // up and off the board, into the ether, where it spins away and fades. Either way the pool counts it.
+  let tgx = sx + (sx < MARGIN + BOARD_PX / 2 ? -1 : 1) * (TILE * 1.5), tgy = BOARD_Y - TILE * 3;
+  if (_bottomView === 'taken' && GRAVE_TYPES.includes(piece)) [tgx, tgy] = graveSlotPos(isPlayer, piece);
+  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
 }
 
 function _warnFlashTick() {
@@ -5400,6 +5401,14 @@ const GRAVE_H = 150;
 const GRAVE_W = Math.floor(BOARD_PX / 2) - 8;
 const PLAYER_GRAVE_X = MARGIN;
 const ENEMY_GRAVE_X = MARGIN + Math.floor(BOARD_PX / 2) + 8;
+// One slot per piece type in the Taken Warriors tally (Fallen = yours, Slain = theirs).
+const GRAVE_TYPES = [PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, CHECKERS, CHECKERS_KING];
+function graveSlotPos(isPlayer, pieceType) {
+  const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+  const slotIdx = GRAVE_TYPES.indexOf(pieceType);
+  const slotW = GRAVE_W / GRAVE_TYPES.length;
+  return [gx + slotIdx * slotW + slotW / 2, GRAVE_Y + 10 + 40];
+}
 const RESIGN_BTN = { x: MARGIN + BOARD_PX / 2 - 80, y: GRAVE_Y + GRAVE_H + 8, w: 160, h: 60 };
 const LAST_MOVE_BTN = { x: RESIGN_BTN.x + RESIGN_BTN.w + 16, y: RESIGN_BTN.y, w: 280, h: 60 };
 const SIDE_BTN_Y = GRAVE_Y + GRAVE_H + 74;
@@ -6389,6 +6398,15 @@ if (!gameOver && isItemActive()) {
       drawUIButton(LAST_MOVE_BTN, { color: "#1a4a7a", label: "⟳ Last Move", radius: 6, font: "42px Canterbury" });
     }
   }
+  if (_bottomViewBtnVisible()) {
+    // Named for what it switches TO. Shrink the label to fit the slot left of Auto.
+    const label = _bottomView === 'taken' ? "King's Comments" : "Taken Warriors";
+    let px = 34;
+    ctx.font = `${px}px Canterbury`;
+    while (px > 18 && ctx.measureText(label).width > BOTTOM_VIEW_BTN.w - 18) { px -= 2; ctx.font = `${px}px Canterbury`; }
+    drawUIButton(BOTTOM_VIEW_BTN, { color: "#4a3a18", label, radius: 6, font: `${px}px Canterbury`,
+                                    stroke: "rgba(184,145,46,0.85)", strokeW: 2 });
+  }
 }
 }
 
@@ -6603,6 +6621,12 @@ let _kingRemarkPri = 0;      // priority of the current line
 let _kingRemarkMs = 0;       // performance.now() when it was set
 let _kingPage = 0;           // which page of a long remark is showing (tap the box's arrow to advance)
 let _kingDialogPages = 1;    // total pages the current remark spans (set during draw)
+let _bottomView = 'king';     // 'king' (the King's remarks) | 'taken' (the Taken Warriors tally)
+try { if (localStorage.getItem('tk_bottom_view') === 'taken') _bottomView = 'taken'; } catch (e) {}
+function _setBottomView(v) {
+  _bottomView = v;
+  try { localStorage.setItem('tk_bottom_view', v); } catch (e) {}
+}
 let _kingDialogRect = null;  // {x,y,w,h} of the dialogue box (set during draw) for tap hit-testing
 let _kingTurnNum = 0;        // White turns completed this run — drives the firstMove/secondMove lines
 let _kingLastMovedType = NONE; // type of the player's most recent piece MOVE (NONE after an Advance) — the second-move line's subject
@@ -6991,6 +7015,49 @@ function _garbleRemark(text) {
   }
   return out;
 }
+function drawTakenWarriors() {
+  if (gamePhase !== 'playing' || (replayMode && !_miniReplayActive)) return;
+  _kingDialogPages = 1; _kingDialogRect = null; // the King's box isn't showing: no tap-to-page hotspot
+  const _frame = _idleAnimFrame; _idleAnimFrame = 0;
+  for (const [pool, isPlayer] of [[playerDead, true], [enemyDead, false]]) {
+    const gx = isPlayer ? PLAYER_GRAVE_X : ENEMY_GRAVE_X;
+    ctx.font = "42px Canterbury";
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = "#fff";
+    ctx.fillText(isPlayer ? "Fallen" : "Slain", gx + GRAVE_W / 2, GRAVE_Y - 6);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.beginPath(); ctx.roundRect(gx, GRAVE_Y, GRAVE_W, GRAVE_H, 6); ctx.fill();
+    const sideVal = isPlayer ? W : B;
+    const pieceSz = 80;
+    const cy = GRAVE_Y + 10 + pieceSz / 2;
+    for (const pt of GRAVE_TYPES) {
+      const count = pool[pt] || 0;
+      const [cx] = graveSlotPos(isPlayer, pt);
+      if (count === 0) {
+        // An empty slot shows a ghost of the piece -- except Checkers, which most runs never see.
+        if (pt !== CHECKERS && pt !== CHECKERS_KING) {
+          ctx.globalAlpha = 0.15;
+          _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        if (pt === KING) {   // a King lost is a disaster; a King taken is the point -- tint the disc
+          ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
+          ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
+        }
+        _drawPieceSprite(ctx, sideVal, pt, cx - pieceSz / 2, cy - pieceSz / 2, pieceSz, pieceSz);
+        ctx.font = "28px Canterbury";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(`x${count}`, cx, cy + pieceSz / 2 + 4);
+      }
+    }
+  }
+  _idleAnimFrame = _frame;
+}
+
 function drawKingDialogue() {
   // Shown during item-targeting too, so the King's remark on a just-selected item is visible. Its box
   // (COUNTDOWN_Y+30 downward) sits below the item mode's Cancel/Discard buttons — no overlap.
@@ -8452,7 +8519,7 @@ function _drawScene() {
   drawActionButtons();
   drawGameOverOverlay();
   drawReplayControls();
-  drawKingDialogue();
+  if (_bottomView === 'taken') drawTakenWarriors(); else drawKingDialogue();
   drawResignConfirm();
   drawFieldAdvanceConfirm();
   drawRewinderSaveOffer();
@@ -9416,6 +9483,9 @@ canvas.addEventListener("click", (e) => {
   if (spritesLoaded && !_continued) { _doContinue(cx, cy); return; } // start screen — tap enters the menu
   if (settingsOpen && _inRect(cx, cy, _settingsGeom().panel)) { handleSettingsClick(cx, cy); return; } // panel clicks only — play continues around it
   if (_settingsBtnVisible() && _inRect(cx, cy, _settingsBtnRect())) { playSfx('button'); settingsOpen = true; draw(); return; }
+  if (_bottomViewBtnVisible() && !settingsOpen && _inRect(cx, cy, BOTTOM_VIEW_BTN)) {
+    playSfx('button'); _setBottomView(_bottomView === 'taken' ? 'king' : 'taken'); draw(); return;
+  }
   if (achievementsOpen) { handleAchievementsClick(cx, cy); return; }
   if (leaderboardOpen) { handleLeaderboardClick(cx, cy); return; }
   if (mainMenuOpen) { handleMainMenuClick(cx, cy); return; }
@@ -9511,6 +9581,15 @@ let autoPlay = false;
 let _autoScheduled = false;
 
 const AUTO_BTN = { x: RESIGN_BTN.x - 176, y: RESIGN_BTN.y, w: 168, h: 60 };
+// Swaps the bottom panel between the King's remarks and the Taken Warriors tally.
+const BOTTOM_VIEW_BTN = { x: MARGIN, y: RESIGN_BTN.y, w: AUTO_BTN.x - 8 - MARGIN, h: 60 };
+// Shown, and tappable, whenever the bottom row is -- not under a modal that owns the screen, and not
+// while an item is being used, when Cancel / Discard replace every other control. Tappable only when
+// drawn: the click check runs early, so a hidden button would otherwise still catch taps.
+function _bottomViewBtnVisible() {
+  return gamePhase === 'playing' && (!replayMode || _miniReplayActive) &&
+    !gameOver && !resignConfirm && !_faConfirm && !_rewinderSaveOffer && !isItemActive();
+}
 
 function _aiPieceVal(p) {
   // Piece capture/recruit value for scoring
