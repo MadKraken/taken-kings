@@ -1,4 +1,4 @@
-﻿const VERSION = "734";
+﻿const VERSION = "735";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1214,6 +1214,7 @@ let _elbowIdx = -1;       // the chosen elbow square while planning a two-leg mo
 // Air mover an occupied square or a block is a legitimate joint; a Void never is.
 function _elbowEligible(fromI, m) {
   if (isVoidSpace(m) || m === merchantIdx) return false;
+  if (_castleMove(fromI, m)) return false;   // a castle ends the move, like a capture
   const air = !!(elements[fromI] & ELEM_AIR);
   if (board[m] !== NONE) return air;
   if (isBlockSpace(m)) return air;
@@ -1233,6 +1234,7 @@ function _legTwoMoves(fromI, elbow) {
     copyPiece(fromI, elbow); clearSquare(fromI);
     const [ex, ey] = xy(elbow);
     moves = legalMoves(ex, ey);
+    if (sElb[0] !== NONE) moves = moves.filter(m => !_castleMove(elbow, m)); // no castling from a joint
   } finally {
     arrs.forEach((a, k) => { a[fromI] = sFrom[k]; a[elbow] = sElb[k]; });
     effectOrders[fromI] = eFrom; effectOrders[elbow] = eElb;
@@ -3278,6 +3280,11 @@ function pseudoMoves(x, y) {
   } else if (p === ROOK) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
     if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
+    // The Rook may start the castle too, by moving onto its own King (see _castleMove).
+    if ((s === W || s === B) && (x === 0 || x === 7) && y === (s === W ? 7 : 0) && !(statuses[idx(x, y)] & STATUS_MOVED)) {
+      const k = idx(4, y);
+      if (_castleMove(idx(x, y), k)) moves.push(k);
+    }
   } else if (p === QUEEN) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
     if (isAir) airSlidingMoves(moves, x, y, dirs, s, isEarth); else slidingMoves(moves, x, y, dirs, s, isEarth);
@@ -3289,11 +3296,11 @@ function pseudoMoves(x, y) {
         moves.push(idx(nx, ny));
       }
     }
-    // Castling (both sides): _castleRookMove holds every prerequisite.
+    // Castling (both sides): _castleMove holds every prerequisite.
     if ((s === W || s === B) && !(statuses[idx(x, y)] & STATUS_MOVED) && x === 4 && y === (s === W ? 7 : 0)) {
       for (const tx of [6, 2]) {
         const t = idx(tx, y);
-        if (!moves.includes(t) && _castleRookMove(idx(x, y), t)) moves.push(t);
+        if (!moves.includes(t) && _castleMove(idx(x, y), t)) moves.push(t);
       }
     }
   }
@@ -3471,41 +3478,66 @@ function isAttacked(tx, ty, bySide) {
   return false;
 }
 
-// Castling, one rule for both sides. The King on its home square (e1 for White, e8 for Black) and a
-// Rook of its own side on the matching corner, neither of which has ever moved; every square between
-// them empty and landable, with no Merchant on it; and the King not in check, not passing through an
-// attacked square, and not landing on one. Returns the Rook's {from, to} for a legal castle, else null.
+// Castling, one rule for both sides, started by either piece. The King on its home square (e1 for
+// White, e8 for Black) and a Rook of its own side on the matching corner, neither of which has ever
+// moved; every square between them empty and landable, with no Merchant on it; and the King not in
+// check, not passing through an attacked square, and not landing on one.
 //
-// The old test checked only that White's King and Rook had never MOVED, never that they were actually
-// standing there. With a rolled lineup the King starts anywhere in the back two rows, so an unmoved
-// King was offered a jump straight to g1/c1 from wherever it stood; and a Rook that was captured,
-// teleported or burned had never "moved", so castling was offered with no Rook at all.
-function _castleRookMove(fromI, toI, viaI = -1) {
-  if (viaI >= 0) return null;                                   // never round a corner
+// The King starts it by moving two squares toward the Rook (to g1/c1); the Rook starts it by moving
+// onto its own King -- the one tap that can't be mistaken for an ordinary Rook move. Either way both
+// pieces end where they would in chess. Returns { moverTo, otherFrom, otherTo } -- where the tapped
+// piece actually lands, and the other piece's move -- or null if this is not a legal castle.
+function _castleMove(fromI, toI) {
   const s = sides[fromI];
-  if (board[fromI] !== KING || (s !== W && s !== B)) return null;
-  if (statuses[fromI] & STATUS_MOVED) return null;
-  const home = s === W ? 7 : 0;
-  if (fromI !== idx(4, home)) return null;
-  const [tx, ty] = xy(toI);
-  if (ty !== home || (tx !== 6 && tx !== 2)) return null;
-  const kingside = tx === 6;
-  const rookFrom = idx(kingside ? 7 : 0, home), rookTo = idx(kingside ? 5 : 3, home);
-  if (board[rookFrom] !== ROOK || sides[rookFrom] !== s || (statuses[rookFrom] & STATUS_MOVED)) return null;
+  if (s !== W && s !== B) return null;
+  const home = s === W ? 7 : 0, kingI = idx(4, home);
+  let rookI, byRook;
+  if (board[fromI] === KING && fromI === kingI) {
+    const [tx, ty] = xy(toI);
+    if (ty !== home || (tx !== 6 && tx !== 2)) return null;
+    rookI = idx(tx === 6 ? 7 : 0, home); byRook = false;
+  } else if (board[fromI] === ROOK && toI === kingI && (fromI === idx(0, home) || fromI === idx(7, home))) {
+    rookI = fromI; byRook = true;
+  } else return null;
+  if (board[kingI] !== KING || sides[kingI] !== s || (statuses[kingI] & STATUS_MOVED)) return null;
+  if (board[rookI] !== ROOK || sides[rookI] !== s || (statuses[rookI] & STATUS_MOVED)) return null;
+  const kingside = (rookI % 8) === 7;
   for (const x of (kingside ? [5, 6] : [1, 2, 3])) {
     const i = idx(x, home);
     if (!canLandEmpty(i) || i === merchantIdx) return null;
   }
   for (const x of (kingside ? [4, 5, 6] : [4, 3, 2])) if (isAttacked(x, home, s)) return null;
-  return { from: rookFrom, to: rookTo };
+  const kingTo = idx(kingside ? 6 : 2, home), rookTo = idx(kingside ? 5 : 3, home);
+  return byRook ? { moverTo: rookTo, otherFrom: kingI, otherTo: kingTo }
+                : { moverTo: kingTo, otherFrom: rookI, otherTo: rookTo };
+}
+// The same rule for a move that may have an elbow. Both legs of a Fast move are ONE move, so the
+// castle is judged with the piece standing where its last leg starts, exactly as _legTwoMoves
+// generates leg 2 -- its "moved" bit is still clear there, since the move hasn't finished. A joint
+// (an Air piece passing over an occupied square) isn't a square the piece ever stands on, so a castle
+// can't start from one.
+function _castleMoveVia(fromI, viaI, toI) {
+  if (viaI < 0) return _castleMove(fromI, toI);
+  if (board[viaI] !== NONE) return null;
+  const arrs = _squareArrays();
+  const sFrom = arrs.map(a => a[fromI]), sVia = arrs.map(a => a[viaI]);
+  const eFrom = effectOrders[fromI], eVia = effectOrders[viaI];
+  try {
+    copyPiece(fromI, viaI); clearSquare(fromI);
+    return _castleMove(viaI, toI);
+  } finally {
+    arrs.forEach((a, k) => { a[fromI] = sFrom[k]; a[viaI] = sVia[k]; });
+    effectOrders[fromI] = eFrom; effectOrders[viaI] = eVia;
+  }
 }
 
-// Animation piece for a castling Rook's slide; called after makeMove, so the Rook already stands on `to`.
-function _castleRookAnim(c) {
-  const [rfx, rfy] = xy(c.from), [rtx, rty] = xy(c.to);
-  return { toIdx: c.to, fromCX: MARGIN + rfx * TILE, fromCY: BOARD_Y + MARGIN + rfy * TILE,
-           toCX: MARGIN + rtx * TILE, toCY: BOARD_Y + MARGIN + rty * TILE,
-           piece: ROOK, side: sides[c.to], hlth: health[c.to], atk: attacks[c.to], spd: speeds[c.to] };
+// Animation for the castle's OTHER piece (the Rook when the King starts it, the King when the Rook
+// does). Called after makeMove, so that piece already stands on otherTo.
+function _castleOtherAnim(c) {
+  const [ox, oy] = xy(c.otherFrom), [tx, ty] = xy(c.otherTo);
+  return { toIdx: c.otherTo, fromCX: MARGIN + ox * TILE, fromCY: BOARD_Y + MARGIN + oy * TILE,
+           toCX: MARGIN + tx * TILE, toCY: BOARD_Y + MARGIN + ty * TILE,
+           piece: board[c.otherTo], side: sides[c.otherTo], hlth: health[c.otherTo], atk: attacks[c.otherTo], spd: speeds[c.otherTo] };
 }
 
 function legalMoves(x, y) {
@@ -3609,12 +3641,17 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
   // viaI >= 0: a Fast two-leg move, fromI -> viaI -> toI, executed as ONE move. The piece leaves
   // fromI and lands on toI; the elbow is a joint, not a landing. Geometry-derived rules (checkers
   // jump midpoint, pawn double-step / en passant, the castle test, Earth's trail direction) read
-  // from the LAST leg, so a 1+1 pawn walk sets no en-passant square and a King can never castle
-  // round a corner. Castling rights still key off fromI / piece type below, so they are lost as usual.
+  // from the LAST leg, so a 1+1 pawn walk sets no en-passant square. Both legs are one move, so a
+  // Fast King or Rook may step into its castling square on leg 1 and castle on leg 2, provided
+  // neither piece had moved before this move.
+  // The castle is judged on the pre-move state, BEFORE the mover is marked -- marking first would
+  // make the King look moved and nothing would ever castle. A Rook starting the castle is tapped
+  // onto its King but lands beside it, so toI follows the castle.
+  const castle = _castleMoveVia(fromI, viaI, toI);
+  if (castle) toI = castle.moverTo;
   const legFrom = viaI >= 0 ? viaI : fromI;
   const [fx, fy] = xy(legFrom), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
-  const castleRook = _castleRookMove(fromI, toI, viaI); // read before the mover is marked
   statuses[fromI] |= STATUS_MOVED;                     // travels with the piece to toI below
   if (visual && s === W) {
     _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
@@ -3693,11 +3730,11 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     }
   }
 
-  if (castleRook) {
-    // The Rook crosses with everything it carries -- elements, shield, Bloodthirsty, badges. The old
-    // code re-created a bare ROOK with set(), quietly stripping a castling Rook of all of it.
-    movePiece(castleRook.from, castleRook.to);
-    statuses[castleRook.to] |= STATUS_MOVED;
+  if (castle) {
+    // The other piece crosses with everything it carries -- elements, shield, Bloodthirsty, badges.
+    // (The old code re-created a bare ROOK with set(), quietly stripping a castling Rook of all of it.)
+    movePiece(castle.otherFrom, castle.otherTo);
+    statuses[castle.otherTo] |= STATUS_MOVED;
   }
 
   if (p === PAWN && toI === epTarget && epBy === enemy(s)) {
@@ -4756,14 +4793,18 @@ function aiPlay() {
           statuses[move[0]] |= STATUS_MOVED;
           _animateShieldBounce(move[0], aiDest, () => _aiFinish(), aiVia);
         } else {
-        const [lfx, lfy] = xy(aiVia >= 0 ? aiVia : move[0]), [ltx, lty] = xy(aiDest); // last-leg geometry
+        // The chosen target is what makeMove gets; geometry follows where the piece lands (a Rook
+        // starting a castle targets its King but stops beside it). Read before makeMove marks it.
+        const _aiCastle = _castleMoveVia(move[0], aiVia, aiDest);
+        const _aiLand = _aiCastle ? _aiCastle.moverTo : aiDest;
+        const [lfx, lfy] = xy(aiVia >= 0 ? aiVia : move[0]), [ltx, lty] = xy(_aiLand); // last-leg geometry
         const lToCX = MARGIN + ltx * TILE, lToCY = BOARD_Y + MARGIN + lty * TILE;
         // Capture detection (before the move): a White target, or a checkers jump over a piece.
         const _aiWasCapture = sides[aiDest] === W
           || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(ltx - lfx) === 2);
-        const _aiLegs = aiVia >= 0 ? [aiVia, aiDest] : null;
-        const _aiCastle = _castleRookMove(move[0], aiDest, aiVia); // read before makeMove marks the King
+        const _aiLegs = aiVia >= 0 ? [aiVia, _aiLand] : null;
         makeMove(move[0], aiDest, true, aiVia);
+        aiDest = _aiLand;
         if (_aiFromElems & ELEM_FIRE)  { if (aiVia >= 0) applyFireTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0);  applyFireTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
         if (_aiFromElems & ELEM_WATER) { if (aiVia >= 0) applyWaterTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0); applyWaterTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
         if (aiDest === merchantIdx) respawnMerchant();
@@ -4775,7 +4816,7 @@ function aiPlay() {
           piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[aiDest], spd: speeds[aiDest],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
-        if (_aiCastle) _aiAnimPieces.push(_castleRookAnim(_aiCastle)); // Black castles too: slide its Rook
+        if (_aiCastle) _aiAnimPieces.push(_castleOtherAnim(_aiCastle)); // Black castles too
         _appendCaptureGhosts(_aiAnimPieces);
         playMoveSfx(_aiPiece0, aiDest);
         _startMoveAnim(_aiAnimPieces, _aiLegs, () => {
@@ -9146,16 +9187,17 @@ function handleBoardClick(cx, cy) {
       const viaI = (_elbowIdx >= 0 && clicked !== _elbowIdx) ? _elbowIdx : -1;
       _elbowIdx = -1;
       _logInput(viaI >= 0 ? { t: 'm', f: selected, to: clicked, via: viaI } : { t: 'm', f: selected, to: clicked }); // any board move/attack/recruit begins here
+      // The TAP is what's logged: a replay re-taps it and re-derives the castle. Everything below
+      // follows where the piece actually lands -- a Rook starting a castle is tapped onto its King
+      // but stops beside it. Read before makeMove marks the mover.
+      const _castle = _castleMoveVia(selected, viaI, clicked);
+      const landI = _castle ? _castle.moverTo : clicked;
       const legFromI = viaI >= 0 ? viaI : selected; // the LAST leg's origin: all geometry-derived rules read from here
-      const [pfx, pfy] = xy(selected), [ptx, pty] = xy(clicked);
+      const [pfx, pfy] = xy(selected), [ptx, pty] = xy(landI);
       const [lfx, lfy] = xy(legFromI);
       const pFromCX = MARGIN + pfx * TILE, pFromCY = BOARD_Y + MARGIN + pfy * TILE;
       const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
-      // Match makeMove's castle test exactly (incl. pty===7 + rook-present) so the rook slide only
-      // animates on a real castle — an Air King can now land on (6,7)/(2,7) as a plain 2-square move.
-      // Same test makeMove uses, read before it runs, so the Rook only slides on a real castle.
-      const _castle = _castleRookMove(selected, clicked, viaI);
-      const clickedDest = clicked;
+      const clickedDest = landI;
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
       // suppressFromIdx: if the piece hasn't moved on the board, pass fromI to suppress ghost draw.
@@ -9287,7 +9329,7 @@ function handleBoardClick(cx, cy) {
         piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest], atk: attacks[clickedDest], spd: speeds[clickedDest],
         arc: _isCheckersJump ? TILE * 1.5 : 0
       }];
-      if (_castle) wAnimPieces.push(_castleRookAnim(_castle));
+      if (_castle) wAnimPieces.push(_castleOtherAnim(_castle));
       // Hold captured pieces stationary at their squares during the attacker's travel
       _appendCaptureGhosts(wAnimPieces);
       selected = -1; validMoves = [];
