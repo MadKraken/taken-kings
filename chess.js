@@ -1,4 +1,4 @@
-﻿const VERSION = "738";
+﻿const VERSION = "739";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -240,6 +240,7 @@ const PASS_COLOR = "rgba(235,205,40,0.55)"; // selected piece's own square (tap 
 const MOVE_COLOR = "rgba(100,180,60,0.55)";
 // Where a Fast Warrior could END UP after both legs, shown while it is still choosing leg 1. Blue,
 // not green: green means "tap here to go there", and these need an elbow picked first.
+const INVALID_MOVE_STRIPE = "rgba(255,140,20,0.7)"; // chess-invalid destination (King left in check)
 const LEG2_PREVIEW_COLOR = "rgba(90,170,255,0.42)";
 const LEAP_BTN_COLOR = "#2a6e3f";
 const LEAP_BTN_DISABLED = "#555";
@@ -3490,8 +3491,10 @@ function isAttacked(tx, ty, bySide) {
 
 // Castling, one rule for both sides, started by either piece. The King on its home square (e1 for
 // White, e8 for Black) and a Rook of its own side on the matching corner, neither of which has ever
-// moved; every square between them empty and landable, with no Merchant on it; and the King not in
-// check, not passing through an attacked square, and not landing on one.
+// moved; every square between them empty and landable, with no Merchant on it. Check is governed by
+// the King's ordinary movement rules, not chess's castling rules: White's King may castle in, through
+// or into check like any other move (the board marks it as a chess-invalid move); Black's King may
+// never land on a square White attacks.
 //
 // The King starts it by moving two squares toward the Rook (to g1/c1); the Rook starts it by moving
 // onto its own King -- the one tap that can't be mistaken for an ordinary Rook move. Either way both
@@ -3516,11 +3519,22 @@ function _castleMove(fromI, toI) {
     const i = idx(x, home);
     if (!canLandEmpty(i) || i === merchantIdx) return null;
   }
-  for (const x of (kingside ? [4, 5, 6] : [4, 3, 2])) if (isAttacked(x, home, s)) return null;
   const kingTo = idx(kingside ? 6 : 2, home), rookTo = idx(kingside ? 5 : 3, home);
+  if (s === B && _blackCastleLandsAttacked(kingI, rookI, kingTo, rookTo)) return null;
   return byRook ? { moverTo: rookTo, otherFrom: kingI, otherTo: kingTo }
                 : { moverTo: kingTo, otherFrom: rookI, otherTo: rookTo };
 }
+// Black's King may never land on an attacked square. The legalMoves filter enforces that for moves the
+// King makes, but a castle the Rook starts never passes through it -- so check the landing here, with
+// both pieces where the castle would leave them (the Rook's new square can block a line to the King).
+function _blackCastleLandsAttacked(kingI, rookI, kingTo, rookTo) {
+  const sq = [kingI, rookI, kingTo, rookTo], sv = sq.map(i => [board[i], sides[i]]);
+  board[kingI] = NONE; sides[kingI] = 0; board[rookI] = NONE; sides[rookI] = 0;
+  board[kingTo] = KING; sides[kingTo] = B; board[rookTo] = ROOK; sides[rookTo] = B;
+  try { const [x, y] = xy(kingTo); return isAttacked(x, y, B); }
+  finally { sq.forEach((i, k) => { board[i] = sv[k][0]; sides[i] = sv[k][1]; }); }
+}
+
 // The same rule for a move that may have an elbow. Both legs of a Fast move are ONE move, so the
 // castle is judged with the piece standing where its last leg starts, exactly as _legTwoMoves
 // generates leg 2 -- its "moved" bit is still clear there, since the move hasn't finished. A joint
@@ -3548,6 +3562,70 @@ function _castleOtherAnim(c) {
   return { toIdx: c.otherTo, fromCX: MARGIN + ox * TILE, fromCY: BOARD_Y + MARGIN + oy * TILE,
            toCX: MARGIN + tx * TILE, toCY: BOARD_Y + MARGIN + ty * TILE,
            piece: board[c.otherTo], side: sides[c.otherTo], hlth: health[c.otherTo], atk: attacks[c.otherTo], spd: speeds[c.otherTo] };
+}
+
+// Would this White move be illegal in chess? This game allows it -- White has no check restriction --
+// but the board marks it, so the risk is a choice rather than an accident. In the chess sense: the
+// move leaves a White King (regular or Checkers) on a square Black attacks; or it is a castle begun
+// while in check or through an attacked square.
+//
+// The move is played out for real inside withState -- the same isolation the AI's lookahead uses, so
+// every board effect (captures, shield bounces, recruits, castles, en passant, Earth, both legs of a
+// Fast move) lands exactly as it would -- then rolled back. Engaging the Merchant isn't a makeMove: the
+// piece is turned back, so it is moved to its bounce square instead. Live only (drawn), and leaves no
+// trace: withState restores everything makeMove can touch, and nothing here is logged.
+function _anyWhiteKingAttacked() {
+  for (let i = 0; i < 64; i++) {
+    if ((board[i] === KING || board[i] === CHECKERS_KING) && sides[i] === W) {
+      const [x, y] = xy(i);
+      if (isAttacked(x, y, W)) return true;
+    }
+  }
+  return false;
+}
+function _isChessInvalidMove(fromI, toI, viaI = -1) {
+  const c = _castleMoveVia(fromI, viaI, toI);
+  if (c) {
+    // Chess forbids castling out of or through check: the King's start (e1) and the square it crosses.
+    const home = 7; // only White's moves are marked
+    const kingTo = c.otherFrom === idx(4, home) ? c.otherTo : c.moverTo;
+    const cross = kingTo === idx(6, home) ? 5 : 3;
+    const startOrCross = _castleMoveViaAttacked(fromI, viaI, [idx(4, home), idx(cross, home)]);
+    if (startOrCross) return true;
+  }
+  return withState(() => {
+    if (toI === merchantIdx) {
+      const b = _bounceSquare(fromI, toI, board[fromI], viaI);
+      if (b !== fromI) movePiece(fromI, b);
+    } else makeMove(fromI, toI, false, viaI);
+    return _anyWhiteKingAttacked();
+  });
+}
+// Are any of `squares` attacked by Black, with the moving piece standing where its last leg starts
+// (the elbow, for a Fast move) -- the same position _castleMoveVia judges the castle from.
+function _castleMoveViaAttacked(fromI, viaI, squares) {
+  return withState(() => {
+    if (viaI >= 0) { copyPiece(fromI, viaI); clearSquare(fromI); }
+    return squares.some(i => { const [x, y] = xy(i); return isAttacked(x, y, W); });
+  });
+}
+// Memoised on the selection AND the whole position (_stateHash): never assume the board is unchanged
+// just because the selection is -- a restore (Last Move, Rewinder) can change it under the same one.
+let _invalidMovesCache = { key: '', set: new Set() };
+const _NO_INVALID = new Set();
+function _chessInvalidMoves() {
+  if (selected < 0 || sides[selected] !== W || !validMoves.length) return _NO_INVALID;
+  const key = `${selected}|${_elbowIdx}|${validMoves.join(',')}|${turn}|${_stateHash()}|${epTarget}|${epBy}|${merchantIdx}`;
+  if (_invalidMovesCache.key !== key) {
+    const set = new Set();
+    for (const m of validMoves) {
+      // Same leg rule as the click handler: the elbow itself is a single move; anything else is leg 2.
+      const viaI = (_elbowIdx >= 0 && m !== _elbowIdx) ? _elbowIdx : -1;
+      if (_isChessInvalidMove(selected, m, viaI)) set.add(m);
+    }
+    _invalidMovesCache = { key, set };
+  }
+  return _invalidMovesCache.set;
 }
 
 function legalMoves(x, y) {
@@ -5672,11 +5750,24 @@ for (const m of _elbowView().leg2) {
   ctx.fillStyle = LEG2_PREVIEW_COLOR;
   ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
 }
-// Valid moves
-for (const m of validMoves) {
-  const [mx, my] = xy(m);
-  ctx.fillStyle = MOVE_COLOR;
-  ctx.fillRect(MARGIN + mx * TILE, MARGIN + my * TILE, TILE, TILE);
+// Valid moves -- with orange diagonal stripes over any that would be illegal in chess (a King left
+// in check). Allowed here; marked so the risk is a choice.
+{ const _invalid = _chessInvalidMoves();
+  for (const m of validMoves) {
+    const [mx, my] = xy(m);
+    const bx = MARGIN + mx * TILE, by = MARGIN + my * TILE;
+    ctx.fillStyle = MOVE_COLOR;
+    ctx.fillRect(bx, by, TILE, TILE);
+    if (_invalid.has(m)) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(bx, by, TILE, TILE); ctx.clip();
+      ctx.strokeStyle = INVALID_MOVE_STRIPE; ctx.lineWidth = 9;
+      for (let d = 0; d <= TILE * 2; d += 26) { // 45°, top-right to bottom-left, as the joint stripes
+        ctx.beginPath(); ctx.moveTo(bx + d, by); ctx.lineTo(bx + d - TILE, by + TILE); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
 }
 // (The tap-marker ring for _inspectIdx is drawn near the end of this function, on TOP of every board
 //  element — Blocks, pieces, items, terrain — so the frame is never hidden. The fog-cell ring is in
