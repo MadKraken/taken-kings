@@ -1,4 +1,4 @@
-﻿const VERSION = "727";
+﻿const VERSION = "728";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -9132,18 +9132,29 @@ function handleBoardClick(cx, cy) {
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
         const recruitedType = board[clicked]; // the Grey being recruited
-        if (attackPiece === KING || attackPiece === CHECKERS_KING) {
-          playSfx('recruit'); // King (or Checkers King) recruits the Grey
-          _turnRecruited = true;                                    // recruited a Grey this turn (streak)
-          if (attackPiece === CHECKERS_KING) _recruitedWithCKing = true; // recruited with a Checkers King
-          if (recruitedType === CHECKERS) _recruitedCManThisRun = true;
-          if (recruitedType === CHECKERS_KING) _recruitedCKingThisRun = true;
-        }
+        const _royal = (attackPiece === KING || attackPiece === CHECKERS_KING);
         const bounceI = _bounceSquare(fromI, clicked, attackPiece, viaI);
         selected = -1; validMoves = [];
-        makeMove(fromI, clicked, false, viaI);
-        recordPosition();
-        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'recruit');
+        // The recruit stays Grey until the King actually reaches it. makeMove is what turns it
+        // White, and for a recruit that is all it does to the board -- the King keeps its own
+        // square and bounces back to it -- so it can wait for contact, and the cue sounds there
+        // too. onImpact fires between the approach and the retreat, and runs inline headless
+        // (startAnim completes immediately under _instant), so makeMove -> recordPosition ->
+        // endWhiteTurn still happen in that order and in that turn.
+        _doBounceAnim(fromI, pToCX, pToCY, bounceI, null, attackPiece, W, attackHlth, endWhiteTurn, 'recruit', () => {
+          if (_royal) {
+            playSfx('recruit'); // King (or Checkers King) recruits the Grey, on contact
+            // These feed the achievement checks, which run during real rendering -- left at the
+            // click they unlocked a recruiting achievement, toast and cue included, while the King
+            // was still in the air and the Grey was still Grey.
+            _turnRecruited = true;                                    // recruited a Grey this turn (streak)
+            if (attackPiece === CHECKERS_KING) _recruitedWithCKing = true; // recruited with a Checkers King
+            if (recruitedType === CHECKERS) _recruitedCManThisRun = true;
+            if (recruitedType === CHECKERS_KING) _recruitedCKingThisRun = true;
+          }
+          makeMove(fromI, clicked, false, viaI);
+          recordPosition();
+        });
         return;
       }
       // Attack shielded enemy: bounce attacker, damage enemy
