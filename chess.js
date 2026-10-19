@@ -1,4 +1,4 @@
-﻿const VERSION = "731";
+﻿const VERSION = "732";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -3685,7 +3685,11 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
   }
 
   epTarget = -1;
-  if (p === PAWN && Math.abs(ty - fy) === 2) {
+  // Only a BLACK double step leaves an en-passant square: White is the only side that can capture en
+  // passant (see pseudoMoves), so a White double step must leave nothing. It used to record one
+  // anyway, and if nothing moved before White's next turn -- Black with no piece able to move -- a
+  // second White pawn was offered a diagonal step onto the empty square behind its own pawn.
+  if (p === PAWN && s === B && Math.abs(ty - fy) === 2) {
     epTarget = idx(fx, (fy + ty) / 2);
   }
 
