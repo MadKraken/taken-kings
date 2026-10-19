@@ -1,4 +1,4 @@
-﻿const VERSION = "733";
+﻿const VERSION = "734";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1107,6 +1107,10 @@ const ELEM_AIR   = 8;
 
 // Status bitmask flags (separate from elements)
 const STATUS_BLOODTHIRSTY = 1;
+// Set once a piece has made a move of its own -- a move, an attack, a bounce, or being carried up by a
+// Team Advance. Never set by being shifted, shoved, carried by a current or teleported. Castling reads
+// it, for both sides: a King or Rook that has ever moved can no longer castle.
+const STATUS_MOVED = 2;
 const ELEM_ALL   = [ELEM_FIRE, ELEM_WATER, ELEM_EARTH, ELEM_AIR];
 const ELEM_COLORS = { [ELEM_FIRE]: '#ff4400', [ELEM_WATER]: '#22aaff', [ELEM_EARTH]: '#886600', [ELEM_AIR]: '#aaeeff' };
 const ELEM_NAMES  = { [ELEM_FIRE]: 'Fire', [ELEM_WATER]: 'Water', [ELEM_EARTH]: 'Earth', [ELEM_AIR]: 'Air' };
@@ -1358,8 +1362,6 @@ const ITEM_PRICES = {
   [ITEM_BOOTS]: 40,
 };
 
-let wkMoved = false;
-let wraMoved = false, wrhMoved = false;
 let epTarget = -1;
 let epBy = 0;     // side whose pawn double-stepped to leave epTarget; only the OTHER side may take it
 let aiThinking = false;
@@ -2854,7 +2856,6 @@ function initBoard() {
   merchantQueued = false; merchantQueuedCol = -1; merchantPendingRespawn = false;
   sellMode = false; sellConfirmSlot = -1;
   elements.fill(0); speeds.fill(1); burning.fill(0); fireSquares = new Map(); waterTrails = new Map(); elementizerMode = false; elementizerElem = 0; elementizerMystery = false;
-  wkMoved = false; wraMoved = false; wrhMoved = false;
   epTarget = -1;
   gamePhase = 'setup';
   _beginSetup(classicSetup); // default the setup screen to Classic; the player can switch to Roll
@@ -3288,11 +3289,12 @@ function pseudoMoves(x, y) {
         moves.push(idx(nx, ny));
       }
     }
-    if (s === W && !wkMoved && !isAttacked(x, y, s)) {
-      if (!wrhMoved && piece(5,7)===NONE && piece(6,7)===NONE && !isAttacked(5,7,s) && !isAttacked(6,7,s))
-        moves.push(idx(6, 7));
-      if (!wraMoved && piece(3,7)===NONE && piece(2,7)===NONE && piece(1,7)===NONE && !isAttacked(3,7,s) && !isAttacked(2,7,s))
-        moves.push(idx(2, 7));
+    // Castling (both sides): _castleRookMove holds every prerequisite.
+    if ((s === W || s === B) && !(statuses[idx(x, y)] & STATUS_MOVED) && x === 4 && y === (s === W ? 7 : 0)) {
+      for (const tx of [6, 2]) {
+        const t = idx(tx, y);
+        if (!moves.includes(t) && _castleRookMove(idx(x, y), t)) moves.push(t);
+      }
     }
   }
   return moves;
@@ -3469,6 +3471,43 @@ function isAttacked(tx, ty, bySide) {
   return false;
 }
 
+// Castling, one rule for both sides. The King on its home square (e1 for White, e8 for Black) and a
+// Rook of its own side on the matching corner, neither of which has ever moved; every square between
+// them empty and landable, with no Merchant on it; and the King not in check, not passing through an
+// attacked square, and not landing on one. Returns the Rook's {from, to} for a legal castle, else null.
+//
+// The old test checked only that White's King and Rook had never MOVED, never that they were actually
+// standing there. With a rolled lineup the King starts anywhere in the back two rows, so an unmoved
+// King was offered a jump straight to g1/c1 from wherever it stood; and a Rook that was captured,
+// teleported or burned had never "moved", so castling was offered with no Rook at all.
+function _castleRookMove(fromI, toI, viaI = -1) {
+  if (viaI >= 0) return null;                                   // never round a corner
+  const s = sides[fromI];
+  if (board[fromI] !== KING || (s !== W && s !== B)) return null;
+  if (statuses[fromI] & STATUS_MOVED) return null;
+  const home = s === W ? 7 : 0;
+  if (fromI !== idx(4, home)) return null;
+  const [tx, ty] = xy(toI);
+  if (ty !== home || (tx !== 6 && tx !== 2)) return null;
+  const kingside = tx === 6;
+  const rookFrom = idx(kingside ? 7 : 0, home), rookTo = idx(kingside ? 5 : 3, home);
+  if (board[rookFrom] !== ROOK || sides[rookFrom] !== s || (statuses[rookFrom] & STATUS_MOVED)) return null;
+  for (const x of (kingside ? [5, 6] : [1, 2, 3])) {
+    const i = idx(x, home);
+    if (!canLandEmpty(i) || i === merchantIdx) return null;
+  }
+  for (const x of (kingside ? [4, 5, 6] : [4, 3, 2])) if (isAttacked(x, home, s)) return null;
+  return { from: rookFrom, to: rookTo };
+}
+
+// Animation piece for a castling Rook's slide; called after makeMove, so the Rook already stands on `to`.
+function _castleRookAnim(c) {
+  const [rfx, rfy] = xy(c.from), [rtx, rty] = xy(c.to);
+  return { toIdx: c.to, fromCX: MARGIN + rfx * TILE, fromCY: BOARD_Y + MARGIN + rfy * TILE,
+           toCX: MARGIN + rtx * TILE, toCY: BOARD_Y + MARGIN + rty * TILE,
+           piece: ROOK, side: sides[c.to], hlth: health[c.to], atk: attacks[c.to], spd: speeds[c.to] };
+}
+
 function legalMoves(x, y) {
   // White has no check restriction — all pseudo-legal moves are legal.
   // For Black: only the King itself is restricted from moving into check.
@@ -3575,6 +3614,8 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
   const legFrom = viaI >= 0 ? viaI : fromI;
   const [fx, fy] = xy(legFrom), [tx, ty] = xy(toI);
   const p = board[fromI], s = sides[fromI];
+  const castleRook = _castleRookMove(fromI, toI, viaI); // read before the mover is marked
+  statuses[fromI] |= STATUS_MOVED;                     // travels with the piece to toI below
   if (visual && s === W) {
     _kingLastMovedType = p; // remember the player's most-recently-moved piece (for the King's line)
     if (p === CHECKERS) _kingQueueFirst('firstWCheckersMove');           // first time fielding the strange folk
@@ -3652,24 +3693,11 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     }
   }
 
-  if (p === KING && s === W) {
-    // A genuine castle: the King's first move, two squares horizontally along its home rank, with
-    // the matching corner Rook still present and unmoved. These home-rank + rook-present guards
-    // matter now that an Air King can also move two squares in any direction — without them a
-    // 2-square Air-King move (horizontal OR diagonal, both give |tx-fx|===2) would be misread as a
-    // castle and spawn a phantom rook / wipe a corner square.
-    const isCastleMove = !wkMoved && fx === 4 && fy === 7 && ty === 7 &&
-      ((tx === 6 && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W) ||
-       (tx === 2 && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W));
-    wkMoved = true;
-    if (isCastleMove) {
-      if (tx > fx) { set(5, fy, ROOK, s); set(7, fy, NONE, 0); }
-      else { set(3, fy, ROOK, s); set(0, fy, NONE, 0); }
-    }
-  }
-  if (p === ROOK && s === W) {
-    if (fromI === idx(0,7)) wraMoved = true;
-    if (fromI === idx(7,7)) wrhMoved = true;
+  if (castleRook) {
+    // The Rook crosses with everything it carries -- elements, shield, Bloodthirsty, badges. The old
+    // code re-created a bare ROOK with set(), quietly stripping a castling Rook of all of it.
+    movePiece(castleRook.from, castleRook.to);
+    statuses[castleRook.to] |= STATUS_MOVED;
   }
 
   if (p === PAWN && toI === epTarget && epBy === enemy(s)) {
@@ -3949,6 +3977,7 @@ function teamAdvance() {
         // Opened by _drainCaptureAnims once the advance has actually landed, not while it slides.
         if (chestSpaces.has(ni)) { _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), chestIdx: ni, sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
         _copySquareTo(nsq, i, ni);
+        nsq.statuses[ni] |= STATUS_MOVED; // a Team Advance is a move for every piece it carries
       }
     } else {
       _copySquareTo(nsq, i, i);
@@ -3968,7 +3997,6 @@ function teamAdvance() {
   epTarget = -1;
   selected = -1;
   validMoves = [];
-  wkMoved = true; wraMoved = true; wrhMoved = true;
   firstMoveMade = true;
   recordPosition();
   startAnim(leapAnimPieces, 0, () => {
@@ -4276,7 +4304,7 @@ function saveState() {
   return {
     squares: _squareArrays().map(a => [...a]),
     effectOrders: effectOrders.map(a => [...a]),
-    epTarget, epBy, wkMoved, wraMoved, wrhMoved, score, gold,
+    epTarget, epBy, score, gold,
     inventory: [...inventory],
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length, shiftCountdown,
@@ -4292,7 +4320,6 @@ function restoreState(st) {
   _squareArrays().forEach((a, idx) => a.splice(0, 64, ...st.squares[idx]));
   for (let i = 0; i < 64; i++) effectOrders[i] = st.effectOrders ? [...st.effectOrders[i]] : [];
   epTarget = st.epTarget; epBy = st.epBy ?? 0;
-  wkMoved = st.wkMoved; wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
   score = st.score; gold = st.gold; inventory.splice(0, inventory.length, ...st.inventory);
   spawnCount = st.spawnCount; nextBonuses = st.nextBonuses.map(b => ({...b}));
   nextWave = st.nextWave;
@@ -4714,6 +4741,7 @@ function aiPlay() {
 
       // Shield bounce: attacker slides in, then bounces back (may still have Speed moves after).
       if (sides[move[0]] === B && sides[move[1]] === W && health[move[1]] > attacks[move[0]]) {
+        statuses[move[0]] |= STATUS_MOVED; // a bounce is still the piece's move
         _animateShieldBounce(move[0], move[1], () => _aiFinish()); // a bounce is terminal: no second leg
       } else {
         const _aiFromElems = elements[move[0]], _aiFromPiece0 = board[move[0]], _aiFromSide0 = sides[move[0]];
@@ -4725,6 +4753,7 @@ function aiPlay() {
         }
         if (aiVia >= 0 && sides[aiDest] === W && health[aiDest] > attacks[move[0]]) {
           // Leg 2 ends on a shield: hop to the elbow, strike, rebound along leg 2. Terminal.
+          statuses[move[0]] |= STATUS_MOVED;
           _animateShieldBounce(move[0], aiDest, () => _aiFinish(), aiVia);
         } else {
         const [lfx, lfy] = xy(aiVia >= 0 ? aiVia : move[0]), [ltx, lty] = xy(aiDest); // last-leg geometry
@@ -4733,6 +4762,7 @@ function aiPlay() {
         const _aiWasCapture = sides[aiDest] === W
           || ((_aiFromPiece0 === CHECKERS || _aiFromPiece0 === CHECKERS_KING) && Math.abs(ltx - lfx) === 2);
         const _aiLegs = aiVia >= 0 ? [aiVia, aiDest] : null;
+        const _aiCastle = _castleRookMove(move[0], aiDest, aiVia); // read before makeMove marks the King
         makeMove(move[0], aiDest, true, aiVia);
         if (_aiFromElems & ELEM_FIRE)  { if (aiVia >= 0) applyFireTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0);  applyFireTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
         if (_aiFromElems & ELEM_WATER) { if (aiVia >= 0) applyWaterTrail(move[0], aiVia, _aiFromPiece0, _aiFromSide0); applyWaterTrail(aiVia >= 0 ? aiVia : move[0], aiDest, _aiFromPiece0, _aiFromSide0); }
@@ -4745,6 +4775,7 @@ function aiPlay() {
           piece: _aiPiece0, side: _aiSide0, hlth: _aiHlth0, atk: attacks[aiDest], spd: speeds[aiDest],
           arc: _aiIsCheckersJump ? TILE * 1.5 : 0
         }];
+        if (_aiCastle) _aiAnimPieces.push(_castleRookAnim(_aiCastle)); // Black castles too: slide its Rook
         _appendCaptureGhosts(_aiAnimPieces);
         playMoveSfx(_aiPiece0, aiDest);
         _startMoveAnim(_aiAnimPieces, _aiLegs, () => {
@@ -9122,8 +9153,8 @@ function handleBoardClick(cx, cy) {
       const pToCX = MARGIN + ptx * TILE, pToCY = BOARD_Y + MARGIN + pty * TILE;
       // Match makeMove's castle test exactly (incl. pty===7 + rook-present) so the rook slide only
       // animates on a real castle — an Air King can now land on (6,7)/(2,7) as a plain 2-square move.
-      const isCKS = viaI < 0 && board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 6 && !wkMoved && !wrhMoved && board[idx(7, 7)] === ROOK && sides[idx(7, 7)] === W;
-      const isCQS = viaI < 0 && board[selected] === KING && sides[selected] === W && pfx === 4 && pfy === 7 && pty === 7 && ptx === 2 && !wkMoved && !wraMoved && board[idx(0, 7)] === ROOK && sides[idx(0, 7)] === W;
+      // Same test makeMove uses, read before it runs, so the Rook only slides on a real castle.
+      const _castle = _castleRookMove(selected, clicked, viaI);
       const clickedDest = clicked;
       firstMoveMade = true;
       // Shared bounce animation: approach target then bounce back, pop shield, call onDone.
@@ -9187,6 +9218,7 @@ function handleBoardClick(cx, cy) {
       // Attack shielded enemy: bounce attacker, damage enemy
       if (sides[clicked] === B && health[clicked] > attacks[selected]) {
         playSfx('shield'); // shield block sound at attack start (pop stays on impact)
+        statuses[selected] |= STATUS_MOVED; // a bounce is still the piece's move
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI];
         // Predict the bounce square WITHOUT mutating: the hit is applied at impact (onImpact below),
@@ -9216,6 +9248,7 @@ function handleBoardClick(cx, cy) {
       }
       // Engage merchant: bounce attacker, open shop, then end turn
       if (clicked === merchantIdx) {
+        statuses[selected] |= STATUS_MOVED; // engaging the Merchant is still the piece's move
         const fromI = selected;
         const attackPiece = board[fromI], attackHlth = health[fromI], attackElem = elements[fromI], attackStat = statuses[fromI], attackAtk = attacks[fromI], attackSpd = speeds[fromI], attackEff = [...effectOrders[fromI]];
         // Rebound along the approach (the last leg, for a two-leg move) to the last empty square.
@@ -9254,8 +9287,7 @@ function handleBoardClick(cx, cy) {
         piece: board[clickedDest], side: sides[clickedDest], hlth: health[clickedDest], atk: attacks[clickedDest], spd: speeds[clickedDest],
         arc: _isCheckersJump ? TILE * 1.5 : 0
       }];
-      if (isCKS) wAnimPieces.push({ toIdx: idx(5,7), fromCX: MARGIN+7*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+5*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(5,7)], atk: attacks[idx(5,7)], spd: speeds[idx(5,7)] });
-      if (isCQS) wAnimPieces.push({ toIdx: idx(3,7), fromCX: MARGIN+0*TILE, fromCY: BOARD_Y+MARGIN+7*TILE, toCX: MARGIN+3*TILE, toCY: BOARD_Y+MARGIN+7*TILE, piece: ROOK, side: W, hlth: health[idx(3,7)], atk: attacks[idx(3,7)], spd: speeds[idx(3,7)] });
+      if (_castle) wAnimPieces.push(_castleRookAnim(_castle));
       // Hold captured pieces stationary at their squares during the attacker's travel
       _appendCaptureGhosts(wAnimPieces);
       selected = -1; validMoves = [];
