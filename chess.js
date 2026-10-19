@@ -1,4 +1,4 @@
-﻿const VERSION = "732";
+﻿const VERSION = "733";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1361,6 +1361,7 @@ const ITEM_PRICES = {
 let wkMoved = false;
 let wraMoved = false, wrhMoved = false;
 let epTarget = -1;
+let epBy = 0;     // side whose pawn double-stepped to leave epTarget; only the OTHER side may take it
 let aiThinking = false;
 
 const AI_DEPTH = 3;   // iterative-deepening ceiling for Black's search
@@ -3238,9 +3239,10 @@ function pseudoMoves(x, y) {
         if (isVoidSpace(ni) || isBlockSpace(ni)) break;
         if (s === W) {
           if (side(nx, ny) === e || sides[ni] === N) { moves.push(ni); break; } // capture an enemy, or kill a Grey
-          if (ni === epTarget || ni === merchantIdx) { moves.push(ni); break; }
+          if ((ni === epTarget && epBy === e) || ni === merchantIdx) { moves.push(ni); break; }
         } else {
           if (side(nx, ny) === e) { moves.push(ni); break; }
+          if (s === B && ni === epTarget && epBy === e) { moves.push(ni); break; } // en passant, same rule as White's
         }
         if (piece(nx, ny) !== NONE) break; // own piece or (for Black) a Grey blocks further diagonal
       }
@@ -3670,7 +3672,7 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     if (fromI === idx(7,7)) wrhMoved = true;
   }
 
-  if (p === PAWN && toI === epTarget) {
+  if (p === PAWN && toI === epTarget && epBy === enemy(s)) {
     const capY = ty + (s === W ? 1 : -1);
     const epI = idx(tx, capY);
     const epPiece = piece(tx, capY);
@@ -3685,12 +3687,13 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
   }
 
   epTarget = -1;
-  // Only a BLACK double step leaves an en-passant square: White is the only side that can capture en
-  // passant (see pseudoMoves), so a White double step must leave nothing. It used to record one
-  // anyway, and if nothing moved before White's next turn -- Black with no piece able to move -- a
-  // second White pawn was offered a diagonal step onto the empty square behind its own pawn.
-  if (p === PAWN && s === B && Math.abs(ty - fy) === 2) {
+  // En passant is the same rule for both sides: any pawn's double step leaves the square it skipped,
+  // and only a pawn of the OTHER side may take it (pseudoMoves checks epBy). Without epBy a White
+  // double step offered a second White pawn a diagonal step onto the empty square behind its own
+  // pawn. Greys never get here: they move by greyMovesFor + movePiece, not makeMove.
+  if (p === PAWN && Math.abs(ty - fy) === 2) {
     epTarget = idx(fx, (fy + ty) / 2);
+    epBy = s;
   }
 
   const movedHealth = health[fromI];
@@ -4273,7 +4276,7 @@ function saveState() {
   return {
     squares: _squareArrays().map(a => [...a]),
     effectOrders: effectOrders.map(a => [...a]),
-    epTarget, wkMoved, wraMoved, wrhMoved, score, gold,
+    epTarget, epBy, wkMoved, wraMoved, wrhMoved, score, gold,
     inventory: [...inventory],
     spawnCount, nextBonuses: nextBonuses.map(b => ({...b})), nextWave: nextWave.map(w => ({...w})),
     histLen: positionHistory.length, shiftCountdown,
@@ -4288,7 +4291,7 @@ function saveState() {
 function restoreState(st) {
   _squareArrays().forEach((a, idx) => a.splice(0, 64, ...st.squares[idx]));
   for (let i = 0; i < 64; i++) effectOrders[i] = st.effectOrders ? [...st.effectOrders[i]] : [];
-  epTarget = st.epTarget;
+  epTarget = st.epTarget; epBy = st.epBy ?? 0;
   wkMoved = st.wkMoved; wraMoved = st.wraMoved; wrhMoved = st.wrhMoved;
   score = st.score; gold = st.gold; inventory.splice(0, inventory.length, ...st.inventory);
   spawnCount = st.spawnCount; nextBonuses = st.nextBonuses.map(b => ({...b}));
