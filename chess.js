@@ -1,4 +1,4 @@
-﻿const VERSION = "737";
+﻿const VERSION = "738";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -1148,6 +1148,9 @@ let inventory = new Array(INV_COLS * INV_ROWS).fill(ITEM_NONE);
 let dragSlot = -1, dragX = 0, dragY = 0, dragOverTrash = false, dragConsumed = false;
 let _pendingDrag = null; // { slot, startX, startY, startMs } — promoted to dragSlot after threshold
 let playerDead = {}, enemyDead = {}, flyAnims = [], itemFlyAnims = [], itemFlySlots = new Set();
+// The piece type most recently added to each tally -- highlighted in the Taken Warriors panel. Rides in
+// the same snapshots as the tallies, so Last Move and the Rewinder restore it with them.
+let _lastTaken = { player: NONE, enemy: NONE };
 let chestSpaces = new Set(); // floor-marker chests — coexist with any board piece
 let shieldPops = [];
 let warnFlashRunning = false;
@@ -1763,7 +1766,11 @@ function startCaptureAnim(piece, side, sx, sy) {
   // up and off the board, into the ether, where it spins away and fades. Either way the pool counts it.
   let tgx = sx + (sx < MARGIN + BOARD_PX / 2 ? -1 : 1) * (TILE * 1.5), tgy = BOARD_Y - TILE * 3;
   if (_bottomView === 'taken' && GRAVE_TYPES.includes(piece)) [tgx, tgy] = graveSlotPos(isPlayer, piece);
-  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => { pool[piece] = (pool[piece] || 0) + 1; playSfx('body'); if (side === B) playSfx('loot'); });
+  startFlyAnim(piece, side, sx, sy, tgx, tgy, () => {
+    pool[piece] = (pool[piece] || 0) + 1;
+    _lastTaken[isPlayer ? 'player' : 'enemy'] = piece;
+    playSfx('body'); if (side === B) playSfx('loot');
+  });
 }
 
 function _warnFlashTick() {
@@ -2160,7 +2167,7 @@ function _snapReplayCommon() {
     itemSpaces: [...itemSpaces],
     inventory: [...inventory],
     score, gold, leapCount, shiftCountdown, merchantIdx,
-    playerDead: {...playerDead}, enemyDead: {...enemyDead},
+    playerDead: {...playerDead}, enemyDead: {...enemyDead}, lastTaken: {..._lastTaken},
     fireSquares: [...fireSquares].map(([k, v]) => [k, { ...v }]),
     waterTrails: [...waterTrails].map(([k, v]) => [k, { ...v }]),
     nextWave: nextWave.map(w => ({...w})), nextBonuses: nextBonuses.map(b => ({...b})),
@@ -2306,7 +2313,7 @@ function _buildReplaySnapshot() {
     shadowSpaces: [..._shadowSpaces],
     inventory: [...inventory],
     score, gold, turn,
-    playerDead: {...playerDead}, enemyDead: {...enemyDead},
+    playerDead: {...playerDead}, enemyDead: {...enemyDead}, lastTaken: {..._lastTaken},
     spawnCount, leapCount, shiftCountdown, merchantIdx, merchantQueued, merchantQueuedCol,
     merchantOffers: [...merchantOffers], merchantSold: [...merchantSold], merchantRerollCountdown,
     elements: [...elements], statuses: [...statuses], attacks: [...attacks], speeds: [...speeds], burning: [...burning],
@@ -2331,6 +2338,7 @@ function applyReplaySnapshot(snap) {
   inventory.splice(0, inventory.length, ...snap.inventory);
   score = snap.score; gold = snap.gold; turn = snap.turn;
   playerDead = {...snap.playerDead}; enemyDead = {...snap.enemyDead};
+  _lastTaken = snap.lastTaken ? {...snap.lastTaken} : { player: NONE, enemy: NONE };
   spawnCount = snap.spawnCount; leapCount = snap.leapCount;
   shiftCountdown = snap.shiftCountdown; merchantIdx = snap.merchantIdx ?? -1;
   if (snap.merchantQueued !== undefined) { merchantQueued = snap.merchantQueued; merchantQueuedCol = snap.merchantQueuedCol ?? -1; }
@@ -2432,6 +2440,7 @@ function _playReplayTransition(snapIdx, onDone) {
     score = ev.score; gold = ev.gold; leapCount = ev.leapCount; shiftCountdown = ev.shiftCountdown;
     merchantIdx = ev.merchantIdx ?? -1;
     playerDead = {...ev.playerDead}; enemyDead = {...ev.enemyDead};
+    _lastTaken = ev.lastTaken ? {...ev.lastTaken} : { player: NONE, enemy: NONE };
     if (ev.elements) elements.splice(0, 64, ...ev.elements); else elements.fill(0);
     if (ev.statuses) statuses.splice(0, 64, ...ev.statuses); else statuses.fill(0);
     if (ev.attacks) attacks.splice(0, 64, ...ev.attacks); else attacks.fill(1);
@@ -2835,7 +2844,7 @@ function initBoard() {
   if (replayAutoTimer) { clearTimeout(replayAutoTimer); replayAutoTimer = null; }
   _replayAnimBuffer = []; _replayTransitions = [];
   inventory.fill(ITEM_NONE); piecePromoterMode = false; piecePromoterItem = NONE; teleporterMode = false; teleporterSelected = -1; clonerMode = false; clonerSelected = -1; shieldMode = false; bombMode = false; bombHoverIdx = -1; speedMode = false; _inspectIdx = -1; _inspectPreviewCol = -1; _resetTurnState();
-  playerDead = {}; enemyDead = {}; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
+  playerDead = {}; enemyDead = {}; _lastTaken = { player: NONE, enemy: NONE }; flyAnims = []; itemFlyAnims = []; itemFlySlots = new Set(); shieldPops = [];
   _lostWhiteThisRun = false; _king20TakenBy = NONE;
   _recruitedCManThisRun = false; _recruitedCKingThisRun = false; _maxGoldThisRun = 0;
   _usedItemThisRun = false; _had4KingsAt25 = false; _timedOutThisRun = false; _startCounts = {};
@@ -7038,7 +7047,7 @@ function drawTakenWarriors() {
           ctx.globalAlpha = 1;
         }
       } else {
-        if (pt === KING) {   // a King lost is a disaster; a King taken is the point -- tint the disc
+        if (pt === (isPlayer ? _lastTaken.player : _lastTaken.enemy)) { // the most recent take, per team
           ctx.fillStyle = isPlayer ? "rgba(180,60,60,0.5)" : "rgba(60,160,60,0.5)";
           ctx.beginPath(); ctx.arc(cx, cy, pieceSz / 2 + 2, 0, Math.PI * 2); ctx.fill();
         }
