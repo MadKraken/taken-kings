@@ -1,4 +1,4 @@
-﻿const VERSION = "728";
+﻿const VERSION = "729";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -4188,9 +4188,14 @@ function fieldAdvance(playerTriggered = false) {
   // only special-case White occupants), and could likewise overwrite the piece with a Grey
   // or drop it onto a fresh void. Falls back to the bonus-blind pick only if every clean
   // column is taken (then the bonus at the collision column is dropped instead).
+  //
+  // River is the exception throughout: it is terrain under a square, not something standing on it,
+  // so a piece or the Merchant can share a column with it. Treating it like a chest used to drop
+  // the River tile under the Merchant on every River row he arrived on, and when that column was 0
+  // the whole row stopped being a River -- isRiverSpace, the flow and the preview all read column 0.
   if (merchantQueued && merchantQueuedCol >= 0) {
     const usedCols = new Set(nextWave.map(w => w.x).filter(x => x !== merchantQueuedCol));
-    const bonusCols = new Set(nextBonuses.map(b => b.col));
+    const bonusCols = new Set(nextBonuses.filter(b => b.type !== 'river').map(b => b.col));
     for (const w of nextWave) {
       if (w.x === merchantQueuedCol) {
         const ok = (x, blind) => x !== merchantQueuedCol && !usedCols.has(x) && (blind || !bonusCols.has(x)) && specialSpaces[idx(x, 0)]?.type !== 'block';
@@ -4199,11 +4204,11 @@ function fieldAdvance(playerTriggered = false) {
         for (let x = 0; x < 8 && picked < 0; x++) if (ok(x, true)) picked = x;
         if (picked >= 0) {
           usedCols.add(picked); w.x = picked;
-          if (bonusCols.has(picked)) nextBonuses = nextBonuses.filter(b => b.col !== picked); // blind fallback: the piece wins, the bonus is dropped
+          if (bonusCols.has(picked)) nextBonuses = nextBonuses.filter(b => b.col !== picked || b.type === 'river'); // blind fallback: the piece wins, the bonus is dropped (River stays underneath)
         }
       }
     }
-    nextBonuses = nextBonuses.filter(b => b.col !== merchantQueuedCol);
+    nextBonuses = nextBonuses.filter(b => b.col !== merchantQueuedCol || b.type === 'river'); // he arrives on top of a River
   }
   // Merchant wares hold unchanged for MERCHANT_REROLL_CYCLE field advances (sold items stay sold),
   // then all three reroll at once and sold state resets.
