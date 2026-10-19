@@ -1,4 +1,4 @@
-﻿const VERSION = "726";
+﻿const VERSION = "727";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2769,7 +2769,11 @@ function _startMoveAnim(animPieces, legs, onDone) {
 function _drainCaptureAnims() {
   let _tookPiece = false;
   for (const c of _pendingCaptureAnims) {
-    if (c.type === 'item') startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot());
+    if (c.type === 'item') {
+      // A chest opens on arrival, not on departure: clear it and sound it here, with the loot.
+      if (c.chestIdx != null) { chestSpaces.delete(c.chestIdx); playSfx('chest'); playSfx('pickup'); }
+      startItemFlyAnim(c.item, c.sx, c.sy, findInventorySlot());
+    }
     else { startCaptureAnim(c.piece, c.side, c.sx, c.sy); _tookPiece = true; }
   }
   _pendingCaptureAnims = [];
@@ -3620,12 +3624,13 @@ function makeMove(fromI, toI, visual = false, viaI = -1) {
     if ((captured === KING || captured === CHECKERS_KING) && health[toI] >= 2) _tookShieldedKingWithSword = true;
   } else if (visual && s === W && captured !== NONE && capSide === N) _kingQueue('killGrey'); // struck down a Grey
   if (chestSpaces.has(toI) && s === W) {
-    chestSpaces.delete(toI);
-    const _chestItem = _randomItem();
+    const _chestItem = _randomItem();   // drawn here either way, so the RNG order never shifts
     if (visual) {
-      playSfx('chest'); playSfx('pickup');
-      _pendingCaptureAnims.push({ type: 'item', item: _chestItem, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
+      // The chest stays shut, and silent, until the Warrior is standing on it: _drainCaptureAnims
+      // opens it when the move animation ends, alongside the loot's flight to the inventory.
+      _pendingCaptureAnims.push({ type: 'item', item: _chestItem, chestIdx: toI, sx: MARGIN + tx * TILE + TILE / 2, sy: BOARD_Y + MARGIN + ty * TILE + TILE / 2 });
     } else {
+      chestSpaces.delete(toI);          // headless: no animation to wait for
       addToInventory(_chestItem);
     }
   }
@@ -3919,7 +3924,8 @@ function teamAdvance() {
         // by checkWhiteKingAlive() in applySpacesAfterAdvance (only when NO White King remains).
         _leapVoidDeath = { cx: MARGIN + x * TILE + TILE / 2, cy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2, piece: board[i], side: W };
       } else {
-        if (chestSpaces.has(ni)) { chestSpaces.delete(ni); playSfx('chest'); playSfx('pickup'); _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
+        // Opened by _drainCaptureAnims once the advance has actually landed, not while it slides.
+        if (chestSpaces.has(ni)) { _pendingCaptureAnims.push({ type: 'item', item: _randomItem(), chestIdx: ni, sx: MARGIN + x * TILE + TILE / 2, sy: BOARD_Y + MARGIN + (y - 1) * TILE + TILE / 2 }); }
         _copySquareTo(nsq, i, ni);
       }
     } else {
