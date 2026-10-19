@@ -1,4 +1,4 @@
-﻿const VERSION = "730";
+﻿const VERSION = "731";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6483,7 +6483,7 @@ const KING_LINES = {
   firstBlock:       ["Behold, that Block of stone -- no Warrior's blade could pierce that. Unless they partook of a magic of the Earth itself..."],
   firstRiver:       ["Beware the currents of that River, men! Adjust your course or they will adjust it for you!"],
   firstAutoAdvance: ["My patience has its limits! We cannot linger here forever, or the Black Kings will never pay their dues!"],
-  firstShop:        ["Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will surely take advantage..."],
+  firstShop:        ["Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will gladly take advantage..."],
   // Merchant shop reopened — rotating chatter; a second variant naming a current ware is built live (_kingSayShop).
   shopReopen:       ["This seller appears to update his wares every once in a while. If I like something I see here, I better grab it quick."],
   // A White Warrior lost to a Bomb.

@@ -115,7 +115,7 @@ It's just you and me, [piece]! We ride until the darkness takes us!
 All my men... gone. So be it. My honor demands fighting till the end!
 
 [IMPLEMENTED v675] On Merchant shop open first time:
-Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will surely take advantage...
+Oh, what a clever man, selling these fallen magics! Surely these Black kings have no mind for business. But I will gladly take advantage...
 
 [IMPLEMENTED v675] On second opening onward, random by line:
 This seller appears to update his wares every once in a while. If I like something I see here, I better grab it quick.
