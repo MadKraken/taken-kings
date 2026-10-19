@@ -1,4 +1,4 @@
-﻿const VERSION = "729";
+﻿const VERSION = "730";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -2624,6 +2624,7 @@ function _rollSpawnEffects(i, waveCount = spawnCount) { _applyEffectSet(i, _roll
 
 function applyRiverFlow(onDone) {
   const animPieces = [];
+  let _riverMerchantFall = null; // {cx, cy} if the current carried the Merchant into a Void
   for (let y = 0; y < 8; y++) {
     const cell = specialSpaces[idx(0, y)];
     if (!cell || cell.type !== 'river') continue;
@@ -2650,10 +2651,20 @@ function applyRiverFlow(onDone) {
         }
         continue;
       }
-      // Move merchant
-      if (i === merchantIdx && board[di] === NONE) {
-        animPieces.push({ fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, spriteKey: 'merchant' });
-        merchantIdx = di; continue;
+      // Carry the Merchant. _shoveMerchant is the one rule for a current moving him, shared with the
+      // Water trails below: a piece or a Block stops him, and swept into a Void he falls and returns
+      // with the next wave, as when he is bombed. This branch used to move him itself and never
+      // looked for a Void -- he drifted onto one and simply stood there.
+      if (i === merchantIdx) {
+        const _mv = _shoveMerchant(dx, 0);
+        const _slide = { fromCX: MARGIN + x * TILE, fromCY: BOARD_Y + MARGIN + y * TILE, toCX: MARGIN + nx * TILE, toCY: BOARD_Y + MARGIN + y * TILE, toIdx: di, spriteKey: 'merchant' };
+        if (_mv && _mv.merchantVoid) {
+          animPieces.push(_slide);           // drifts onto the Void...
+          _riverMerchantFall = { cx: MARGIN + nx * TILE + TILE / 2, cy: BOARD_Y + MARGIN + y * TILE + TILE / 2 };
+        } else if (merchantIdx === di) {
+          animPieces.push(_slide);
+        }
+        continue;
       }
       // Drift item space. If the current carries it into a piece standing downstream, that piece
       // takes the item on contact — the mirror of the branch above where the river pushes a piece
@@ -2711,10 +2722,14 @@ function applyRiverFlow(onDone) {
     }
   }
   _waterShoveActive = false;
+  // ...and falls once the current has finished moving him, not before. A null piece draws the
+  // Merchant sprite, as the shove wave's Merchant fall already does.
+  const _fall = _riverMerchantFall;
+  const _finish = _fall ? () => startVoidDeath(_fall.cx, _fall.cy, null, null, onDone) : onDone;
   if (animPieces.length > 0) {
-    startAnim(animPieces, 0, onDone);
+    startAnim(animPieces, 0, _finish);
   } else {
-    if (onDone) onDone();
+    if (_finish) _finish();
   }
 }
 
