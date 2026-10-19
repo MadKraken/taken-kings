@@ -1,4 +1,4 @@
-﻿const VERSION = "736";
+﻿const VERSION = "737";
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 
@@ -6390,8 +6390,6 @@ if (!gameOver && isItemActive()) {
     // Resign
     drawUIButton(RESIGN_BTN, { color: "#993333", label: "Resign", radius: 6, font: "42px Canterbury" });
 
-    // Auto-play toggle button
-    drawUIButton(AUTO_BTN, { color: autoPlay ? "#1a7a3a" : "#444466", label: autoPlay ? "⏸ Auto" : "▶ Auto", radius: 6, font: "42px Canterbury" });
 
     // Last Move replay button
     if (replaySnapshots.length > 1) {
@@ -6399,12 +6397,9 @@ if (!gameOver && isItemActive()) {
     }
   }
   if (_bottomViewBtnVisible()) {
-    // Named for what it switches TO. Shrink the label to fit the slot left of Auto.
+    // Named for what it switches TO, in the same 42px as every other button in the row.
     const label = _bottomView === 'taken' ? "King's Comments" : "Taken Warriors";
-    let px = 34;
-    ctx.font = `${px}px Canterbury`;
-    while (px > 18 && ctx.measureText(label).width > BOTTOM_VIEW_BTN.w - 18) { px -= 2; ctx.font = `${px}px Canterbury`; }
-    drawUIButton(BOTTOM_VIEW_BTN, { color: "#4a3a18", label, radius: 6, font: `${px}px Canterbury`,
+    drawUIButton(BOTTOM_VIEW_BTN, { color: "#4a3a18", label, radius: 6, font: "42px Canterbury",
                                     stroke: "rgba(184,145,46,0.85)", strokeW: 2 });
   }
 }
@@ -8296,7 +8291,8 @@ let _settingsBtnFirst = -1; // index in _uiButtons where this frame's panel butt
 const SETTINGS_BTN_SZ = 64;
 function _settingsBtnVisible() { return spritesLoaded && _continued && !settingsOpen; } // start screen: first tap is the audio unlock
 function _settingsBtnRect() {
-  return { x: canvas.width - 10 - SETTINGS_BTN_SZ, y: canvas.height - 10 - SETTINGS_BTN_SZ, w: SETTINGS_BTN_SZ, h: SETTINGS_BTN_SZ };
+  // Right edge on the board's right edge, in line with the panels and buttons above it.
+  return { x: MARGIN + BOARD_PX - SETTINGS_BTN_SZ, y: canvas.height - 10 - SETTINGS_BTN_SZ, w: SETTINGS_BTN_SZ, h: SETTINGS_BTN_SZ };
 }
 function _drawSettingsButton() {
   if (!_settingsBtnVisible()) return;
@@ -9544,13 +9540,6 @@ canvas.addEventListener("click", (e) => {
     });
     return;
   }
-  if (!gameOver && _inRect(cx, cy, AUTO_BTN)) {
-    playSfx('button');
-    autoPlay = !autoPlay; draw();
-    if (autoPlay) _autoPlayUsedThisRun = true; // auto-assisted run -> not leaderboard-eligible
-    if (autoPlay && turn === W && !aiThinking && !anim) autoWhitePlay();
-    return;
-  }
   if (handleInventoryClick(cx, cy)) return;
   if (testMode && _inRect(cx, cy, HINT_BTN)) { playSfx('button'); showHint(); return; }
   if (gamePhase === 'setup') {
@@ -9580,9 +9569,9 @@ canvas.addEventListener("click", (e) => {
 let autoPlay = false;
 let _autoScheduled = false;
 
-const AUTO_BTN = { x: RESIGN_BTN.x - 176, y: RESIGN_BTN.y, w: 168, h: 60 };
-// Swaps the bottom panel between the King's remarks and the Taken Warriors tally.
-const BOTTOM_VIEW_BTN = { x: MARGIN, y: RESIGN_BTN.y, w: AUTO_BTN.x - 8 - MARGIN, h: 60 };
+// Swaps the bottom panel between the King's remarks and the Taken Warriors tally. Spans from the
+// board's left edge to just short of Resign -- wide enough for either label at the row's 42px.
+const BOTTOM_VIEW_BTN = { x: MARGIN, y: RESIGN_BTN.y, w: RESIGN_BTN.x - 8 - MARGIN, h: 60 };
 // Shown, and tappable, whenever the bottom row is -- not under a modal that owns the screen, and not
 // while an item is being used, when Cancel / Discard replace every other control. Tappable only when
 // drawn: the click check runs early, so a hidden button would otherwise still catch taps.
